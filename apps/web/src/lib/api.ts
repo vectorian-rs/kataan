@@ -87,7 +87,7 @@ async function postJson<T>(path: string): Promise<T> {
 
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<T>;
 }

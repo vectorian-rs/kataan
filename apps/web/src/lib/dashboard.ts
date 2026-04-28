@@ -22,17 +22,23 @@ const validateButton = requireElement<HTMLButtonElement>('validate-button');
 const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
 
 validateButton.addEventListener('click', async () => {
-  renderDiagnostics(await validateVault());
+  await runAction(async () => {
+    renderDiagnostics(await validateVault());
+  });
 });
 
 rebuildButton.addEventListener('click', async () => {
-  await rebuildIndexes();
-  await loadFolders();
-  renderDiagnostics(await validateVault());
+  await runAction(async () => {
+    await rebuildIndexes();
+    await loadFolders();
+    renderDiagnostics(await validateVault());
+  });
 });
 
-await loadVault();
-await loadFolders();
+await runAction(async () => {
+  await loadVault();
+  await loadFolders();
+});
 
 async function loadVault() {
   const vault = await getVault();
@@ -90,6 +96,14 @@ async function selectDocument(id: string) {
   documentBody.append(markdown, metadata);
 }
 
+async function runAction(action: () => Promise<void>) {
+  try {
+    await action();
+  } catch (error) {
+    renderError(error);
+  }
+}
+
 function renderDiagnostics(report: ValidateResponse) {
   if (report.diagnostics.length === 0) {
     diagnosticsEl.className = 'muted';
@@ -106,6 +120,14 @@ function renderDiagnostic(diagnostic: Diagnostic) {
   item.className = `diagnostic ${diagnostic.severity}`;
   item.textContent = `${diagnostic.severity.toUpperCase()} [${diagnostic.code}] ${diagnostic.path ?? ''} ${diagnostic.message}`;
   return item;
+}
+
+function renderError(error: unknown) {
+  diagnosticsEl.className = '';
+  const item = document.createElement('div');
+  item.className = 'diagnostic error';
+  item.textContent = error instanceof Error ? error.message : String(error);
+  diagnosticsEl.replaceChildren(item);
 }
 
 function requireElement<T extends HTMLElement>(id: string): T {
