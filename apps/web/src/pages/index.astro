@@ -44,6 +44,15 @@ const title = 'Kataan';
         font: inherit;
       }
 
+      button.nav-row,
+      button.document-row,
+      button.button {
+        all: unset;
+        box-sizing: border-box;
+        cursor: pointer;
+        font: inherit;
+      }
+
       .app-shell {
         display: grid;
         grid-template-columns: 240px 360px minmax(520px, 1fr) 300px;
@@ -129,8 +138,8 @@ const title = 'Kataan';
         gap: 2px;
       }
 
-      .nav-row,
-      .document-row {
+      button.nav-row,
+      button.document-row {
         inline-size: 100%;
         border: 0;
         border-radius: 8px;
@@ -139,7 +148,7 @@ const title = 'Kataan';
         text-align: start;
       }
 
-      .nav-row {
+      button.nav-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -150,13 +159,13 @@ const title = 'Kataan';
         font-weight: 650;
       }
 
-      .nav-row:hover,
-      .document-row:hover {
+      button.nav-row:hover,
+      button.document-row:hover {
         background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
       }
 
-      .nav-row.active,
-      .document-row.active {
+      button.nav-row.active,
+      button.document-row.active {
         background: var(--surface-active);
         color: light-dark(var(--teal-8), var(--teal-2));
       }
@@ -216,8 +225,10 @@ const title = 'Kataan';
         border-block-start: 1px solid var(--border);
       }
 
-      .button {
+      button.button {
+        display: inline-grid;
         flex: 1;
+        place-items: center;
         block-size: 34px;
         border: 1px solid var(--border);
         border-radius: 8px;
@@ -226,7 +237,7 @@ const title = 'Kataan';
         box-shadow: var(--shadow-soft);
       }
 
-      .button.primary {
+      button.button.primary {
         border-color: color-mix(in srgb, var(--brand) 55%, transparent);
         background: var(--brand);
         color: white;
@@ -249,7 +260,7 @@ const title = 'Kataan';
         font-weight: 750;
       }
 
-      .document-row {
+      button.document-row {
         display: grid;
         gap: 4px;
         border-radius: 0;

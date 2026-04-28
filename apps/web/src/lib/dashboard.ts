@@ -75,7 +75,7 @@ async function loadFolders() {
 
 function renderFolderButton(folder: FolderSummary) {
   const button = document.createElement('button');
-  button.className = 'item nav-row';
+  button.className = 'nav-row';
   button.type = 'button';
   button.dataset.folder = folder.folder;
 
