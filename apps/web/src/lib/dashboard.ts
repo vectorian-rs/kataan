@@ -36,6 +36,9 @@ const metadataPanel = requireElement<HTMLElement>('metadata-panel');
 const validateButton = requireElement<HTMLButtonElement>('validate-button');
 const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
 
+let selectedFolder: string | null = null;
+let selectedDocument: string | null = null;
+
 validateButton.addEventListener('click', async () => {
   await runAction(async () => {
     renderDiagnostics(await validateVault());
@@ -72,14 +75,15 @@ async function loadFolders() {
 
 function renderFolderButton(folder: FolderSummary) {
   const button = document.createElement('button');
-  button.className = 'item folder-row';
+  button.className = 'item nav-row';
   button.type = 'button';
+  button.dataset.folder = folder.folder;
 
   const label = document.createElement('span');
   label.className = 'folder-name';
 
   const icon = document.createElement('span');
-  icon.className = 'folder-icon';
+  icon.className = `folder-icon ${folder.type}`;
   icon.append(createElement(folderIcon(folder.type), { width: 18, height: 18, 'stroke-width': 2 }));
 
   const name = document.createElement('span');
@@ -97,6 +101,9 @@ function renderFolderButton(folder: FolderSummary) {
 }
 
 async function selectFolder(folder: string) {
+  selectedFolder = folder;
+  updateActiveRows();
+
   const response = await getFolder(folder);
   folderTitle.textContent = response.index.name;
 
@@ -113,8 +120,9 @@ async function selectFolder(folder: string) {
 
 function renderDocumentButton(vaultDocument: FolderDocument) {
   const button = document.createElement('button');
-  button.className = 'item document-card';
+  button.className = 'document-row';
   button.type = 'button';
+  button.dataset.document = vaultDocument.id;
 
   const title = document.createElement('strong');
   title.textContent = titleFromSlug(vaultDocument.slug);
@@ -129,6 +137,9 @@ function renderDocumentButton(vaultDocument: FolderDocument) {
 }
 
 async function selectDocument(id: string) {
+  selectedDocument = id;
+  updateActiveRows();
+
   const vaultDocument = await getDocument(id);
   documentTitle.textContent = titleFromId(vaultDocument.id);
   renderDocumentBody(vaultDocument);
@@ -198,6 +209,16 @@ function renderError(error: unknown) {
   item.className = 'diagnostic error';
   item.textContent = error instanceof Error ? error.message : String(error);
   diagnosticsEl.replaceChildren(item);
+}
+
+function updateActiveRows() {
+  document.querySelectorAll<HTMLElement>('[data-folder]').forEach((row) => {
+    row.classList.toggle('active', row.dataset.folder === selectedFolder);
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-document]').forEach((row) => {
+    row.classList.toggle('active', row.dataset.document === selectedDocument);
+  });
 }
 
 function folderIcon(type: string): IconNode {

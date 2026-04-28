@@ -144,14 +144,15 @@ const title = 'Kataan';
         align-items: center;
         justify-content: space-between;
         gap: 12px;
-        min-block-size: 34px;
-        padding: 0 9px;
-        font-weight: 600;
+        min-block-size: 40px;
+        padding: 0 8px;
+        font-size: 16px;
+        font-weight: 650;
       }
 
       .nav-row:hover,
       .document-row:hover {
-        background: var(--surface-hover);
+        background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
       }
 
       .nav-row.active,
@@ -163,7 +164,7 @@ const title = 'Kataan';
       .folder-name {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 12px;
         min-inline-size: 0;
       }
 
@@ -175,17 +176,36 @@ const title = 'Kataan';
       }
 
       .folder-icon svg {
-        inline-size: 16px;
-        block-size: 16px;
+        inline-size: 19px;
+        block-size: 19px;
+      }
+
+      .folder-icon.note,
+      .folder-icon.raw {
+        color: var(--red-5);
+      }
+
+      .folder-icon.project {
+        color: var(--orange-5);
+      }
+
+      .folder-icon.person {
+        color: var(--yellow-6);
+      }
+
+      .folder-icon.topic,
+      .folder-icon.type-definition {
+        color: var(--blue-5);
       }
 
       .badge {
-        min-inline-size: 1.6rem;
+        min-inline-size: 1.85rem;
         border-radius: 999px;
-        padding: 1px 7px;
-        background: light-dark(var(--gray-2), var(--gray-9));
+        padding: 2px 8px;
+        background: light-dark(#f3f4f6, color-mix(in srgb, var(--gray-9) 72%, transparent));
         color: var(--text-2);
-        font-size: 12px;
+        font-size: 13px;
+        font-weight: 600;
         text-align: center;
       }
 
