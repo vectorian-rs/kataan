@@ -3,6 +3,7 @@ members = [
   "crates/kataan-core",
   "crates/kataan-cli",
   "crates/kataan-server",
+  "crates/kataan-agent",
 ]
 resolver = "2"
 
@@ -13,6 +14,7 @@ repository = "https://github.com/your-org/kataan"
 
 [workspace.dependencies]
 anyhow = "1"
+async-trait = "0.1"
 axum = "0.7"
 blake3 = "1"
 clap = { version = "4", features = ["derive"] }

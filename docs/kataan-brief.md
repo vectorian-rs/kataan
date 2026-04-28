@@ -28,26 +28,38 @@ A Kataan vault is a normal directory:
 vault/
 ├── index.toml
 ├── raw/
+│   ├── index.md
 │   ├── index.toml
 │   ├── pasted-chat-about-ai-kbs.md
 │   └── pasted-chat-about-ai-kbs.toml
 ├── people/
+│   ├── index.md
 │   ├── index.toml
-│   ├── andrej-karpathy.md
-│   └── andrej-karpathy.toml
+│   └── company-x/
+│       ├── index.md
+│       ├── index.toml
+│       ├── jane-doe.md
+│       └── jane-doe.toml
 ├── projects/
+│   ├── index.md
 │   ├── index.toml
-│   ├── kataan-redesign.md
-│   └── kataan-redesign.toml
+│   └── company-x/
+│       ├── index.md
+│       ├── index.toml
+│       ├── q2-launch.md
+│       └── q2-launch.toml
 ├── notes/
+│   ├── index.md
 │   ├── index.toml
 │   ├── ai-compiled-knowledge-bases.md
 │   └── ai-compiled-knowledge-bases.toml
 ├── topics/
+│   ├── index.md
 │   ├── index.toml
 │   ├── knowledge-bases.md
 │   └── knowledge-bases.toml
 └── type/
+    ├── index.md
     ├── index.toml
     ├── raw.md
     ├── raw.toml
@@ -75,6 +87,9 @@ name = "My Kataan Vault"
 created_at = "2026-04-28T12:00:00Z"
 updated_at = "2026-04-28T12:30:00Z"
 
+[limits]
+max_folder_depth = 4
+
 [type_folders]
 raw = "raw"
 project = "projects"
@@ -84,7 +99,7 @@ topic = "topics"
 type-definition = "type"
 ```
 
-`schema_version` is required and gives Kataan a migration path as the vault format evolves. The `type_folders` table defines the authoritative type-to-folder mapping for the vault.
+`schema_version` is required and gives Kataan a migration path as the vault format evolves. The `type_folders` table defines the authoritative type-to-folder mapping for the vault. `[limits].max_folder_depth` defaults to `4` and counts segments after the type folder, so `projects/a/b/c/foo` has depth `4`.
 
 ## File model
 
@@ -134,9 +149,9 @@ projects/
 
 ## Folder and type mapping
 
-Kataan uses a 1:1 mapping between core types and folders. A document with `type = "project"` lives in `projects/`, a document with `type = "person"` lives in `people/`, and so on. Validation should report any file whose location does not match its `type`.
+Kataan uses a 1:1 mapping between types and top-level folders. A document with `type = "project"` lives somewhere under `projects/`, a document with `type = "person"` lives somewhere under `people/`, and so on. Intermediate path segments are containment/search structure only; they do not change the document type. Validation reports any file whose top-level folder does not match its `type`.
 
-Initial mappings:
+Core mappings:
 
 | Type | Folder |
 |---|---|
@@ -149,7 +164,7 @@ Initial mappings:
 
 ## Folder indexes
 
-Each folder has an `index.toml` file describing the purpose of the folder and listing the documents in that folder. This lets Kataan assemble and render folder views quickly by loading the folder index instead of scanning every file.
+Every folder, including intermediate folders, has `index.md` and `index.toml`. The index pair is the document for that folder node; there are no untyped scaffolding folders. Each folder index describes that folder and lists direct child documents and subfolders. This lets Kataan assemble and render folder views quickly by loading folder indexes instead of scanning every file.
 
 Example `projects/index.toml`:
 
@@ -168,7 +183,7 @@ markdown_checksum = "blake3:..."
 toml_checksum = "blake3:..."
 ```
 
-Each `documents` entry identifies one document in the folder. `slug` is the filename without `.md` or `.toml`, relative to the folder that owns the index.
+Each `documents` entry identifies one direct document in the folder. `slug` is the filename without `.md` or `.toml`, relative to the folder that owns the index. A folder's own `index.md` and `index.toml` hash into that folder's checksum, not the parent's document list.
 
 `index.toml` is system-managed. Humans may read it, but normal editing should happen through the application or agent tools so the index does not drift from the actual files. Validation should report any mismatch between `documents` and the files in the folder.
 
@@ -187,22 +202,22 @@ This lets Kataan quickly detect whether the human-readable content changed since
 
 Checksums are computed over exact raw file bytes. Kataan does not normalize line endings, strip BOMs, trim whitespace, or parse and re-serialize before hashing.
 
-Each folder `index.toml` stores a Merkle-tree-like folder checksum. The folder checksum is computed from the sorted list of child document checksums in that folder. For each document, both the Markdown file and its TOML sidecar contribute to the folder checksum.
+Each folder `index.toml` stores a recursive Merkle-style folder checksum. The checksum is deterministic, post-order, and includes sorted direct documents plus sorted direct subfolder checksums.
 
 Conceptually:
 
 ```txt
 folder_checksum = blake3(
-  "kataan-redesign:md:" + markdown_checksum + "\n" +
-  "kataan-redesign:toml:" + toml_checksum + "\n" +
-  "other-document:md:" + markdown_checksum + "\n" +
-  "other-document:toml:" + toml_checksum + "\n"
+  sorted entries of:
+    "doc:{slug}:md:{md_checksum}"
+    "doc:{slug}:toml:{toml_checksum}"
+    "subfolder:{name}:{subfolder_checksum}"
 )
 ```
 
-`index.toml` itself does not contribute to `folder_checksum`; it stores the computed folder state. If subfolders are included later, their folder checksums can be included as child hashes using the same sorted, deterministic approach.
+The folder's own `index.md` and `index.toml` hash into the folder's checksum, not the parent's document list.
 
-Kataan should include a `rebuild-indexes` command from the start. It recalculates document entries, Markdown checksums, TOML sidecar checksums, and folder checksums from the filesystem. On startup or scan, Kataan should detect checksum mismatches caused by direct human edits and refresh system-managed checksum and index fields.
+Kataan should include a `rebuild-indexes` command from the start. Rebuild fixes drift by recalculating document entries, Markdown checksums, TOML sidecar checksums, and recursive folder checksums from the filesystem. Rebuild does not auto-fix structural violations such as missing sidecars, unresolved refs, unknown types, or depth violations; validation reports those.
 
 Folder index document fields:
 
@@ -216,10 +231,14 @@ Folder index document fields:
 
 ## Identity, references, and naming
 
-Each document has a canonical ID based on its vault-relative path without extension:
+Each document has a canonical ID based on its vault-relative Unix path without extension. IDs never have a leading slash, always use `/` separators even on Windows, and are normalized at load time.
+
+Folder index documents use the folder path directly. Regular documents use `folder/slug`.
 
 ```txt
-projects/kataan-redesign
+projects
+projects/company-x
+projects/company-x/internal/q2-launch
 topics/knowledge-bases
 people/andrej-karpathy
 ```
@@ -231,7 +250,7 @@ related_to = ["topics/knowledge-bases"]
 sources = ["raw/pasted-chat-about-ai-kbs"]
 ```
 
-Filenames and IDs use lowercase kebab-case. The Markdown file, TOML sidecar, and index entry all share the same slug.
+Filenames, IDs, and every path segment use lowercase kebab-case. The Markdown file, TOML sidecar, and index entry all share the same slug.
 
 Because canonical IDs are path-based, rename and move operations must update the Markdown file, TOML sidecar, containing folder indexes, checksums, and references to the old canonical ID.
 
@@ -241,18 +260,18 @@ Relationship fields are directional and store canonical IDs. TOML relationships 
 
 | Field | Direction | Meaning |
 |---|---|---|
-| `belongs_to` | child → parent | This document belongs to a broader document or container. |
+| `belongs_to` | child → parent | Optional explicit broader-parent relationship when path containment is not sufficient. |
 | `related_to` | source → target | This document is laterally related to another document. |
 | `sources` | derived → source | This document was derived from or informed by another document, often in `raw/`. |
 
 `related_to` is stored on one document, but graph queries treat it as an undirected edge. If A lists B in `related_to`, queries for B's related documents should include A even if B does not list A.
 
-Containment uses only `belongs_to`. There is no `has` field. Parent or container views are computed by finding documents whose `belongs_to` includes the parent ID.
+Path structure is the primary containment model. Folder nodes are documents via their `index.md` and `index.toml`, but their canonical IDs are the folder paths themselves, such as `projects` or `projects/company-x`, not `projects/index`. Ancestors are derived from canonical IDs. There is no `has` field. Explicit broader-parent views may also use `belongs_to` where useful.
 
 Example:
 
 ```toml
-belongs_to = ["projects/kataan-redesign"]
+belongs_to = ["projects/company-x"]
 ```
 
 ## Core metadata fields
@@ -260,7 +279,7 @@ belongs_to = ["projects/kataan-redesign"]
 | Field | Meaning |
 |---|---|
 | `type` | What kind of thing this file is: `raw`, `project`, `person`, `topic`, `note`, `type-definition`, etc. |
-| `status` | Lifecycle state, such as active, paused, done, archived, draft, or raw. |
+| `status` | Optional lifecycle state, such as draft, active, paused, done, or archived. Raw documents use `type = "raw"`; they do not need `status = "raw"`. |
 | `markdown` | Markdown file associated with this TOML sidecar. |
 | `markdown_checksum` | BLAKE3 checksum of the associated Markdown file. |
 | `aliases` | Alternative names the human or agent can use to recognize this thing. |
@@ -277,7 +296,6 @@ Controlled values use lowercase kebab-case. Timestamps use RFC3339 UTC strings, 
 
 Initial `status` values:
 
-- `raw`
 - `draft`
 - `active`
 - `paused`
@@ -287,10 +305,10 @@ Initial `status` values:
 Typical lifecycle:
 
 ```txt
-raw → draft → active → done → archived
+draft → active → done → archived
 ```
 
-Not every document needs every state. For example, a raw intake file may stay `raw`, and a topic may move directly from `draft` to `active`.
+Not every document needs every state. Raw documents are identified by `type = "raw"`; they may omit `status` or use the normal lifecycle if archived.
 
 Initial actor values for `created_by` and `last_updated_by`:
 
@@ -300,7 +318,7 @@ Initial actor values for `created_by` and `last_updated_by`:
 
 ## Labels
 
-Labels are lightweight tags that can be attached to any document.
+Labels are lightweight tags that can be attached to any document. Path ancestors are also first-class searchable keywords from the user's perspective.
 
 Example:
 
@@ -320,10 +338,13 @@ Label conventions:
 - Labels are global across the vault.
 - Labels do not control where a document lives.
 - Labels may later be promoted into topics if they become important enough to deserve their own page.
+- Ancestors are derived from the canonical ID at load time and are not stored in TOML.
+- The query layer exposes a unified facet: `union(ancestors, labels)`.
+- Filtering by `company-x` returns documents where `company-x` appears in either path ancestors or explicit labels.
 
 ## Types
 
-The initial `type` enum includes:
+The vault ships with a fixed core set:
 
 - `raw`
 - `project`
@@ -332,9 +353,11 @@ The initial `type` enum includes:
 - `topic`
 - `type-definition`
 
-The `type` enum includes both content types and system types. Every valid `type` must have a corresponding type definition in `type/`.
+Users may define additional types. Every valid `type` value, core or custom, must have a corresponding type definition in `type/` and a matching entry in root `[type_folders]`. Custom types behave identically to built-in types at runtime: path-as-containment, ancestors-as-keywords, depth limits, sidecar TOML, validation, and checksums all apply.
 
 Type definitions live in `type/`.
+
+To add a custom type, create `type/{name}.md` and `type/{name}.toml`, set `type = "type-definition"`, include `name` and `folder`, add the corresponding `[type_folders]` entry in `vault/index.toml`, and create the target folder.
 
 A type definition has a Markdown explanation and a TOML metadata file:
 
@@ -371,7 +394,6 @@ Example `raw/pasted-chat-about-ai-kbs.toml`:
 
 ```toml
 type = "raw"
-status = "raw"
 source = "pasted-text"
 source_label = "Pasted chat about AI knowledge bases"
 ingested_at = "2026-04-28T12:00:00Z"
@@ -457,6 +479,12 @@ The agent should answer questions like:
 - What relationships should be recorded?
 - Should the raw source be preserved?
 
+## Agent runtime
+
+Kataan includes a Rust-native `kataan-agent` crate for AI-assisted vault work. The first provider targets are API-key providers such as OpenAI and Anthropic. ChatGPT subscription / Codex-style OAuth is deferred behind the same provider-neutral trait.
+
+The agent should use the smallest useful context: vault and folder indexes first, metadata and graph summaries next, full Markdown only when needed. Tool calls are represented as provider-neutral JSON-schema-described actions, but v1 agent output remains proposal-first and human-reviewed.
+
 ## Agent proposals
 
 Agents should propose changes before writing organized knowledge. A proposal is a reviewable set of actions.
@@ -524,7 +552,41 @@ Agents can:
 
 The agent is a collaborator, not the owner.
 
-Agent changes should be diff-based and non-destructive. Agents should not silently overwrite human edits. If a file changed since the agent analyzed it, the proposal should be regenerated or shown as a conflict for human review.
+Agent changes should be diff-based and non-destructive. Agents should not silently overwrite human edits. If the vault generation changed since the agent analyzed it, the proposal should be regenerated or shown as a conflict for human review.
+
+## Concurrency and writes
+
+Kataan uses a single-writer model in the server. API writes are serialized through a command queue drained by one task holding mutable vault state. Reads use `arc-swap<Vault>` for parallel lock-free access to an atomically swapped `Arc` snapshot.
+
+Each successful write bumps a vault generation counter. In-flight agent proposals carry the generation they were computed against, and apply-time refuses stale proposals if the counter advanced.
+
+Every Markdown and TOML write is atomic: write a temporary file in the same directory, fsync, then rename/persist. Rebuild operations are per-folder atomic so a crash mid-rebuild does not corrupt indexes.
+
+There is no cross-process file lock in v1. Users should not run mutating CLI commands while the server is up.
+
+## Boot and API modes
+
+Server boot:
+
+1. Load `vault/index.toml` and limits.
+2. Walk the vault and compute BLAKE3 checksums on all files.
+3. Detect drift vs. stored checksums in folder indexes.
+4. Validate structure, references, depth, and type-folder mapping.
+5. If errors exist, serve read-only API plus diagnostics and expose rebuild.
+6. If clean, enable the full read/write API.
+
+The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`.
+
+## MCP surface
+
+MCP v1 is read + repair only:
+
+- `read_document(id)`
+- `list_folder(path)`
+- `validate()`
+- `rebuild_indexes()`
+
+Writes go through the proposal flow, not direct MCP tool calls.
 
 ## Raw vs organized knowledge
 
@@ -584,7 +646,7 @@ Kataan should start small:
 - intake input box
 - agent proposal flow
 - simple file browser
-- no MCP requirement for now
+- MCP read/repair surface
 - no complex database unless proven necessary
 
 ## Guiding principle
