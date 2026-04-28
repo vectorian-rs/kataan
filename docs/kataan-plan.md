@@ -51,9 +51,23 @@ Implement in `crates/kataan-core`.
   - `folder`
 - Validate root `[type_folders]` matches type definitions.
 
-### 5. In-memory vault graph
+### 5. Ontology
 
-After document loading works, build an in-memory graph from loaded TOML metadata.
+After type registry loading works, load and validate `vault/ontology.toml`.
+
+Ontology validation should check:
+
+- `ontology.toml` exists; otherwise report `missing-ontology`.
+- Every predicate name is lowercase `snake_case`.
+- Every predicate has non-empty `from`, `to`, and `cardinality` fields.
+- A predicate cannot have both `inverse` and `symmetric = true`.
+- If `symmetric = true`, `from` and `to` must be equal.
+- Cardinality is one of `one-to-one`, `one-to-many`, `many-to-one`, or `many-to-many`.
+- Endpoint lists may mention custom types that are not yet used; document validation checks actual source and target document types when edges are present.
+
+### 6. In-memory vault graph
+
+After document and ontology loading works, build an in-memory graph from loaded TOML metadata.
 
 The graph should include:
 
@@ -61,14 +75,15 @@ The graph should include:
 - Folder index documents keyed by folder path directly, not by `/index` suffix.
 - `Document` holds parsed TOML metadata, Markdown content or lazy handle, and computed ancestors.
 - Path containment edges derived from canonical ID ancestors.
-- Optional `belongs_to` edges as explicit broader-parent relationships.
-- Computed children views from path containment and, where requested, reversed `belongs_to` edges.
-- `related_to` edges treated as undirected for traversal.
-- `sources` edges as derived → source provenance edges.
+- `Document` carries `edges: HashMap<PredicateName, Vec<CanonicalId>>` parsed from `[edges]`.
+- Graph builds `inverse_edges: HashMap<CanonicalId, HashMap<PredicateName, Vec<CanonicalId>>>` from ontology inverse declarations.
+- Symmetric predicates populate both directions under the same predicate name.
+- Graph exposes `outgoing(id, predicate)`, `incoming(id, predicate)`, and `neighbors(id, predicate)`.
+- Query code never asks documents to know their inverses; inverses always come from computed graph state.
 
 This graph will support folder/project views, backlink-style navigation, agent proposal context, and future "suggest missing links" features.
 
-### 6. Search facets
+### 7. Search facets
 
 - Derive `ancestors` from canonical IDs at load time and store them on loaded `Document`; do not store them in TOML.
 - Keep explicit `labels` from TOML unchanged across moves.
@@ -94,7 +109,11 @@ Validation should check:
 - Canonical ID depth does not exceed `[limits].max_folder_depth`; report `folder-depth-exceeded`.
 - `created_by` and `last_updated_by` are one of `human`, `agent`, `system` when present.
 - `status` is one of the normal lifecycle values when present; `raw` is not a valid status.
-- Relationship refs in `belongs_to`, `related_to`, and `sources` resolve to existing canonical IDs, including broken `related_to` targets.
+- Legacy relationship fields `belongs_to`, `related_to`, and `sources` are not part of the schema.
+- Every predicate in a document `[edges]` table exists in `vault/ontology.toml`.
+- The source document type is allowed by the predicate `from` list, or `from = ["*"]`.
+- Every edge target canonical ID resolves to an existing document.
+- Every target document type is allowed by the predicate `to` list, or `to = ["*"]`.
 - `index.toml` document entries and subfolder entries match files in the folder.
 - Folder `markdown_checksum`, `toml_checksum`, subfolder checksums, and recursive `folder_checksum` values are correct.
 
@@ -128,6 +147,12 @@ Example diagnostic codes:
 - `unresolved-reference`
 - `index-drift`
 - `folder-depth-exceeded`
+- `unknown-predicate`
+- `predicate-source-type-mismatch`
+- `predicate-target-type-mismatch`
+- `unresolved-edge-target`
+- `invalid-ontology-entry`
+- `missing-ontology`
 
 ## Phase 3: `kataan rebuild-indexes`
 
@@ -145,7 +170,7 @@ Should:
 - Update `updated_at` in root `index.toml`.
 - Preserve human-authored metadata where possible.
 
-This command makes direct filesystem edits repairable and keeps system-managed indexes canonical. Rebuild fixes checksum/index drift only; it does not auto-fix invariant violations such as missing sidecars, unresolved refs, unknown types, or depth violations.
+This command makes direct filesystem edits repairable and keeps system-managed indexes canonical. Rebuild fixes checksum/index drift only; it does not auto-fix invariant violations such as missing sidecars, unresolved refs, unknown types, edge/ontology errors, or depth violations.
 
 ## Phase 4: `kataan init`
 
@@ -158,6 +183,7 @@ kataan init <path> --name "My Vault"
 Should create:
 
 - Root `index.toml` with `[limits].max_folder_depth = 4`.
+- Default `ontology.toml` with the core edge vocabulary.
 - Core folders: `raw`, `projects`, `people`, `notes`, `topics`, `type`.
 - Folder `index.md` and `index.toml` files for every core folder.
 - Core type definitions:
@@ -205,6 +231,9 @@ Concurrency model:
 - Agent proposals carry the generation they were computed against; apply-time refuses if the counter advanced.
 - No cross-process file lock in v1; document that the CLI should not mutate the vault while the server is running.
 - The API checks depth on every write and rejects violations with `folder-depth-exceeded`.
+- Edge mutations are serialized through the same queue and validate against the ontology before commit.
+- Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate` operations.
+- Edge mutations bump the vault generation counter like any other write.
 
 ## Phase 6: Astro web UI
 
@@ -263,7 +292,8 @@ Provider strategy:
 - Keep `AgentProvider` provider-neutral so ChatGPT subscription / Codex-style OAuth can plug in later without spec changes.
 - Represent tools with JSON Schema argument objects so they can be validated and serialized without TypeBox.
 - MCP v1 exposes read + repair tools only: `read_document(id)`, `list_folder(path)`, `validate()`, and `rebuild_indexes()`.
-- Writes go through proposal review, not direct MCP tool calls.
+- MCP v1 does not expose edge mutation tools.
+- Writes and edge mutations go through proposal review or direct API calls from the UI, not direct MCP tool calls.
 
 Initial proposal support:
 
@@ -276,25 +306,44 @@ Initial proposal support:
 
 Defer hardened base-checksum conflict handling until the end-to-end flow works.
 
+## Relationship migration and v1 scope
+
+No automatic migration tool is required before 1.0. Existing vaults can be hand-edited:
+
+- `belongs_to` containment becomes path containment or ontology predicates such as `subproject_of`, `subtopic_of`, and `member_of`.
+- `related_to` becomes the symmetric ontology edge `related_to`.
+- `sources` becomes `derived_from`.
+
+Out of scope for v1:
+
+- Edge attributes such as dates, roles, and weights. Design the parser so a future edge can be either a bare ID string or a table with `target`.
+- Transitive reasoning over project/topic hierarchies.
+- SPARQL/RDF integration.
+- Cardinality enforcement.
+- Ontology versioning beyond `schema_version`.
+
 ## Recommended build order
 
 1. `CanonicalId` and path helpers.
 2. Vault and document loaders.
 3. Checksum functions.
 4. Type registry.
-5. Full `kataan validate`.
-6. `kataan rebuild-indexes`.
-7. `kataan init`.
-8. In-memory vault graph, with at least one test exercising graph construction before the server depends on it.
-9. Server read API.
-10. Read-only Astro UI.
-11. Manual raw intake.
-12. `kataan-agent` crate skeleton and API-key provider boundary.
-13. OpenAI/Anthropic ask commands.
-14. Server `/api/agent` endpoint.
-15. Global UI agent overlay.
-16. MCP read/repair surface.
-17. Agent proposals.
+5. Load and validate `vault/ontology.toml`.
+6. Full `kataan validate`, including edge and ontology checks.
+7. `kataan rebuild-indexes`.
+8. `kataan init`, including default `ontology.toml`.
+9. In-memory vault graph, with at least one test exercising graph construction before the server depends on it.
+10. Build inverse-edge adjacency map from ontology.
+11. Server read API.
+12. Read-only Astro UI.
+13. Manual raw intake.
+14. Edge mutation API.
+15. `kataan-agent` crate skeleton and API-key provider boundary.
+16. OpenAI/Anthropic ask commands.
+17. Server `/api/agent` endpoint.
+18. Global UI agent overlay.
+19. MCP read/repair surface.
+20. Agent proposals.
 
 ## Near-term success criteria
 

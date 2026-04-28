@@ -27,6 +27,7 @@ A Kataan vault is a normal directory:
 ```txt
 vault/
 ├── index.toml
+├── ontology.toml
 ├── raw/
 │   ├── index.md
 │   ├── index.toml
@@ -129,9 +130,10 @@ markdown_checksum = "blake3:..."
 
 aliases = ["Amazing Project", "MAP"]
 labels = ["rust", "local-first", "knowledge-workspace"]
-belongs_to = []
+
+[edges]
 related_to = ["topics/knowledge-bases", "topics/ai-agents"]
-sources = ["raw/pasted-chat-about-ai-kbs"]
+derived_from = ["raw/pasted-chat-about-ai-kbs"]
 
 created_by = "human"
 last_updated_by = "agent"
@@ -243,36 +245,62 @@ topics/knowledge-bases
 people/andrej-karpathy
 ```
 
-Relationship fields use canonical IDs, not bare filenames, to avoid collisions:
+Edges use canonical IDs, not bare filenames, to avoid collisions:
 
 ```toml
+[edges]
 related_to = ["topics/knowledge-bases"]
-sources = ["raw/pasted-chat-about-ai-kbs"]
+derived_from = ["raw/pasted-chat-about-ai-kbs"]
 ```
 
 Filenames, IDs, and every path segment use lowercase kebab-case. The Markdown file, TOML sidecar, and index entry all share the same slug.
 
 Because canonical IDs are path-based, rename and move operations must update the Markdown file, TOML sidecar, containing folder indexes, checksums, and references to the old canonical ID.
 
-## Relationship semantics
+## Relationship ontology and edges
 
-Relationship fields are directional and store canonical IDs. TOML relationships are authoritative for graph queries.
-
-| Field | Direction | Meaning |
-|---|---|---|
-| `belongs_to` | child → parent | Optional explicit broader-parent relationship when path containment is not sufficient. |
-| `related_to` | source → target | This document is laterally related to another document. |
-| `sources` | derived → source | This document was derived from or informed by another document, often in `raw/`. |
-
-`related_to` is stored on one document, but graph queries treat it as an undirected edge. If A lists B in `related_to`, queries for B's related documents should include A even if B does not list A.
-
-Path structure is the primary containment model. Folder nodes are documents via their `index.md` and `index.toml`, but their canonical IDs are the folder paths themselves, such as `projects` or `projects/company-x`, not `projects/index`. Ancestors are derived from canonical IDs. There is no `has` field. Explicit broader-parent views may also use `belongs_to` where useful.
-
-Example:
+Document relationships live under one `[edges]` table. Keys are predicate names defined in `vault/ontology.toml`; values are target canonical IDs.
 
 ```toml
-belongs_to = ["projects/company-x"]
+[edges]
+works_at = ["companies/acme"]
+contributes_to = ["projects/kataan-redesign"]
+knows = ["people/alex-smith"]
 ```
+
+Edges are directional and stored only on the source document. The query layer computes inverse and symmetric adjacency at load time from the ontology; inverse edges are never stored in document TOML.
+
+`vault/ontology.toml` defines the relationship vocabulary:
+
+```toml
+schema_version = "0.1.0"
+
+[edges.works_at]
+from = ["person"]
+to = ["company"]
+inverse = "employs"
+cardinality = "many-to-many"
+description = "Person is employed by company."
+
+[edges.related_to]
+from = ["*"]
+to = ["*"]
+symmetric = true
+cardinality = "many-to-many"
+description = "Generic lateral relationship; use a more specific edge if one fits."
+```
+
+Predicate names use lowercase `snake_case`. Endpoint type lists are polymorphic; `"*"` means any type. Cardinality is advisory in v1 and exposed to the UI, but not enforced.
+
+A predicate cannot be both `symmetric = true` and have an `inverse`. If `symmetric = true`, `from` and `to` must match.
+
+Every predicate used in document `[edges]` must exist in `ontology.toml`. Validation checks source type, target resolution, target type, predicate shape, and ontology presence. Edges are written only by the UI or agent through the API write queue; humans should not hand-edit edge tables in TOML.
+
+`kataan init` creates a default ontology with common people, organization, project, authorship, provenance, topical, and lateral predicates. Users may edit `vault/ontology.toml` directly. The ontology is vault-root configuration alongside `index.toml` and is not checksummed into the folder Merkle tree in v1.
+
+The previous top-level TOML fields `belongs_to`, `related_to`, and `sources` are removed from the schema. Path containment covers filesystem hierarchy; ontology predicates such as `subproject_of`, `subtopic_of`, and `member_of` cover explicit containment. `related_to` remains as a symmetric ontology edge. `sources` becomes `derived_from`.
+
+Path structure remains the primary containment model. Folder nodes are documents via their `index.md` and `index.toml`, but their canonical IDs are the folder paths themselves, such as `projects` or `projects/company-x`, not `projects/index`. Ancestors are derived from canonical IDs.
 
 ## Core metadata fields
 
@@ -284,9 +312,7 @@ belongs_to = ["projects/company-x"]
 | `markdown_checksum` | BLAKE3 checksum of the associated Markdown file. |
 | `aliases` | Alternative names the human or agent can use to recognize this thing. |
 | `labels` | Lightweight tags for filtering and grouping, such as `aws`, `arm64`, `rust`, or `local-first`. |
-| `belongs_to` | Parent relationship. |
-| `related_to` | Lateral relationship. |
-| `sources` | Raw or organized documents this document was derived from, using canonical IDs. |
+| `edges` | Relationship table keyed by ontology predicate name. |
 | `created_by` | Who created the file: human or agent. |
 | `last_updated_by` | Who last changed the file: human or agent. |
 
@@ -433,10 +459,11 @@ retrieved_at = "2026-04-28T11:58:00Z"
 ingested_at = "2026-04-28T12:00:00Z"
 ```
 
-Organized documents derived from raw input should include `sources`:
+Organized documents derived from raw input should include a provenance edge:
 
 ```toml
-sources = ["raw/pasted-chat-about-ai-kbs"]
+[edges]
+derived_from = ["raw/pasted-chat-about-ai-kbs"]
 ```
 
 ## Intake process
@@ -510,7 +537,7 @@ operation = "append-summary"
 kind = "link"
 from = "projects/kataan-redesign"
 to = "topics/knowledge-bases"
-relationship = "related_to"
+predicate = "related_to"
 ```
 
 Initial action kinds:
@@ -518,7 +545,7 @@ Initial action kinds:
 - `create`: create a new Markdown/TOML document pair.
 - `update`: change an existing document, such as appending a summary or editing metadata.
 - `merge`: combine one document into another and update references.
-- `link`: add a relationship between documents.
+- `link`: add an ontology-backed edge between documents.
 - `delete`: remove files from disk.
 
 Prefer `status = "archived"` for normal removal from active views. The `delete` action is reserved for actual file removal and requires explicit human approval. Destructive actions such as `delete`, `merge`, or large rewrites must be reviewable before execution.
@@ -575,7 +602,7 @@ Server boot:
 5. If errors exist, serve read-only API plus diagnostics and expose rebuild.
 6. If clean, enable the full read/write API.
 
-The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`.
+The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`. Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate`; each mutation validates against `ontology.toml` before commit and bumps the vault generation counter.
 
 ## MCP surface
 
@@ -586,7 +613,7 @@ MCP v1 is read + repair only:
 - `validate()`
 - `rebuild_indexes()`
 
-Writes go through the proposal flow, not direct MCP tool calls.
+Writes and edge mutations go through proposal review or direct API calls from the UI, not direct MCP tool calls.
 
 ## Raw vs organized knowledge
 
@@ -633,6 +660,15 @@ message = "Markdown file is missing a matching TOML sidecar."
 ```
 
 Diagnostic codes use lowercase kebab-case and should be stable enough for tools and UI filters.
+
+Edge and ontology diagnostic codes include:
+
+- `unknown-predicate`
+- `predicate-source-type-mismatch`
+- `predicate-target-type-mismatch`
+- `unresolved-edge-target`
+- `invalid-ontology-entry`
+- `missing-ontology`
 
 ## Initial technical direction
 
