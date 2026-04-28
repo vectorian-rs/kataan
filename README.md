@@ -28,3 +28,15 @@ To use a different backend port:
 ```sh
 KATAAN_API_PROXY_TARGET=http://127.0.0.1:3002 bun run dev:web
 ```
+
+To use a different web port:
+
+```sh
+KATAAN_WEB_PORT=3003 bun run dev:web
+```
+
+Both can be combined:
+
+```sh
+KATAAN_WEB_PORT=3003 KATAAN_API_PROXY_TARGET=http://127.0.0.1:3002 bun run dev:web
+```
