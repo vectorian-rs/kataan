@@ -121,6 +121,34 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 }
             };
 
+            if let Some(status) = &metadata.status {
+                if !["raw", "draft", "active", "paused", "done", "archived"]
+                    .contains(&status.as_str())
+                {
+                    issues.push(
+                        Diagnostic::error("invalid-status", format!("unknown status `{status}`"))
+                            .with_path(relative_toml_path.clone()),
+                    );
+                }
+            }
+
+            for (field, actor) in [
+                ("created_by", metadata.created_by.as_deref()),
+                ("last_updated_by", metadata.last_updated_by.as_deref()),
+            ] {
+                if let Some(actor) = actor {
+                    if !["human", "agent", "system"].contains(&actor) {
+                        issues.push(
+                            Diagnostic::error(
+                                "invalid-actor",
+                                format!("{field} has unknown actor `{actor}`"),
+                            )
+                            .with_path(relative_toml_path.clone()),
+                        );
+                    }
+                }
+            }
+
             match vault.index.type_folders.get(&metadata.r#type) {
                 Some(expected_folder) if expected_folder != folder => {
                     issues.push(
@@ -177,6 +205,43 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn reports_invalid_status_and_actor() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("projects/kataan-redesign.md"),
+            "# Kataan Redesign\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign.toml"),
+            r#"
+type = "project"
+status = "Active"
+markdown = "kataan-redesign.md"
+created_by = "robot"
+last_updated_by = "agent"
+"#,
+        )
+        .unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(!report.is_ok());
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "invalid-status"));
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "invalid-actor"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn reports_type_folder_mismatch() {
