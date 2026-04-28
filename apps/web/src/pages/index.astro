@@ -10,28 +10,34 @@ const title = 'Kataan';
     <style>
       @import "https://unpkg.com/open-props";
       @import "https://unpkg.com/open-props/normalize.min.css";
-      @import "https://unpkg.com/open-props/buttons.min.css";
 
       :root {
         color-scheme: light dark;
         --brand: var(--teal-6);
-        --brand-soft: var(--teal-0);
-        --text-1: light-dark(var(--gray-12), var(--gray-0));
-        --text-2: light-dark(var(--gray-7), var(--gray-4));
-        --surface-1: light-dark(var(--gray-0), var(--gray-12));
-        --surface-2: light-dark(var(--gray-1), var(--gray-11));
-        --surface-3: light-dark(white, var(--gray-10));
-        --surface-selected: light-dark(var(--teal-0), color-mix(in srgb, var(--teal-9) 22%, transparent));
-        --border: light-dark(var(--gray-3), color-mix(in srgb, var(--gray-7) 45%, transparent));
-        --shadow-card: 0 1px 2px color-mix(in srgb, black 8%, transparent);
+        --brand-2: var(--blue-6);
+        --text-1: light-dark(var(--gray-12), var(--gray-1));
+        --text-2: light-dark(var(--gray-7), var(--gray-5));
+        --text-3: light-dark(var(--gray-6), var(--gray-6));
+        --surface-1: light-dark(#f8f8f7, #101214);
+        --surface-2: light-dark(#ffffff, #15181b);
+        --surface-3: light-dark(#f1f2f1, #1b1f23);
+        --surface-hover: light-dark(#eceeed, #20252a);
+        --surface-active: light-dark(#e8f6f1, #163129);
+        --border: light-dark(#e4e5e4, #2a2f35);
+        --shadow-soft: 0 1px 2px rgb(0 0 0 / 8%);
+      }
+
+      html,
+      body {
+        block-size: 100%;
       }
 
       body {
-        min-block-size: 100vh;
         margin: 0;
         color: var(--text-1);
         background: var(--surface-1);
-        font-family: var(--font-sans);
+        font-family: Inter, var(--font-sans);
+        font-size: 14px;
       }
 
       button {
@@ -40,265 +46,329 @@ const title = 'Kataan';
 
       .app-shell {
         display: grid;
-        grid-template-columns: 17rem 23rem minmax(30rem, 1fr) 22rem;
-        min-block-size: 100vh;
+        grid-template-columns: 240px 360px minmax(520px, 1fr) 300px;
+        block-size: 100vh;
         overflow: hidden;
       }
 
       .sidebar,
       .document-list,
+      .reader,
       .properties {
-        block-size: 100vh;
+        min-block-size: 0;
         overflow: auto;
-        border-inline-end: 1px solid var(--border);
         background: var(--surface-2);
       }
 
-      .properties {
-        border-inline: 1px solid var(--border) 0;
-        background: var(--surface-3);
+      .sidebar,
+      .document-list,
+      .reader {
+        border-inline-end: 1px solid var(--border);
       }
 
       .sidebar {
         display: grid;
         grid-template-rows: auto 1fr auto;
+        background: var(--surface-1);
       }
 
-      .brand {
-        padding: var(--size-5);
+      .app-header,
+      .list-header,
+      .reader-header,
+      .properties-header {
+        display: flex;
+        align-items: center;
+        min-block-size: 52px;
+        padding: 0 16px;
         border-block-end: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface-2) 94%, transparent);
+        backdrop-filter: blur(12px);
       }
 
-      .brand h1 {
+      .app-header {
+        display: block;
+        padding-block: 14px;
+      }
+
+      .app-title {
         margin: 0;
-        font-size: var(--font-size-5);
-        letter-spacing: var(--font-letterspacing-0);
+        font-size: 22px;
+        font-weight: 750;
+        letter-spacing: -0.03em;
       }
 
-      .brand p,
+      .app-subtitle,
       .muted {
         color: var(--text-2);
       }
 
+      .app-subtitle {
+        margin-block-start: 2px;
+        font-size: 13px;
+      }
+
       .section {
-        padding: var(--size-4);
+        padding: 14px 10px;
       }
 
-      .section-title {
-        margin-block: 0 var(--size-3);
-        color: var(--text-2);
-        font-size: var(--font-size-0);
-        font-weight: var(--font-weight-7);
-        letter-spacing: var(--font-letterspacing-2);
-        text-transform: uppercase;
-      }
-
-      .toolbar {
-        display: flex;
-        gap: var(--size-2);
-        padding: var(--size-4);
+      .section + .section {
         border-block-start: 1px solid var(--border);
       }
 
-      .button {
-        flex: 1;
-        min-block-size: 2.35rem;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-2);
-        padding: var(--size-2) var(--size-3);
-        background: var(--surface-3);
-        color: var(--text-1);
-        box-shadow: var(--shadow-card);
-      }
-
-      .button.primary {
-        border-color: color-mix(in srgb, var(--brand) 50%, transparent);
-        background: var(--brand);
-        color: white;
+      .section-title {
+        margin: 0 0 8px 8px;
+        color: var(--text-3);
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
 
       .list {
         display: grid;
-        gap: var(--size-1);
+        gap: 2px;
       }
 
-      .item {
+      .nav-row,
+      .document-row {
         inline-size: 100%;
         border: 0;
-        border-radius: var(--radius-2);
-        padding: 0.55rem 0.7rem;
+        border-radius: 8px;
         background: transparent;
         color: var(--text-1);
         text-align: start;
       }
 
-      .item:hover,
-      .item.active {
-        background: var(--surface-selected);
-      }
-
-      .folder-row {
+      .nav-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: var(--size-3);
-        font-weight: var(--font-weight-6);
+        gap: 12px;
+        min-block-size: 34px;
+        padding: 0 9px;
+        font-weight: 600;
+      }
+
+      .nav-row:hover,
+      .document-row:hover {
+        background: var(--surface-hover);
+      }
+
+      .nav-row.active,
+      .document-row.active {
+        background: var(--surface-active);
+        color: light-dark(var(--teal-8), var(--teal-2));
       }
 
       .folder-name {
         display: flex;
         align-items: center;
-        gap: var(--size-2);
+        gap: 8px;
+        min-inline-size: 0;
       }
 
       .folder-icon {
         display: inline-grid;
+        flex: 0 0 auto;
         place-items: center;
         color: var(--brand);
       }
 
       .folder-icon svg {
-        inline-size: 1rem;
-        block-size: 1rem;
+        inline-size: 16px;
+        block-size: 16px;
       }
 
       .badge {
-        min-inline-size: 2rem;
-        border-radius: var(--radius-round);
-        padding: 0.15rem 0.5rem;
+        min-inline-size: 1.6rem;
+        border-radius: 999px;
+        padding: 1px 7px;
         background: light-dark(var(--gray-2), var(--gray-9));
         color: var(--text-2);
-        font-size: var(--font-size-0);
+        font-size: 12px;
         text-align: center;
       }
 
-      .document-list-header,
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        padding: 10px;
+        border-block-start: 1px solid var(--border);
+      }
+
+      .button {
+        flex: 1;
+        block-size: 34px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--surface-2);
+        color: var(--text-1);
+        box-shadow: var(--shadow-soft);
+      }
+
+      .button.primary {
+        border-color: color-mix(in srgb, var(--brand) 55%, transparent);
+        background: var(--brand);
+        color: white;
+      }
+
+      .list-header,
+      .reader-header,
       .properties-header {
         position: sticky;
         inset-block-start: 0;
-        z-index: 1;
-        padding: var(--size-4);
-        border-block-end: 1px solid var(--border);
-        background: color-mix(in srgb, var(--surface-3) 92%, transparent);
-        backdrop-filter: blur(12px);
+        z-index: 2;
+        justify-content: space-between;
       }
 
-      .document-list-header h2,
+      .list-header h2,
+      .reader-header h2,
       .properties-header h2 {
         margin: 0;
-        font-size: var(--font-size-2);
+        font-size: 15px;
+        font-weight: 750;
       }
 
-      .document-card {
-        border-block-end: 1px solid var(--border);
+      .document-row {
+        display: grid;
+        gap: 4px;
         border-radius: 0;
-        padding: var(--size-3) var(--size-4);
+        border-block-end: 1px solid var(--border);
+        padding: 12px 16px;
       }
 
-      .document-card strong {
-        display: block;
-        margin-block-end: var(--size-1);
+      .document-row strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 14px;
+      }
+
+      .document-row span {
+        overflow: hidden;
+        color: var(--text-2);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       .reader {
-        block-size: 100vh;
-        overflow: auto;
-        background:
-          radial-gradient(circle at top, color-mix(in srgb, var(--brand) 5%, transparent), transparent 24rem),
-          var(--surface-3);
-      }
-
-      .reader-header {
-        position: sticky;
-        inset-block-start: 0;
-        z-index: 1;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--size-3);
-        padding: var(--size-4) var(--size-6);
-        border-block-end: 1px solid var(--border);
-        background: color-mix(in srgb, var(--surface-3) 90%, transparent);
-        backdrop-filter: blur(12px);
-      }
-
-      .reader-title {
-        margin: 0;
-        font-size: var(--font-size-2);
+        background: var(--surface-2);
       }
 
       .reader-body {
-        max-inline-size: 54rem;
+        max-inline-size: 760px;
         margin-inline: auto;
-        padding: var(--size-8) var(--size-6);
-        font-size: var(--font-size-2);
-        line-height: var(--font-lineheight-4);
+        padding: 56px 48px 96px;
+        color: var(--text-1);
+        font-size: 18px;
+        line-height: 1.72;
+      }
+
+      .reader-body h1,
+      .reader-body h2,
+      .reader-body h3 {
+        line-height: 1.15;
+        letter-spacing: -0.04em;
+      }
+
+      .reader-body h1 {
+        margin-block: 0 28px;
+        border-block-end: 1px solid var(--border);
+        padding-block-end: 24px;
+        font-size: clamp(2.2rem, 4vw, 3.8rem);
+      }
+
+      .reader-body h2 {
+        margin-block-start: 44px;
+        font-size: 1.65rem;
+      }
+
+      .reader-body p,
+      .reader-body ul,
+      .reader-body ol {
+        margin-block: 0 1.1em;
+      }
+
+      .reader-body a {
+        color: var(--brand);
+      }
+
+      .reader-body code {
+        border-radius: 5px;
+        padding: 0.1em 0.32em;
+        background: var(--surface-3);
+        font-size: 0.9em;
+      }
+
+      .reader-body pre {
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        background: light-dark(var(--gray-1), var(--gray-12));
+        font-size: 0.9rem;
+        line-height: 1.5;
       }
 
       .empty-state {
         display: grid;
         place-items: center;
-        min-block-size: 40vh;
+        min-block-size: calc(100vh - 52px);
         color: var(--text-2);
         text-align: center;
       }
 
       .empty-card {
-        max-inline-size: 28rem;
+        max-inline-size: 24rem;
         border: 1px solid var(--border);
-        border-radius: var(--radius-3);
-        padding: var(--size-6);
-        background: color-mix(in srgb, var(--surface-3) 92%, transparent);
-        box-shadow: var(--shadow-card);
+        border-radius: 14px;
+        padding: 24px;
+        background: var(--surface-2);
+        box-shadow: var(--shadow-soft);
       }
 
       .empty-card strong {
         display: block;
-        margin-block-end: var(--size-2);
+        margin-block-end: 6px;
         color: var(--text-1);
-        font-size: var(--font-size-3);
-      }
-
-      pre {
-        overflow: auto;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-3);
-        padding: var(--size-5);
-        background: light-dark(white, color-mix(in srgb, var(--gray-11) 82%, black));
-        box-shadow: var(--shadow-card);
-        white-space: pre-wrap;
+        font-size: 20px;
       }
 
       .metadata-grid {
         display: grid;
-        gap: var(--size-3);
+        gap: 0;
       }
 
       .property {
         display: grid;
-        gap: var(--size-1);
+        grid-template-columns: 92px minmax(0, 1fr);
+        gap: 12px;
         border-block-end: 1px solid var(--border);
-        padding-block: var(--size-3);
+        padding: 11px 16px;
       }
 
       .property-label {
-        color: var(--text-2);
-        font-size: var(--font-size-0);
-        font-weight: var(--font-weight-7);
-        letter-spacing: var(--font-letterspacing-1);
+        color: var(--text-3);
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
       }
 
       .property-value {
         overflow-wrap: anywhere;
+        color: var(--text-2);
+        font-size: 13px;
       }
 
       .diagnostic {
-        border-inline-start: 4px solid var(--gray-6);
-        border-radius: var(--radius-2);
-        padding: var(--size-3);
-        background: light-dark(white, var(--gray-10));
-        box-shadow: var(--shadow-card);
+        border-inline-start: 3px solid var(--gray-6);
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: var(--surface-2);
+        color: var(--text-2);
+        font-size: 12px;
       }
 
       .diagnostic.error {
@@ -313,9 +383,9 @@ const title = 'Kataan';
         border-inline-start-color: var(--blue-6);
       }
 
-      @media (width < 75rem) {
+      @media (width < 1100px) {
         .app-shell {
-          grid-template-columns: 16rem 1fr;
+          grid-template-columns: 220px 1fr;
         }
 
         .document-list,
@@ -329,9 +399,9 @@ const title = 'Kataan';
     <div class="app-shell">
       <aside class="sidebar">
         <div>
-          <header class="brand">
-            <h1>Kataan</h1>
-            <p id="vault-summary">Loading vault…</p>
+          <header class="app-header">
+            <h1 class="app-title">Kataan</h1>
+            <div id="vault-summary" class="app-subtitle">Loading vault…</div>
           </header>
 
           <section class="section">
@@ -352,7 +422,7 @@ const title = 'Kataan';
       </aside>
 
       <aside class="document-list">
-        <header class="document-list-header">
+        <header class="list-header">
           <h2 id="folder-title">Documents</h2>
         </header>
         <div id="documents" class="list muted section">Select a folder.</div>
@@ -360,8 +430,8 @@ const title = 'Kataan';
 
       <main class="reader">
         <header class="reader-header">
-          <h2 id="document-title" class="reader-title">Document</h2>
-          <span class="muted">Read-only preview</span>
+          <h2 id="document-title">Document</h2>
+          <span class="muted">Read-only</span>
         </header>
         <article id="document-body" class="reader-body empty-state">
           <div class="empty-card">
@@ -375,7 +445,7 @@ const title = 'Kataan';
         <header class="properties-header">
           <h2>Properties</h2>
         </header>
-        <div id="metadata-panel" class="section metadata-grid muted">Select a document.</div>
+        <div id="metadata-panel" class="metadata-grid muted">Select a document.</div>
       </aside>
     </div>
 

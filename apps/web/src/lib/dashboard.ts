@@ -9,6 +9,7 @@ import {
   createElement,
   type IconNode,
 } from 'lucide';
+import { marked } from 'marked';
 
 import {
   getDocument,
@@ -138,13 +139,11 @@ function renderDocumentBody(vaultDocument: DocumentResponse) {
   documentBody.className = 'reader-body';
   documentBody.innerHTML = '';
 
-  const markdown = document.createElement('pre');
-  markdown.textContent = vaultDocument.markdown;
-  documentBody.append(markdown);
+  documentBody.innerHTML = marked.parse(vaultDocument.markdown, { async: false });
 }
 
 function renderMetadata(vaultDocument: DocumentResponse) {
-  metadataPanel.className = 'section metadata-grid';
+  metadataPanel.className = 'metadata-grid';
   metadataPanel.replaceChildren(
     property('ID', vaultDocument.id),
     ...Object.entries(vaultDocument.metadata).map(([key, value]) => property(formatLabel(key), formatValue(value))),
