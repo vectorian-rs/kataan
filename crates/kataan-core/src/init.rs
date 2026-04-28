@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{checksum, Error, Result};
+use crate::{checksum, rebuild::rebuild_indexes, Error, Result};
 
 const SCHEMA_VERSION: &str = "0.1.0";
 
@@ -100,6 +100,8 @@ last_updated_by = "system"
         )?;
     }
 
+    rebuild_indexes(root)?;
+
     Ok(())
 }
 
@@ -170,6 +172,14 @@ mod tests {
         let root_index = fs::read_to_string(root.join("index.toml")).unwrap();
         assert!(root_index.contains("schema_version = \"0.1.0\""));
         assert!(root_index.contains("name = \"My Knowledgebase\""));
+
+        for folder in ["raw", "projects", "people", "notes", "topics", "type"] {
+            let folder_index = fs::read_to_string(root.join(folder).join("index.toml")).unwrap();
+            assert!(!folder_index.contains("blake3:todo"));
+        }
+
+        let report = crate::validate::validate(&root).unwrap();
+        assert!(report.is_ok(), "{:#?}", report.diagnostics);
 
         fs::remove_dir_all(root).unwrap();
     }
