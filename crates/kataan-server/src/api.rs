@@ -1,7 +1,8 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    Json,
+    routing::{get, post},
+    Json, Router,
 };
 use serde::Serialize;
 
@@ -66,6 +67,18 @@ pub struct DiagnosticResponse {
     pub path: Option<String>,
 }
 
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/api/health", get(health))
+        .route("/api/vault", get(vault))
+        .route("/api/folders", get(folders))
+        .route("/api/folders/:folder", get(folder))
+        .route("/api/documents/*id", get(document))
+        .route("/api/validate", post(validate))
+        .route("/api/rebuild-indexes", post(rebuild_indexes))
+        .with_state(state)
+}
+
 pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { ok: true })
 }
@@ -73,14 +86,11 @@ pub async fn health() -> Json<HealthResponse> {
 pub async fn vault(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_core::index::VaultIndex>, ApiError> {
-    let vault =
-        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
-    Ok(Json(vault.index))
+    Ok(Json(open_vault(&state)?.index))
 }
 
 pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersResponse>, ApiError> {
-    let vault =
-        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    let vault = open_vault(&state)?;
     let mut folders = Vec::new();
 
     for (ty, folder) in &vault.index.type_folders {
@@ -104,8 +114,7 @@ pub async fn folder(
     State(state): State<AppState>,
     Path(folder): Path<String>,
 ) -> Result<Json<FolderResponse>, ApiError> {
-    let vault =
-        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    let vault = open_vault(&state)?;
     let index = vault.load_folder_index(&folder).map_err(ApiError::from)?;
     let documents = index
         .documents
@@ -129,8 +138,7 @@ pub async fn document(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<DocumentResponse>, ApiError> {
-    let vault =
-        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    let vault = open_vault(&state)?;
     let id = kataan_core::id::CanonicalId::parse(id)
         .map_err(|_| ApiError(anyhow::anyhow!("invalid canonical id")))?;
     let document = vault.load_document(&id).map_err(ApiError::from)?;
@@ -162,6 +170,10 @@ pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResp
 pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
     kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(ApiError::from)?;
     Ok(Json(OkResponse { ok: true }))
+}
+
+fn open_vault(state: &AppState) -> Result<kataan_core::vault::Vault, ApiError> {
+    kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)
 }
 
 #[derive(Debug)]
@@ -196,7 +208,6 @@ mod tests {
     use axum::{
         body::Body,
         http::{Request, StatusCode},
-        routing::{get, post},
         Router,
     };
     use tower::ServiceExt;
@@ -208,15 +219,7 @@ mod tests {
         let root = test_vault();
         let app = test_app(&root);
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/vault")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = request(app, "GET", "/api/vault").await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
@@ -228,15 +231,7 @@ mod tests {
         let root = test_vault();
         let app = test_app(&root);
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/folders")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = request(app, "GET", "/api/folders").await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
@@ -248,15 +243,7 @@ mod tests {
         let root = test_vault();
         let app = test_app(&root);
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/folders/type")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = request(app, "GET", "/api/folders/type").await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
@@ -268,15 +255,7 @@ mod tests {
         let root = test_vault();
         let app = test_app(&root);
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/documents/type/project")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = request(app, "GET", "/api/documents/type/project").await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
@@ -288,16 +267,7 @@ mod tests {
         let root = test_vault();
         let app = test_app(&root);
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/validate")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = request(app, "POST", "/api/validate").await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
@@ -309,32 +279,27 @@ mod tests {
         let root = test_vault();
         let app = test_app(&root);
 
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/rebuild-indexes")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = request(app, "POST", "/api/rebuild-indexes").await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
         fs::remove_dir_all(root).unwrap();
     }
 
+    async fn request(app: Router, method: &str, uri: &str) -> axum::response::Response {
+        app.oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
     fn test_app(root: &Path) -> Router {
-        Router::new()
-            .route("/api/health", get(health))
-            .route("/api/vault", get(vault))
-            .route("/api/folders", get(folders))
-            .route("/api/folders/:folder", get(folder))
-            .route("/api/documents/*id", get(document))
-            .route("/api/validate", post(validate))
-            .route("/api/rebuild-indexes", post(rebuild_indexes))
-            .with_state(AppState::new(root.to_path_buf()))
+        router(AppState::new(root.to_path_buf()))
     }
 
     fn test_vault() -> PathBuf {
