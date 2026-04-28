@@ -2,6 +2,7 @@ pub mod checksum;
 pub mod diagnostic;
 pub mod document;
 pub mod error;
+pub mod graph;
 pub mod id;
 pub mod index;
 pub mod init;

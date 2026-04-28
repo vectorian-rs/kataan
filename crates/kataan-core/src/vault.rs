@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     document::DocumentMetadata,
+    graph::VaultGraph,
     id::CanonicalId,
     index::{FolderIndex, VaultIndex},
     Error, Result,
@@ -42,6 +43,42 @@ impl Vault {
             source,
         })?;
         toml::from_str(&text).map_err(|source| Error::TomlParse { path, source })
+    }
+
+    pub fn load_documents(&self) -> Result<Vec<LoadedDocument>> {
+        let mut documents = Vec::new();
+        for folder in self.index.type_folders.values() {
+            let folder_path = self.root.join(folder);
+            if !folder_path.exists() {
+                continue;
+            }
+
+            for entry in std::fs::read_dir(&folder_path).map_err(|source| Error::Io {
+                path: folder_path.clone(),
+                source,
+            })? {
+                let entry = entry.map_err(|source| Error::Io {
+                    path: folder_path.clone(),
+                    source,
+                })?;
+                let path = entry.path();
+                if !path.is_file()
+                    || path.extension().and_then(|extension| extension.to_str()) != Some("toml")
+                    || path.file_name().and_then(|name| name.to_str()) == Some("index.toml")
+                {
+                    continue;
+                }
+                let relative_path = Path::new(folder).join(path.file_name().expect("file name"));
+                let id = CanonicalId::from_document_path(relative_path)
+                    .map_err(|_| Error::ValidationFailed)?;
+                documents.push(self.load_document(&id)?);
+            }
+        }
+        Ok(documents)
+    }
+
+    pub fn load_graph(&self) -> Result<VaultGraph> {
+        VaultGraph::build(self.load_documents()?)
     }
 
     pub fn load_document(&self, id: &CanonicalId) -> Result<LoadedDocument> {
@@ -100,6 +137,47 @@ default_type = "project"
     }
 
     #[test]
+    fn loads_graph_from_vault_documents() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        fs::create_dir_all(root.join("notes")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("projects/kataan-redesign.md"),
+            "# Kataan Redesign\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign.toml"),
+            r#"type = "project"
+markdown = "kataan-redesign.md"
+"#,
+        )
+        .unwrap();
+        fs::write(root.join("notes/project-brief.md"), "# Project Brief\n").unwrap();
+        fs::write(
+            root.join("notes/project-brief.toml"),
+            r#"type = "note"
+markdown = "project-brief.md"
+belongs_to = ["projects/kataan-redesign"]
+"#,
+        )
+        .unwrap();
+
+        let vault = Vault::open(&root).unwrap();
+        let graph = vault.load_graph().unwrap();
+
+        let project_id = CanonicalId::parse("projects/kataan-redesign").unwrap();
+        let note_id = CanonicalId::parse("notes/project-brief").unwrap();
+        assert_eq!(
+            graph.children_of(&project_id),
+            std::collections::BTreeSet::from([note_id])
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn loads_document_metadata_and_markdown() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects")).unwrap();
@@ -137,6 +215,7 @@ name = "Test Vault"
 
 [type_folders]
 project = "projects"
+note = "notes"
 "#,
         )
         .unwrap();
