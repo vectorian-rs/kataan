@@ -219,6 +219,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reports_missing_type_definition_file() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("type")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("type/project.toml"),
+            r#"type = "type-definition"
+name = "project"
+folder = "projects"
+markdown = "project.md"
+"#,
+        )
+        .unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(!report.is_ok());
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing-markdown-file"
+                && diagnostic.path.as_deref() == Some("type/project.toml")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn reports_missing_required_folder_and_folder_index() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects")).unwrap();
