@@ -1,4 +1,8 @@
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use serde::Serialize;
 
 use crate::state::AppState;
@@ -11,6 +15,41 @@ pub struct HealthResponse {
 #[derive(Debug, Serialize)]
 pub struct OkResponse {
     pub ok: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FoldersResponse {
+    pub folders: Vec<FolderSummaryResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FolderSummaryResponse {
+    pub r#type: String,
+    pub folder: String,
+    pub name: Option<String>,
+    pub document_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FolderResponse {
+    pub folder: String,
+    pub index: kataan_core::index::FolderIndex,
+    pub documents: Vec<FolderDocumentResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FolderDocumentResponse {
+    pub id: String,
+    pub slug: String,
+    pub markdown: String,
+    pub toml: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DocumentResponse {
+    pub id: String,
+    pub metadata: kataan_core::document::DocumentMetadata,
+    pub markdown: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +76,70 @@ pub async fn vault(
     let vault =
         kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
     Ok(Json(vault.index))
+}
+
+pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersResponse>, ApiError> {
+    let vault =
+        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    let mut folders = Vec::new();
+
+    for (ty, folder) in &vault.index.type_folders {
+        let index = vault.load_folder_index(folder).ok();
+        let document_count = index
+            .as_ref()
+            .map(|index| index.documents.len())
+            .unwrap_or_default();
+        folders.push(FolderSummaryResponse {
+            r#type: ty.clone(),
+            folder: folder.clone(),
+            name: index.map(|index| index.name),
+            document_count,
+        });
+    }
+
+    Ok(Json(FoldersResponse { folders }))
+}
+
+pub async fn folder(
+    State(state): State<AppState>,
+    Path(folder): Path<String>,
+) -> Result<Json<FolderResponse>, ApiError> {
+    let vault =
+        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    let index = vault.load_folder_index(&folder).map_err(ApiError::from)?;
+    let documents = index
+        .documents
+        .iter()
+        .map(|document| FolderDocumentResponse {
+            id: format!("{folder}/{}", document.slug),
+            slug: document.slug.clone(),
+            markdown: document.markdown.clone(),
+            toml: document.toml.clone(),
+        })
+        .collect();
+
+    Ok(Json(FolderResponse {
+        folder,
+        index,
+        documents,
+    }))
+}
+
+pub async fn document(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<DocumentResponse>, ApiError> {
+    let vault =
+        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    let id = kataan_core::id::CanonicalId::parse(id)
+        .map_err(|_| ApiError(anyhow::anyhow!("invalid canonical id")))?;
+    let document = vault.load_document(&id).map_err(ApiError::from)?;
+
+    Ok(Json(DocumentResponse {
+        id: id.as_str().to_owned(),
+        metadata: document.metadata,
+        markdown: document.markdown,
+    }))
 }
 
 pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResponse>, ApiError> {
@@ -121,6 +224,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn folders_endpoint_returns_folder_list() {
+        let root = test_vault();
+        let app = test_app(&root);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/folders")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn folder_endpoint_returns_folder_index() {
+        let root = test_vault();
+        let app = test_app(&root);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/folders/type")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn document_endpoint_returns_document() {
+        let root = test_vault();
+        let app = test_app(&root);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/documents/type/project")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn validate_endpoint_returns_diagnostics() {
         let root = test_vault();
         let app = test_app(&root);
@@ -166,6 +329,9 @@ mod tests {
         Router::new()
             .route("/api/health", get(health))
             .route("/api/vault", get(vault))
+            .route("/api/folders", get(folders))
+            .route("/api/folders/:folder", get(folder))
+            .route("/api/documents/*id", get(document))
             .route("/api/validate", post(validate))
             .route("/api/rebuild-indexes", post(rebuild_indexes))
             .with_state(AppState::new(root.to_path_buf()))
