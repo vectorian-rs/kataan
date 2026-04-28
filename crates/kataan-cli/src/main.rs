@@ -13,14 +13,27 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    Validate { path: PathBuf },
-    RebuildIndexes { path: PathBuf },
+    Init {
+        path: PathBuf,
+        #[arg(long)]
+        name: String,
+    },
+    Validate {
+        path: PathBuf,
+    },
+    RebuildIndexes {
+        path: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Init { path, name } => {
+            kataan_core::init::init_vault(&path, &name)?;
+            println!("initialized vault at {}", path.display());
+        }
         Command::Validate { path } => {
             let report = kataan_core::validate::validate(path)?;
             if report.is_ok() {
