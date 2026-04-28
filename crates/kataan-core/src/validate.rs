@@ -12,6 +12,8 @@ use crate::{
 pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
     let vault = Vault::open(root)?;
     let mut issues = Vec::new();
+    let mut known_document_ids = BTreeSet::new();
+    let mut loaded_metadata = Vec::new();
 
     for required_type in [
         "raw",
@@ -133,6 +135,13 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 }
             };
 
+            let Some(stem) = toml_path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
+            let document_id = format!("{folder}/{stem}");
+            known_document_ids.insert(document_id.clone());
+            loaded_metadata.push((relative_toml_path.clone(), metadata.clone()));
+
             if let Some(status) = &metadata.status {
                 if !["raw", "draft", "active", "paused", "done", "archived"]
                     .contains(&status.as_str())
@@ -206,6 +215,25 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         }
     }
 
+    for (path, metadata) in loaded_metadata {
+        for target in metadata
+            .belongs_to
+            .iter()
+            .chain(metadata.related_to.iter())
+            .chain(metadata.sources.iter())
+        {
+            if !known_document_ids.contains(target) {
+                issues.push(
+                    Diagnostic::error(
+                        "unresolved-reference",
+                        format!("reference target `{target}` does not exist"),
+                    )
+                    .with_path(path.clone()),
+                );
+            }
+        }
+    }
+
     Ok(DiagnosticReport::new(issues))
 }
 
@@ -217,6 +245,41 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn reports_unresolved_relationship_references() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("projects/kataan-redesign.md"),
+            "# Kataan Redesign\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign.toml"),
+            r#"
+type = "project"
+markdown = "kataan-redesign.md"
+related_to = ["topics/missing-topic"]
+belongs_to = ["projects/missing-parent"]
+sources = ["raw/missing-source"]
+"#,
+        )
+        .unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(!report.is_ok());
+        let unresolved_count = report
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "unresolved-reference")
+            .count();
+        assert_eq!(unresolved_count, 3);
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn reports_missing_type_definition_file() {
