@@ -1,0 +1,36 @@
+[tools]
+bun = "1.3.10"
+rust = "1.91.1"
+
+[tasks.install]
+description = "Install JavaScript dependencies with Bun"
+run = "bun install"
+
+[tasks.dev-web]
+description = "Run the Astro web app"
+run = "bun --filter @kataan/web dev"
+
+[tasks.build-web]
+description = "Build the Astro web app"
+run = "bun --filter @kataan/web build"
+
+[tasks.test]
+description = "Run Rust tests"
+run = "cargo test"
+
+[tasks.check]
+description = "Run Rust format, tests, clippy, and web build"
+run = [
+  "cargo fmt --check",
+  "cargo test",
+  "cargo clippy --all-targets -- -D warnings",
+  "bun --filter @kataan/web build",
+]
+
+[tasks.server]
+description = "Run the Kataan API server. Usage: mise run server -- --vault /path/to/vault"
+run = "cargo run -p kataan-server --"
+
+[tasks.cli]
+description = "Run the Kataan CLI. Usage: mise run cli -- validate /path/to/vault"
+run = "cargo run -p kataan-cli --"

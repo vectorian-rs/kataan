@@ -14,8 +14,9 @@ Filesystem-native Markdown/TOML knowledge workspace.
 ## First commands
 
 ```sh
+mise install
+bun install
 cargo run -p kataan-cli -- validate examples/vault
-cargo run -p kataan-server
-npm install
-npm run dev:web
+cargo run -p kataan-server -- --vault examples/vault
+bun run dev:web
 ```
