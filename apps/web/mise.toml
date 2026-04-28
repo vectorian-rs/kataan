@@ -6,13 +6,22 @@ description = "Install web dependencies"
 run = "bun install"
 
 [tasks.dev]
-description = "Run the Astro web app"
-run = "bun dev"
+description = "Install dependencies and run the Astro web app"
+run = [
+  "bun install",
+  "bun dev",
+]
 
 [tasks.build]
-description = "Build the Astro web app"
-run = "bun build"
+description = "Install dependencies and build the Astro web app"
+run = [
+  "bun install",
+  "bun build",
+]
 
 [tasks.check]
-description = "Run Astro type checks"
-run = "bun check"
+description = "Install dependencies and run Astro type checks"
+run = [
+  "bun install",
+  "bun check",
+]

@@ -14,16 +14,25 @@ description = "Install JavaScript dependencies with Bun"
 run = "bun install"
 
 [tasks.dev-web]
-description = "Run the Astro web app"
-run = "bun --filter @kataan/web dev"
+description = "Install dependencies and run the Astro web app"
+run = [
+  "bun install",
+  "bun --filter @kataan/web dev",
+]
 
 [tasks.build-web]
-description = "Build the Astro web app"
-run = "bun --filter @kataan/web build"
+description = "Install dependencies and build the Astro web app"
+run = [
+  "bun install",
+  "bun --filter @kataan/web build",
+]
 
 [tasks.check-web]
-description = "Run Astro type checks"
-run = "bun --filter @kataan/web check"
+description = "Install dependencies and run Astro type checks"
+run = [
+  "bun install",
+  "bun --filter @kataan/web check",
+]
 
 [tasks.test]
 description = "Run all Rust tests"
@@ -32,6 +41,7 @@ run = "cargo test"
 [tasks.check]
 description = "Run Rust format, tests, clippy, and web build"
 run = [
+  "bun install",
   "cargo fmt --check",
   "cargo test",
   "cargo clippy --all-targets -- -D warnings",
