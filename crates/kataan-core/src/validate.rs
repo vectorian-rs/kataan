@@ -35,7 +35,19 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
     for folder in vault.index.type_folders.values() {
         let folder_path = vault.root.join(folder);
         if !folder_path.exists() {
+            issues.push(
+                Diagnostic::error("missing-required-folder", "Required type folder is missing")
+                    .with_path(folder),
+            );
             continue;
+        }
+
+        let folder_index_path = folder_path.join("index.toml");
+        if !folder_index_path.exists() {
+            issues.push(
+                Diagnostic::error("missing-folder-index", "Folder is missing index.toml")
+                    .with_path(format!("{folder}/index.toml")),
+            );
         }
 
         let mut markdown_slugs = BTreeSet::new();
@@ -205,6 +217,29 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn reports_missing_required_folder_and_folder_index() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+
+        let report = validate(&root).unwrap();
+
+        assert!(!report.is_ok());
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing-required-folder"
+                && diagnostic.path.as_deref() == Some("raw")));
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "missing-folder-index"
+                && diagnostic.path.as_deref() == Some("projects/index.toml")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn reports_invalid_status_and_actor() {
