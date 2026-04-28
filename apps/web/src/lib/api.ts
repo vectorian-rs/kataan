@@ -1,4 +1,4 @@
-const API_BASE = 'http://127.0.0.1:3001';
+const API_BASE = import.meta.env.PUBLIC_KATAAN_API_BASE ?? '';
 
 export type VaultIndex = {
   schema_version: string;
