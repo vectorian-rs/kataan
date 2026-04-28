@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "dev:web": "bun --filter @kataan/web dev",
-    "build:web": "bun --filter @kataan/web build"
+    "build:web": "bun --filter @kataan/web build",
+    "check:web": "bun --filter @kataan/web check"
   }
 }
