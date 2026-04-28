@@ -94,14 +94,15 @@ const title = 'Kataan';
       }
 
       .toolbar {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        display: flex;
         gap: var(--size-2);
         padding: var(--size-4);
         border-block-start: 1px solid var(--border);
       }
 
       .button {
+        flex: 1;
+        min-block-size: 2.35rem;
         border: 1px solid var(--border);
         border-radius: var(--radius-2);
         padding: var(--size-2) var(--size-3);
@@ -125,7 +126,7 @@ const title = 'Kataan';
         inline-size: 100%;
         border: 0;
         border-radius: var(--radius-2);
-        padding: var(--size-3);
+        padding: 0.55rem 0.7rem;
         background: transparent;
         color: var(--text-1);
         text-align: start;
@@ -141,6 +142,18 @@ const title = 'Kataan';
         align-items: center;
         justify-content: space-between;
         gap: var(--size-3);
+        font-weight: var(--font-weight-6);
+      }
+
+      .folder-name {
+        display: flex;
+        align-items: center;
+        gap: var(--size-2);
+      }
+
+      .folder-icon {
+        color: var(--brand);
+        font-size: var(--font-size-1);
       }
 
       .badge {
@@ -173,7 +186,7 @@ const title = 'Kataan';
       .document-card {
         border-block-end: 1px solid var(--border);
         border-radius: 0;
-        padding: var(--size-4);
+        padding: var(--size-3) var(--size-4);
       }
 
       .document-card strong {
@@ -184,7 +197,9 @@ const title = 'Kataan';
       .reader {
         block-size: 100vh;
         overflow: auto;
-        background: var(--surface-3);
+        background:
+          radial-gradient(circle at top, color-mix(in srgb, var(--brand) 5%, transparent), transparent 24rem),
+          var(--surface-3);
       }
 
       .reader-header {
@@ -207,9 +222,11 @@ const title = 'Kataan';
       }
 
       .reader-body {
-        max-inline-size: 52rem;
+        max-inline-size: 54rem;
         margin-inline: auto;
         padding: var(--size-8) var(--size-6);
+        font-size: var(--font-size-2);
+        line-height: var(--font-lineheight-4);
       }
 
       .empty-state {
@@ -220,12 +237,29 @@ const title = 'Kataan';
         text-align: center;
       }
 
+      .empty-card {
+        max-inline-size: 28rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-3);
+        padding: var(--size-6);
+        background: color-mix(in srgb, var(--surface-3) 92%, transparent);
+        box-shadow: var(--shadow-card);
+      }
+
+      .empty-card strong {
+        display: block;
+        margin-block-end: var(--size-2);
+        color: var(--text-1);
+        font-size: var(--font-size-3);
+      }
+
       pre {
         overflow: auto;
         border: 1px solid var(--border);
         border-radius: var(--radius-3);
-        padding: var(--size-4);
-        background: light-dark(var(--gray-0), var(--gray-11));
+        padding: var(--size-5);
+        background: light-dark(white, color-mix(in srgb, var(--gray-11) 82%, black));
+        box-shadow: var(--shadow-card);
         white-space: pre-wrap;
       }
 
@@ -323,7 +357,12 @@ const title = 'Kataan';
           <h2 id="document-title" class="reader-title">Document</h2>
           <span class="muted">Read-only preview</span>
         </header>
-        <article id="document-body" class="reader-body empty-state">Select a document.</article>
+        <article id="document-body" class="reader-body empty-state">
+          <div class="empty-card">
+            <strong>Select a document</strong>
+            Choose a folder and document to preview its Markdown content.
+          </div>
+        </article>
       </main>
 
       <aside class="properties">

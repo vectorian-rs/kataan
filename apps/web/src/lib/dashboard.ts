@@ -50,6 +50,11 @@ async function loadVault() {
 async function loadFolders() {
   const response = await getFolders();
   foldersEl.replaceChildren(...response.folders.map(renderFolderButton));
+
+  const firstNonEmptyFolder = response.folders.find((folder) => folder.document_count > 0);
+  if (firstNonEmptyFolder) {
+    await selectFolder(firstNonEmptyFolder.folder);
+  }
 }
 
 function renderFolderButton(folder: FolderSummary) {
@@ -58,7 +63,16 @@ function renderFolderButton(folder: FolderSummary) {
   button.type = 'button';
 
   const label = document.createElement('span');
-  label.textContent = folder.name ?? folder.folder;
+  label.className = 'folder-name';
+
+  const icon = document.createElement('span');
+  icon.className = 'folder-icon';
+  icon.textContent = folderIcon(folder.type);
+
+  const name = document.createElement('span');
+  name.textContent = folder.name ?? folder.folder;
+
+  label.append(icon, name);
 
   const badge = document.createElement('span');
   badge.className = 'badge';
@@ -81,6 +95,7 @@ async function selectFolder(folder: string) {
 
   documentsEl.className = 'list';
   documentsEl.replaceChildren(...response.documents.map(renderDocumentButton));
+  await selectDocument(response.documents[0].id);
 }
 
 function renderDocumentButton(vaultDocument: FolderDocument) {
@@ -172,6 +187,18 @@ function renderError(error: unknown) {
   item.className = 'diagnostic error';
   item.textContent = error instanceof Error ? error.message : String(error);
   diagnosticsEl.replaceChildren(item);
+}
+
+function folderIcon(type: string) {
+  const icons: Record<string, string> = {
+    note: '◇',
+    person: '♙',
+    project: '⌁',
+    raw: '▤',
+    topic: '◎',
+    'type-definition': '▱',
+  };
+  return icons[type] ?? '•';
 }
 
 function titleFromId(id: string) {
