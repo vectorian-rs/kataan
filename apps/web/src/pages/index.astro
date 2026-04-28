@@ -8,120 +8,330 @@ const title = 'Kataan';
     <meta name="viewport" content="width=device-width" />
     <title>{title}</title>
     <style>
+      @import "https://unpkg.com/open-props";
+      @import "https://unpkg.com/open-props/normalize.min.css";
+      @import "https://unpkg.com/open-props/buttons.min.css";
+
       :root {
         color-scheme: light dark;
-        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --brand: var(--teal-6);
+        --brand-soft: var(--teal-0);
+        --text-1: light-dark(var(--gray-12), var(--gray-0));
+        --text-2: light-dark(var(--gray-7), var(--gray-4));
+        --surface-1: light-dark(var(--gray-0), var(--gray-12));
+        --surface-2: light-dark(var(--gray-1), var(--gray-11));
+        --surface-3: light-dark(white, var(--gray-10));
+        --surface-selected: light-dark(var(--teal-0), color-mix(in srgb, var(--teal-9) 22%, transparent));
+        --border: light-dark(var(--gray-3), color-mix(in srgb, var(--gray-7) 45%, transparent));
+        --shadow-card: 0 1px 2px color-mix(in srgb, black 8%, transparent);
       }
 
       body {
+        min-block-size: 100vh;
         margin: 0;
+        color: var(--text-1);
+        background: var(--surface-1);
+        font-family: var(--font-sans);
       }
 
       button {
-        cursor: pointer;
+        font: inherit;
       }
 
-      .app {
+      .app-shell {
         display: grid;
-        grid-template-columns: 280px 320px 1fr;
-        min-height: 100vh;
+        grid-template-columns: 17rem 23rem minmax(30rem, 1fr) 22rem;
+        min-block-size: 100vh;
+        overflow: hidden;
       }
 
-      .panel {
-        border-right: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-        padding: 1rem;
+      .sidebar,
+      .document-list,
+      .properties {
+        block-size: 100vh;
         overflow: auto;
+        border-inline-end: 1px solid var(--border);
+        background: var(--surface-2);
       }
 
-      .main {
-        padding: 1rem 1.25rem;
-        overflow: auto;
+      .properties {
+        border-inline: 1px solid var(--border) 0;
+        background: var(--surface-3);
+      }
+
+      .sidebar {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+      }
+
+      .brand {
+        padding: var(--size-5);
+        border-block-end: 1px solid var(--border);
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: var(--font-size-5);
+        letter-spacing: var(--font-letterspacing-0);
+      }
+
+      .brand p,
+      .muted {
+        color: var(--text-2);
+      }
+
+      .section {
+        padding: var(--size-4);
+      }
+
+      .section-title {
+        margin-block: 0 var(--size-3);
+        color: var(--text-2);
+        font-size: var(--font-size-0);
+        font-weight: var(--font-weight-7);
+        letter-spacing: var(--font-letterspacing-2);
+        text-transform: uppercase;
       }
 
       .toolbar {
-        display: flex;
-        gap: 0.5rem;
-        margin: 1rem 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--size-2);
+        padding: var(--size-4);
+        border-block-start: 1px solid var(--border);
+      }
+
+      .button {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-2);
+        padding: var(--size-2) var(--size-3);
+        background: var(--surface-3);
+        color: var(--text-1);
+        box-shadow: var(--shadow-card);
+      }
+
+      .button.primary {
+        border-color: color-mix(in srgb, var(--brand) 50%, transparent);
+        background: var(--brand);
+        color: white;
       }
 
       .list {
         display: grid;
-        gap: 0.4rem;
+        gap: var(--size-1);
       }
 
       .item {
-        border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-        border-radius: 0.5rem;
-        padding: 0.6rem 0.7rem;
-        text-align: left;
+        inline-size: 100%;
+        border: 0;
+        border-radius: var(--radius-2);
+        padding: var(--size-3);
         background: transparent;
+        color: var(--text-1);
+        text-align: start;
       }
 
       .item:hover,
       .item.active {
-        background: color-mix(in srgb, CanvasText 8%, transparent);
+        background: var(--surface-selected);
       }
 
-      .muted {
-        color: color-mix(in srgb, CanvasText 60%, transparent);
-        font-size: 0.9rem;
+      .folder-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--size-3);
+      }
+
+      .badge {
+        min-inline-size: 2rem;
+        border-radius: var(--radius-round);
+        padding: 0.15rem 0.5rem;
+        background: light-dark(var(--gray-2), var(--gray-9));
+        color: var(--text-2);
+        font-size: var(--font-size-0);
+        text-align: center;
+      }
+
+      .document-list-header,
+      .properties-header {
+        position: sticky;
+        inset-block-start: 0;
+        z-index: 1;
+        padding: var(--size-4);
+        border-block-end: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface-3) 92%, transparent);
+        backdrop-filter: blur(12px);
+      }
+
+      .document-list-header h2,
+      .properties-header h2 {
+        margin: 0;
+        font-size: var(--font-size-2);
+      }
+
+      .document-card {
+        border-block-end: 1px solid var(--border);
+        border-radius: 0;
+        padding: var(--size-4);
+      }
+
+      .document-card strong {
+        display: block;
+        margin-block-end: var(--size-1);
+      }
+
+      .reader {
+        block-size: 100vh;
+        overflow: auto;
+        background: var(--surface-3);
+      }
+
+      .reader-header {
+        position: sticky;
+        inset-block-start: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--size-3);
+        padding: var(--size-4) var(--size-6);
+        border-block-end: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface-3) 90%, transparent);
+        backdrop-filter: blur(12px);
+      }
+
+      .reader-title {
+        margin: 0;
+        font-size: var(--font-size-2);
+      }
+
+      .reader-body {
+        max-inline-size: 52rem;
+        margin-inline: auto;
+        padding: var(--size-8) var(--size-6);
+      }
+
+      .empty-state {
+        display: grid;
+        place-items: center;
+        min-block-size: 40vh;
+        color: var(--text-2);
+        text-align: center;
       }
 
       pre {
-        border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-        border-radius: 0.5rem;
-        padding: 1rem;
         overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-3);
+        padding: var(--size-4);
+        background: light-dark(var(--gray-0), var(--gray-11));
+        white-space: pre-wrap;
+      }
+
+      .metadata-grid {
+        display: grid;
+        gap: var(--size-3);
+      }
+
+      .property {
+        display: grid;
+        gap: var(--size-1);
+        border-block-end: 1px solid var(--border);
+        padding-block: var(--size-3);
+      }
+
+      .property-label {
+        color: var(--text-2);
+        font-size: var(--font-size-0);
+        font-weight: var(--font-weight-7);
+        letter-spacing: var(--font-letterspacing-1);
+        text-transform: uppercase;
+      }
+
+      .property-value {
+        overflow-wrap: anywhere;
       }
 
       .diagnostic {
-        border-left: 4px solid gray;
-        padding: 0.5rem 0.75rem;
-        margin: 0.4rem 0;
-        background: color-mix(in srgb, CanvasText 6%, transparent);
+        border-inline-start: 4px solid var(--gray-6);
+        border-radius: var(--radius-2);
+        padding: var(--size-3);
+        background: light-dark(white, var(--gray-10));
+        box-shadow: var(--shadow-card);
       }
 
       .diagnostic.error {
-        border-left-color: #dc2626;
+        border-inline-start-color: var(--red-6);
       }
 
       .diagnostic.warning {
-        border-left-color: #d97706;
+        border-inline-start-color: var(--orange-6);
       }
 
       .diagnostic.info {
-        border-left-color: #2563eb;
+        border-inline-start-color: var(--blue-6);
+      }
+
+      @media (width < 75rem) {
+        .app-shell {
+          grid-template-columns: 16rem 1fr;
+        }
+
+        .document-list,
+        .properties {
+          display: none;
+        }
       }
     </style>
   </head>
   <body>
-    <div class="app">
-      <aside class="panel">
-        <h1>Kataan</h1>
-        <p id="vault-summary" class="muted">Loading vault…</p>
-        <div class="toolbar">
-          <button id="validate-button">Validate</button>
-          <button id="rebuild-button">Rebuild</button>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div>
+          <header class="brand">
+            <h1>Kataan</h1>
+            <p id="vault-summary">Loading vault…</p>
+          </header>
+
+          <section class="section">
+            <h2 class="section-title">Folders</h2>
+            <div id="folders" class="list"></div>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title">Diagnostics</h2>
+            <div id="diagnostics" class="list muted">No diagnostics yet.</div>
+          </section>
         </div>
-        <section>
-          <h2>Folders</h2>
-          <div id="folders" class="list"></div>
-        </section>
-        <section>
-          <h2>Diagnostics</h2>
-          <div id="diagnostics" class="muted">No diagnostics yet.</div>
-        </section>
+
+        <div class="toolbar">
+          <button id="validate-button" class="button" type="button">Validate</button>
+          <button id="rebuild-button" class="button primary" type="button">Rebuild</button>
+        </div>
       </aside>
 
-      <aside class="panel">
-        <h2 id="folder-title">Documents</h2>
-        <div id="documents" class="list muted">Select a folder.</div>
+      <aside class="document-list">
+        <header class="document-list-header">
+          <h2 id="folder-title">Documents</h2>
+        </header>
+        <div id="documents" class="list muted section">Select a folder.</div>
       </aside>
 
-      <main class="main">
-        <h2 id="document-title">Document</h2>
-        <div id="document-body" class="muted">Select a document.</div>
+      <main class="reader">
+        <header class="reader-header">
+          <h2 id="document-title" class="reader-title">Document</h2>
+          <span class="muted">Read-only preview</span>
+        </header>
+        <article id="document-body" class="reader-body empty-state">Select a document.</article>
       </main>
+
+      <aside class="properties">
+        <header class="properties-header">
+          <h2>Properties</h2>
+        </header>
+        <div id="metadata-panel" class="section metadata-grid muted">Select a document.</div>
+      </aside>
     </div>
 
     <script>
