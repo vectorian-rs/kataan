@@ -1,0 +1,4 @@
+name = "Raw"
+description = "Original source material before transformation."
+default_type = "raw"
+folder_checksum = "blake3:todo"

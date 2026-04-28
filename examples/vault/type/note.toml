@@ -1,0 +1,10 @@
+type = "type-definition"
+name = "note"
+folder = "notes"
+icon = "circle"
+
+markdown = "note.md"
+markdown_checksum = "blake3:todo"
+
+created_by = "system"
+last_updated_by = "system"

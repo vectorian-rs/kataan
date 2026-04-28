@@ -1,0 +1,4 @@
+name = "Topics"
+description = "Durable concepts and themes."
+default_type = "topic"
+folder_checksum = "blake3:todo"

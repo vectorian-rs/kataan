@@ -1,0 +1,10 @@
+type = "type-definition"
+name = "type-definition"
+folder = "type"
+icon = "circle"
+
+markdown = "type-definition.md"
+markdown_checksum = "blake3:todo"
+
+created_by = "system"
+last_updated_by = "system"

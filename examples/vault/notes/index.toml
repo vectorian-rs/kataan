@@ -1,0 +1,4 @@
+name = "Notes"
+description = "Curated notes."
+default_type = "note"
+folder_checksum = "blake3:todo"

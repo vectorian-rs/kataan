@@ -1,0 +1,4 @@
+name = "Projects"
+description = "Active and historical efforts with goals, owners, and outcomes."
+default_type = "project"
+folder_checksum = "blake3:todo"

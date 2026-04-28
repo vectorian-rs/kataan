@@ -1,0 +1,4 @@
+name = "People"
+description = "People profiles."
+default_type = "person"
+folder_checksum = "blake3:todo"

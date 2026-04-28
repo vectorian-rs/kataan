@@ -1,0 +1,12 @@
+schema_version = "0.1.0"
+name = "Example Kataan Vault"
+created_at = "2026-04-28T12:00:00Z"
+updated_at = "2026-04-28T12:00:00Z"
+
+[type_folders]
+raw = "raw"
+project = "projects"
+person = "people"
+note = "notes"
+topic = "topics"
+type-definition = "type"

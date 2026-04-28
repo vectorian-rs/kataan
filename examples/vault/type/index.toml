@@ -1,0 +1,4 @@
+name = "Types"
+description = "Type definitions."
+default_type = "type-definition"
+folder_checksum = "blake3:todo"

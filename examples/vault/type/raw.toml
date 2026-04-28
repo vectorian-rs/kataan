@@ -1,0 +1,10 @@
+type = "type-definition"
+name = "raw"
+folder = "raw"
+icon = "circle"
+
+markdown = "raw.md"
+markdown_checksum = "blake3:todo"
+
+created_by = "system"
+last_updated_by = "system"
