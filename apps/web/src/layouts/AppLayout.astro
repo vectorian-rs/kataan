@@ -1,0 +1,31 @@
+---
+import '../styles/global.css';
+
+const { title = 'Kataan' } = Astro.props;
+---
+
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <slot name="sidebar" />
+      <slot name="list" />
+      <slot name="content" />
+      <slot name="properties" />
+    </div>
+
+    <script is:inline>
+      const saved = localStorage.getItem('theme') ?? 'light';
+      document.documentElement.dataset.theme = saved;
+      document.getElementById('theme-toggle')?.addEventListener('click', () => {
+        const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = next;
+        localStorage.setItem('theme', next);
+      });
+    </script>
+  </body>
+</html>

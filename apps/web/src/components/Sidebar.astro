@@ -1,0 +1,28 @@
+---
+import FolderNav from './FolderNav.astro';
+import ThemeToggle from './ThemeToggle.astro';
+---
+
+<aside class="sidebar">
+  <div>
+    <header class="panel-header app-header">
+      <div>
+        <h1 class="app-title">Kataan</h1>
+        <div id="vault-summary" class="app-subtitle">Loading vault…</div>
+      </div>
+      <ThemeToggle />
+    </header>
+
+    <FolderNav />
+
+    <section class="section">
+      <h2 class="section-heading">Diagnostics</h2>
+      <div id="diagnostics" class="list muted">No diagnostics yet.</div>
+    </section>
+  </div>
+
+  <div class="toolbar">
+    <button id="validate-button" class="action-button" type="button">Validate</button>
+    <button id="rebuild-button" class="action-button primary" type="button">Rebuild</button>
+  </div>
+</aside>

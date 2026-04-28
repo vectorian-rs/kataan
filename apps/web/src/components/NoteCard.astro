@@ -1,0 +1,8 @@
+---
+const { title, subtitle } = Astro.props;
+---
+
+<div class="document-row" role="button" tabindex="0">
+  <strong>{title}</strong>
+  {subtitle && <span>{subtitle}</span>}
+</div>

@@ -30,6 +30,7 @@ const foldersEl = requireElement<HTMLElement>('folders');
 const documentsEl = requireElement<HTMLElement>('documents');
 const diagnosticsEl = requireElement<HTMLElement>('diagnostics');
 const folderTitle = requireElement<HTMLElement>('folder-title');
+const breadcrumb = requireElement<HTMLElement>('breadcrumb');
 const documentTitle = requireElement<HTMLElement>('document-title');
 const documentBody = requireElement<HTMLElement>('document-body');
 const metadataPanel = requireElement<HTMLElement>('metadata-panel');
@@ -137,6 +138,7 @@ async function selectDocument(id: string) {
   updateActiveRows();
 
   const vaultDocument = await getDocument(id);
+  breadcrumb.textContent = vaultDocument.id.replace('/', ' › ');
   documentTitle.textContent = titleFromId(vaultDocument.id);
   renderDocumentBody(vaultDocument);
   renderMetadata(vaultDocument);
@@ -153,7 +155,7 @@ function renderMetadata(vaultDocument: DocumentResponse) {
   metadataPanel.className = 'metadata-grid';
   metadataPanel.replaceChildren(
     property('ID', vaultDocument.id),
-    ...Object.entries(vaultDocument.metadata).map(([key, value]) => property(formatLabel(key), formatValue(value))),
+    ...Object.entries(vaultDocument.metadata).map(([key, value]) => property(formatLabel(key), value)),
   );
 }
 
@@ -165,9 +167,7 @@ function property(label: string, value: unknown) {
   labelEl.className = 'property-label';
   labelEl.textContent = label;
 
-  const valueEl = document.createElement('div');
-  valueEl.className = 'property-value';
-  valueEl.textContent = formatValue(value);
+  const valueEl = renderPropertyValue(value);
 
   wrapper.append(labelEl, valueEl);
   return wrapper;
@@ -256,6 +256,27 @@ function titleFromSlug(slug: string) {
 
 function formatLabel(label: string) {
   return label.replaceAll('_', ' ');
+}
+
+function renderPropertyValue(value: unknown) {
+  const valueEl = document.createElement('div');
+  valueEl.className = 'property-value';
+
+  if (Array.isArray(value) && value.length > 0) {
+    valueEl.classList.add('pill-list');
+    valueEl.replaceChildren(...value.map(renderPill));
+    return valueEl;
+  }
+
+  valueEl.textContent = formatValue(value);
+  return valueEl;
+}
+
+function renderPill(value: unknown) {
+  const pill = document.createElement('span');
+  pill.className = 'pill';
+  pill.textContent = String(value);
+  return pill;
 }
 
 function formatValue(value: unknown): string {
