@@ -53,7 +53,8 @@ fn main() -> Result<()> {
             }
         }
         Command::RebuildIndexes { path } => {
-            println!("rebuild-indexes not implemented yet: {}", path.display());
+            kataan_core::rebuild::rebuild_indexes(&path)?;
+            println!("rebuilt indexes at {}", path.display());
         }
     }
 
