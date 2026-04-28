@@ -6,11 +6,23 @@ description = "Install web dependencies"
 run = "bun install"
 
 [tasks.dev]
-description = "Install dependencies and run the Astro web app"
+description = "Run the Astro web app with hot reload"
+run = "bun dev"
+
+[tasks.dev-install]
+description = "Install dependencies and run the Astro web app with hot reload"
 run = [
   "bun install",
   "bun dev",
 ]
+
+[tasks.check-watch]
+description = "Run Astro type checks in watch mode"
+run = "bun check --watch"
+
+[tasks.clear]
+description = "Stop processes using the default Astro dev port"
+run = "lsof -ti :${KATAAN_WEB_PORT:-3000} | xargs -r kill"
 
 [tasks.build]
 description = "Install dependencies and build the Astro web app"

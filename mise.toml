@@ -14,11 +14,19 @@ description = "Install JavaScript dependencies with Bun"
 run = "bun install"
 
 [tasks.dev-web]
-description = "Install dependencies and run the Astro web app"
+description = "Run the Astro web app with hot reload"
+run = "bun --filter @kataan/web dev"
+
+[tasks.dev-web-install]
+description = "Install dependencies and run the Astro web app with hot reload"
 run = [
   "bun install",
   "bun --filter @kataan/web dev",
 ]
+
+[tasks.clear-web]
+description = "Stop processes using the default Astro dev port"
+run = "lsof -ti :${KATAAN_WEB_PORT:-3000} | xargs -r kill"
 
 [tasks.build-web]
 description = "Install dependencies and build the Astro web app"
