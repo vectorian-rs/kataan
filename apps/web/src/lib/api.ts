@@ -86,8 +86,19 @@ async function postJson<T>(path: string): Promise<T> {
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+  if (response.ok) {
+    return response.json() as Promise<T>;
   }
-  return response.json() as Promise<T>;
+
+  const errorMessage = await readErrorMessage(response);
+  throw new Error(`API request failed: ${response.status} ${response.statusText}: ${errorMessage}`);
+}
+
+async function readErrorMessage(response: Response) {
+  try {
+    const body = (await response.json()) as { error?: string };
+    return body.error ?? 'Unknown API error';
+  } catch {
+    return 'Unknown API error';
+  }
 }
