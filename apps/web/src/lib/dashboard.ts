@@ -74,9 +74,7 @@ async function loadFolders() {
 }
 
 function renderFolderButton(folder: FolderSummary) {
-  const button = document.createElement('button');
-  button.className = 'nav-row';
-  button.type = 'button';
+  const button = clickableRow('nav-row');
   button.dataset.folder = folder.folder;
 
   const label = document.createElement('span');
@@ -119,9 +117,7 @@ async function selectFolder(folder: string) {
 }
 
 function renderDocumentButton(vaultDocument: FolderDocument) {
-  const button = document.createElement('button');
-  button.className = 'document-row';
-  button.type = 'button';
+  const button = clickableRow('document-row');
   button.dataset.document = vaultDocument.id;
 
   const title = document.createElement('strong');
@@ -209,6 +205,20 @@ function renderError(error: unknown) {
   item.className = 'diagnostic error';
   item.textContent = error instanceof Error ? error.message : String(error);
   diagnosticsEl.replaceChildren(item);
+}
+
+function clickableRow(className: string) {
+  const row = document.createElement('div');
+  row.className = className;
+  row.role = 'button';
+  row.tabIndex = 0;
+  row.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      row.click();
+    }
+  });
+  return row;
 }
 
 function updateActiveRows() {

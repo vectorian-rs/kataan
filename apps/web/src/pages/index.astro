@@ -44,13 +44,17 @@ const title = 'Kataan';
         font: inherit;
       }
 
-      button.nav-row,
-      button.document-row,
       button.button {
         all: unset;
         box-sizing: border-box;
         cursor: pointer;
         font: inherit;
+      }
+
+      .nav-row,
+      .document-row {
+        box-sizing: border-box;
+        cursor: pointer;
       }
 
       .app-shell {
@@ -138,17 +142,16 @@ const title = 'Kataan';
         gap: 2px;
       }
 
-      button.nav-row,
-      button.document-row {
+      .nav-row,
+      .document-row {
         inline-size: 100%;
-        border: 0;
         border-radius: 8px;
         background: transparent;
         color: var(--text-1);
         text-align: start;
       }
 
-      button.nav-row {
+      .nav-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -159,13 +162,13 @@ const title = 'Kataan';
         font-weight: 650;
       }
 
-      button.nav-row:hover,
-      button.document-row:hover {
+      .nav-row:hover,
+      .document-row:hover {
         background: color-mix(in srgb, var(--surface-hover) 70%, transparent);
       }
 
-      button.nav-row.active,
-      button.document-row.active {
+      .nav-row.active,
+      .document-row.active {
         background: var(--surface-active);
         color: light-dark(var(--teal-8), var(--teal-2));
       }
@@ -260,7 +263,7 @@ const title = 'Kataan';
         font-weight: 750;
       }
 
-      button.document-row {
+      .document-row {
         display: grid;
         gap: 4px;
         border-radius: 0;
