@@ -1,4 +1,16 @@
 import {
+  Archive,
+  Boxes,
+  Circle,
+  FileText,
+  FolderKanban,
+  Lightbulb,
+  User,
+  createElement,
+  type IconNode,
+} from 'lucide';
+
+import {
   getDocument,
   getFolder,
   getFolders,
@@ -67,7 +79,7 @@ function renderFolderButton(folder: FolderSummary) {
 
   const icon = document.createElement('span');
   icon.className = 'folder-icon';
-  icon.textContent = folderIcon(folder.type);
+  icon.append(createElement(folderIcon(folder.type), { width: 18, height: 18, 'stroke-width': 2 }));
 
   const name = document.createElement('span');
   name.textContent = folder.name ?? folder.folder;
@@ -189,16 +201,16 @@ function renderError(error: unknown) {
   diagnosticsEl.replaceChildren(item);
 }
 
-function folderIcon(type: string) {
-  const icons: Record<string, string> = {
-    note: '◇',
-    person: '♙',
-    project: '⌁',
-    raw: '▤',
-    topic: '◎',
-    'type-definition': '▱',
+function folderIcon(type: string): IconNode {
+  const icons: Record<string, IconNode> = {
+    note: FileText,
+    person: User,
+    project: FolderKanban,
+    raw: Archive,
+    topic: Lightbulb,
+    'type-definition': Boxes,
   };
-  return icons[type] ?? '•';
+  return icons[type] ?? Circle;
 }
 
 function titleFromId(id: string) {

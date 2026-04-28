@@ -152,8 +152,14 @@ const title = 'Kataan';
       }
 
       .folder-icon {
+        display: inline-grid;
+        place-items: center;
         color: var(--brand);
-        font-size: var(--font-size-1);
+      }
+
+      .folder-icon svg {
+        inline-size: 1rem;
+        block-size: 1rem;
       }
 
       .badge {
