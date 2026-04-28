@@ -5,6 +5,7 @@ use crate::{
     diagnostic::{Diagnostic, DiagnosticReport},
     document::DocumentMetadata,
     id::CanonicalId,
+    index::{FolderDocument, FolderIndex},
     vault::Vault,
     Result,
 };
@@ -45,12 +46,27 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         }
 
         let folder_index_path = folder_path.join("index.toml");
-        if !folder_index_path.exists() {
+        let folder_index = if !folder_index_path.exists() {
             issues.push(
                 Diagnostic::error("missing-folder-index", "Folder is missing index.toml")
                     .with_path(format!("{folder}/index.toml")),
             );
-        }
+            None
+        } else {
+            let index_text =
+                fs::read_to_string(&folder_index_path).map_err(|source| crate::Error::Io {
+                    path: folder_index_path.clone(),
+                    source,
+                })?;
+            Some(
+                toml::from_str::<FolderIndex>(&index_text).map_err(|source| {
+                    crate::Error::TomlParse {
+                        path: folder_index_path.clone(),
+                        source,
+                    }
+                })?,
+            )
+        };
 
         let mut markdown_slugs = BTreeSet::new();
         let mut toml_slugs = BTreeSet::new();
@@ -118,6 +134,17 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 )
                 .with_path(format!("{folder}/{slug}.toml")),
             );
+        }
+
+        if let Some(folder_index) = &folder_index {
+            validate_folder_index(
+                &mut issues,
+                folder,
+                &folder_path,
+                folder_index,
+                &markdown_slugs,
+                &toml_slugs,
+            )?;
         }
 
         for (toml_path, relative_toml_path) in document_toml_files {
@@ -237,6 +264,96 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
     Ok(DiagnosticReport::new(issues))
 }
 
+fn validate_folder_index(
+    issues: &mut Vec<Diagnostic>,
+    folder: &str,
+    folder_path: &Path,
+    folder_index: &FolderIndex,
+    markdown_slugs: &BTreeSet<String>,
+    toml_slugs: &BTreeSet<String>,
+) -> Result<()> {
+    let actual_slugs = markdown_slugs
+        .intersection(toml_slugs)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let indexed_slugs = folder_index
+        .documents
+        .iter()
+        .map(|document| document.slug.clone())
+        .collect::<BTreeSet<_>>();
+
+    for slug in actual_slugs.difference(&indexed_slugs) {
+        issues.push(
+            Diagnostic::warning("index-drift", "Document is missing from folder index")
+                .with_path(format!("{folder}/{slug}.md")),
+        );
+    }
+
+    for _slug in indexed_slugs.difference(&actual_slugs) {
+        issues.push(
+            Diagnostic::warning(
+                "index-drift",
+                "Folder index contains a stale document entry",
+            )
+            .with_path(format!("{folder}/index.toml")),
+        );
+    }
+
+    let mut actual_documents = Vec::new();
+    for document in &folder_index.documents {
+        let markdown_path = folder_path.join(&document.markdown);
+        let toml_path = folder_path.join(&document.toml);
+        if !markdown_path.exists() || !toml_path.exists() {
+            continue;
+        }
+
+        let actual_markdown_checksum = checksum::blake3_file(&markdown_path)?;
+        if actual_markdown_checksum != document.markdown_checksum {
+            issues.push(
+                Diagnostic::error(
+                    "checksum-mismatch",
+                    "Folder index Markdown checksum does not match file contents",
+                )
+                .with_path(format!("{folder}/index.toml")),
+            );
+        }
+
+        let actual_toml_checksum = checksum::blake3_file(&toml_path)?;
+        if actual_toml_checksum != document.toml_checksum {
+            issues.push(
+                Diagnostic::error(
+                    "checksum-mismatch",
+                    "Folder index TOML checksum does not match file contents",
+                )
+                .with_path(format!("{folder}/index.toml")),
+            );
+        }
+
+        actual_documents.push(FolderDocument {
+            slug: document.slug.clone(),
+            markdown: document.markdown.clone(),
+            toml: document.toml.clone(),
+            markdown_checksum: actual_markdown_checksum,
+            toml_checksum: actual_toml_checksum,
+        });
+    }
+
+    if let Some(expected_folder_checksum) = &folder_index.folder_checksum {
+        let actual_folder_checksum = checksum::folder_checksum(&actual_documents);
+        if &actual_folder_checksum != expected_folder_checksum {
+            issues.push(
+                Diagnostic::error(
+                    "checksum-mismatch",
+                    "Folder checksum does not match indexed document checksums",
+                )
+                .with_path(format!("{folder}/index.toml")),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -245,6 +362,80 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn reports_folder_index_checksum_mismatch() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("projects/kataan-redesign.md"),
+            "# Kataan Redesign\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign.toml"),
+            r#"type = "project"
+markdown = "kataan-redesign.md"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/index.toml"),
+            r#"name = "Projects"
+default_type = "project"
+folder_checksum = "blake3:not-real"
+
+[[documents]]
+slug = "kataan-redesign"
+markdown = "kataan-redesign.md"
+toml = "kataan-redesign.toml"
+markdown_checksum = "blake3:not-real"
+toml_checksum = "blake3:not-real"
+"#,
+        )
+        .unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(!report.is_ok());
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "checksum-mismatch"
+                && diagnostic.path.as_deref() == Some("projects/index.toml")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reports_folder_index_drift() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("projects/kataan-redesign.md"),
+            "# Kataan Redesign\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign.toml"),
+            r#"type = "project"
+markdown = "kataan-redesign.md"
+"#,
+        )
+        .unwrap();
+        fs::write(root.join("projects/index.toml"), "name = \"Projects\"\n").unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "index-drift"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn reports_unresolved_relationship_references() {
