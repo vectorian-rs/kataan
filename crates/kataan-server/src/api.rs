@@ -338,31 +338,17 @@ pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkRes
 fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(id)
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
-    let record = {
-        let loaded = read_loaded_vault(state)?;
-        loaded
+
+    if let Ok(loaded) = read_loaded_vault(state) {
+        let record = loaded
             .documents
             .get(&id)
             .cloned()
-            .ok_or_else(|| ApiError(anyhow::anyhow!("document `{id}` does not exist")))?
-    };
-    let markdown = std::fs::read_to_string(&record.markdown_path).map_err(|source| {
-        ApiError(
-            kataan_core::Error::Io {
-                path: record.markdown_path.clone(),
-                source,
-            }
-            .into(),
-        )
-    })?;
+            .ok_or_else(|| ApiError(anyhow::anyhow!("document `{id}` does not exist")))?;
+        return document_response_from_parts(&id, record.metadata, &record.markdown_path);
+    }
 
-    Ok(DocumentResponse {
-        id: id.as_str().to_owned(),
-        type_folder: id.top_level_folder().to_owned(),
-        route_token: kataan_core::vault::route_token_for_id(&id),
-        metadata: record.metadata,
-        markdown,
-    })
+    filesystem_document_response(state, &id)
 }
 
 fn canonical_folder_response(
@@ -402,6 +388,44 @@ fn canonical_folder_response(
         markdown,
         folders,
         documents,
+    })
+}
+
+fn filesystem_document_response(
+    state: &AppState,
+    id: &kataan_core::id::CanonicalId,
+) -> Result<DocumentResponse, ApiError> {
+    let toml_path = state.vault_path.join(id.toml_path());
+    let metadata = read_document_metadata_if_valid(&toml_path).ok_or_else(|| {
+        ApiError(anyhow::anyhow!(
+            "document `{id}` cannot be loaded because its TOML metadata is invalid"
+        ))
+    })?;
+    let markdown_path = state.vault_path.join(id.folder()).join(&metadata.markdown);
+    document_response_from_parts(id, metadata, &markdown_path)
+}
+
+fn document_response_from_parts(
+    id: &kataan_core::id::CanonicalId,
+    metadata: kataan_core::document::DocumentMetadata,
+    markdown_path: &std::path::Path,
+) -> Result<DocumentResponse, ApiError> {
+    let markdown = std::fs::read_to_string(markdown_path).map_err(|source| {
+        ApiError(
+            kataan_core::Error::Io {
+                path: markdown_path.to_path_buf(),
+                source,
+            }
+            .into(),
+        )
+    })?;
+
+    Ok(DocumentResponse {
+        id: id.as_str().to_owned(),
+        type_folder: id.top_level_folder().to_owned(),
+        route_token: kataan_core::vault::route_token_for_id(id),
+        metadata,
+        markdown,
     })
 }
 
