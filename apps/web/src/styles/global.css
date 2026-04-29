@@ -180,9 +180,13 @@ button:focus-visible,
 .nav-row {
   justify-content: space-between;
   min-block-size: 34px;
-  padding: 0 var(--size-2) 0 var(--size-3);
+  padding: 0 var(--size-2) 0 calc(var(--size-3) + (var(--depth, 0) * var(--size-4)));
   border-inline-start: 2px solid transparent;
   font-size: 13px;
+}
+
+.nav-row.nested {
+  color: var(--text-2);
 }
 
 .nav-row:hover {

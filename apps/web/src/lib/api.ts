@@ -15,6 +15,12 @@ export type FolderSummary = {
   document_count: number;
 };
 
+export type FolderChild = {
+  id: string;
+  name: string;
+  has_index: boolean;
+};
+
 export type FolderDocument = {
   id: string;
   slug: string;
@@ -30,6 +36,14 @@ export type FolderResponse = {
     default_type?: string;
     folder_checksum?: string;
   };
+  documents: FolderDocument[];
+};
+
+export type CanonicalFolderResponse = {
+  id: string;
+  metadata?: Record<string, unknown>;
+  markdown?: string;
+  folders: FolderChild[];
   documents: FolderDocument[];
 };
 
@@ -59,12 +73,12 @@ export async function getFolders() {
   return getJson<{ folders: FolderSummary[] }>('/api/folders');
 }
 
-export async function getFolder(folder: string) {
-  return getJson<FolderResponse>(`/api/folders/${encodeURIComponent(folder)}`);
+export async function getFolder(id: string) {
+  return getJson<CanonicalFolderResponse>(`/api/folder?id=${encodeURIComponent(id)}`);
 }
 
 export async function getDocument(id: string) {
-  return getJson<DocumentResponse>(`/api/documents/${id}`);
+  return getJson<DocumentResponse>(`/api/document?id=${encodeURIComponent(id)}`);
 }
 
 export async function validateVault() {

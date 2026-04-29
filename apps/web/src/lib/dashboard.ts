@@ -20,6 +20,7 @@ import {
   validateVault,
   type Diagnostic,
   type DocumentResponse,
+  type FolderChild,
   type FolderDocument,
   type FolderSummary,
   type ValidateResponse,
@@ -39,6 +40,7 @@ const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
 
 let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
+const loadedFolderIds = new Set<string>();
 
 validateButton.addEventListener('click', async () => {
   await runAction(async () => {
@@ -69,8 +71,8 @@ async function loadFolders() {
   foldersEl.replaceChildren(...response.folders.map(renderFolderButton));
 
   const firstNonEmptyFolder = response.folders.find((folder) => folder.document_count > 0);
-  if (firstNonEmptyFolder) {
-    await selectFolder(firstNonEmptyFolder.folder);
+  if (response.folders.length > 0) {
+    await selectFolder(firstNonEmptyFolder?.folder ?? response.folders[0].folder);
   }
 }
 
@@ -104,17 +106,57 @@ async function selectFolder(folder: string) {
   updateActiveRows();
 
   const response = await getFolder(folder);
-  folderTitle.textContent = response.index.name;
+  loadedFolderIds.add(folder);
+  folderTitle.textContent = folderTitleFromResponse(response.id, response.metadata);
+  renderChildFolders(folder, response.folders);
 
   if (response.documents.length === 0) {
     documentsEl.className = 'list muted section';
-    documentsEl.textContent = 'No documents.';
+    documentsEl.textContent = response.folders.length === 0 ? 'No documents.' : 'Select a nested folder.';
+    selectedDocument = null;
+    updateActiveRows();
     return;
   }
 
   documentsEl.className = 'list';
   documentsEl.replaceChildren(...response.documents.map(renderDocumentButton));
   await selectDocument(response.documents[0].id);
+}
+
+function renderChildFolders(parentId: string, folders: FolderChild[]) {
+  const parentRow = foldersEl.querySelector<HTMLElement>(`[data-folder="${cssEscape(parentId)}"]`);
+  if (!parentRow) return;
+
+  let insertAfter = parentRow;
+  for (const folder of folders) {
+    let row = foldersEl.querySelector<HTMLElement>(`[data-folder="${cssEscape(folder.id)}"]`);
+    if (!row) {
+      row = renderChildFolderButton(folder, depthFor(folder.id));
+      insertAfter.after(row);
+    }
+    insertAfter = row;
+  }
+}
+
+function renderChildFolderButton(folder: FolderChild, depth: number) {
+  const button = clickableRow('nav-row nested');
+  button.dataset.folder = folder.id;
+  button.style.setProperty('--depth', String(depth));
+
+  const label = document.createElement('span');
+  label.className = 'folder-name';
+
+  const icon = document.createElement('span');
+  icon.className = 'folder-icon';
+  icon.append(createElement(FolderKanban, { width: 18, height: 18, 'stroke-width': 2 }));
+
+  const name = document.createElement('span');
+  name.textContent = folder.name;
+
+  label.append(icon, name);
+  button.append(label);
+  button.addEventListener('click', () => selectFolder(folder.id));
+  return button;
 }
 
 function renderDocumentButton(vaultDocument: FolderDocument) {
@@ -138,7 +180,7 @@ async function selectDocument(id: string) {
   updateActiveRows();
 
   const vaultDocument = await getDocument(id);
-  breadcrumb.textContent = vaultDocument.id.replace('/', ' › ');
+  breadcrumb.textContent = vaultDocument.id.replaceAll('/', ' › ');
   documentTitle.textContent = titleFromId(vaultDocument.id);
   renderDocumentBody(vaultDocument);
   renderMetadata(vaultDocument);
@@ -241,6 +283,19 @@ function folderIcon(type: string): IconNode {
     'type-definition': Boxes,
   };
   return icons[type] ?? Circle;
+}
+
+function folderTitleFromResponse(id: string, metadata?: Record<string, unknown>) {
+  const name = metadata?.name;
+  return typeof name === 'string' && name.length > 0 ? name : titleFromId(id);
+}
+
+function depthFor(id: string) {
+  return Math.max(0, id.split('/').length - 1);
+}
+
+function cssEscape(value: string) {
+  return CSS.escape(value);
 }
 
 function titleFromId(id: string) {
