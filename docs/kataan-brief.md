@@ -691,6 +691,42 @@ topics/ai-agents.md
 notes/ai-compiled-knowledge-bases.md
 ```
 
+## TOML schemas and repair guidance
+
+Kataan exposes machine-readable schemas for its TOML data models so the UI, repair tools, and agents can guide users without duplicating Rust struct definitions by hand.
+
+Schemas are derived from the Rust data structs where possible, for example `DocumentMetadata`, `FolderIndex`, `VaultConfig`, `TypeDefinition`, `Ontology`, and `EdgePredicate`. The API exposes JSON Schema plus TOML-oriented templates and vault-aware constraints.
+
+Example endpoints:
+
+```txt
+GET /api/schema/document
+GET /api/schema/folder-index
+GET /api/schema/vault
+GET /api/schema/type-definition
+GET /api/schema/ontology
+```
+
+Example response shape:
+
+```json
+{
+  "kind": "document",
+  "schema": { "type": "object" },
+  "constraints": {
+    "allowed_status": ["draft", "active", "paused", "done", "archived"],
+    "allowed_actors": ["human", "agent", "system"],
+    "allowed_types": ["project"],
+    "allowed_edge_predicates": ["related_to", "derived_from"]
+  },
+  "toml_template": "type = \"project\"\nmarkdown = \"example.md\"\n"
+}
+```
+
+JSON Schema describes the structural data model: required fields, optional fields, arrays, maps, and nested tables. Kataan-specific rules that depend on the current vault are returned as separate constraints, such as allowed types, allowed ontology predicates, folder/type mapping, valid status values, actor values, and the `code/` exemption.
+
+Repair UI should use this endpoint to show the minimum valid TOML shape for a broken file and to constrain LLM repair proposals. The LLM may suggest a patch, but human review and base-content-hash checks are required before applying it.
+
 ## Diagnostics
 
 Validation and repair commands should emit structured diagnostics with a severity, machine-readable code, message, and optional path.

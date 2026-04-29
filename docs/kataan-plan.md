@@ -239,7 +239,39 @@ Concurrency and live state model:
 - Edge mutations are serialized through the same queue and validate against the ontology before commit.
 - Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate` operations.
 
-## Phase 6: Astro web UI
+## Phase 6: TOML schemas and repair guidance
+
+Expose derived schemas for TOML data models so the UI and agents can guide users when metadata is missing or invalid.
+
+Implement in `crates/kataan-core` and `crates/kataan-server`:
+
+- Add a schema module backed by Rust data structs where practical.
+- Derive or generate JSON Schema for:
+  - `DocumentMetadata`
+  - `FolderIndex`
+  - `VaultConfig`
+  - `TypeDefinition`
+  - `Ontology`
+  - `EdgePredicate`
+- Expose API endpoints such as:
+
+```txt
+GET /api/schema/document
+GET /api/schema/folder-index
+GET /api/schema/vault
+GET /api/schema/type-definition
+GET /api/schema/ontology
+```
+
+Each response should include:
+
+- JSON Schema for structural fields.
+- A minimal TOML template.
+- Vault-aware constraints such as allowed document types for a folder, valid statuses, valid actors, ontology predicates, and `code/` folder exemption.
+
+Schema responses are guidance, not a replacement for validation. Repair UI and agents should use them to propose fixes, then validation remains authoritative.
+
+## Phase 7: Astro web UI
 
 Implement in `apps/web`.
 
@@ -256,7 +288,7 @@ Initial UI:
 
 Keep editing out of scope initially. Read-only UI first.
 
-## Phase 7: Basic intake without agents
+## Phase 8: Basic intake without agents
 
 Before adding agent proposals, support manual raw intake.
 
@@ -272,7 +304,7 @@ Add endpoint/UI for:
 
 This creates a `raw` document with provenance metadata.
 
-## Phase 8: Agent crate and proposal flow
+## Phase 9: Agent crate and proposal flow
 
 Only start UI-driven proposal application after validation, rebuild, and raw intake work reliably. The crate structure can exist earlier so the data model, prompt, and provider boundary are explicit.
 
@@ -339,15 +371,16 @@ Out of scope for v1:
 15. Build inverse-edge adjacency map from ontology.
 16. Server read API.
 17. UI route locators: derive a 32-hex token from `blake3(canonical_id)`, index `(type-folder, token) -> canonical ID` in `LoadedVault`, expose `/api/resolve?type=...&token=...`, and use `/<type-folder>/<token>` for reloadable document URLs.
-18. Read-only Astro UI.
-19. Manual raw intake.
-20. Edge mutation API.
-21. `kataan-agent` crate skeleton and API-key provider boundary.
-22. OpenAI/Anthropic ask commands.
-23. Server `/api/agent` endpoint.
-24. Global UI agent overlay.
-25. MCP read/repair surface.
-26. Agent proposals.
+18. TOML schema API and repair guidance templates.
+19. Read-only Astro UI.
+20. Manual raw intake.
+21. Edge mutation API.
+22. `kataan-agent` crate skeleton and API-key provider boundary.
+23. OpenAI/Anthropic ask commands.
+24. Server `/api/agent` endpoint.
+25. Global UI agent overlay.
+26. MCP read/repair surface.
+27. Agent proposals.
 
 ## Near-term success criteria
 
