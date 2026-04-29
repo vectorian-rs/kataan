@@ -372,6 +372,53 @@ button:focus-visible,
   font-size: var(--font-size-1);
 }
 
+.reader-body table {
+  inline-size: 100%;
+  margin-block: var(--size-5);
+  border: 1px solid var(--border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: var(--radius-3);
+  overflow: hidden;
+  font-size: var(--font-size-1);
+  line-height: var(--font-lineheight-3);
+}
+
+.reader-body th,
+.reader-body td {
+  padding: var(--size-2) var(--size-3);
+  border-block-end: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.reader-body th:last-child,
+.reader-body td:last-child {
+  border-inline-end: 0;
+}
+
+.reader-body tr:last-child td {
+  border-block-end: 0;
+}
+
+.reader-body thead th {
+  background: var(--surface-3);
+  color: var(--text-1);
+  font-family: "DM Mono", var(--font-mono);
+  font-size: var(--font-size-0);
+  font-weight: var(--font-weight-7);
+  letter-spacing: 0.02em;
+}
+
+.reader-body tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--surface-3) 48%, transparent);
+}
+
+.reader-body tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
 .empty-state {
   display: grid;
   place-items: center;
