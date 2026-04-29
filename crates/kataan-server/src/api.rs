@@ -85,7 +85,7 @@ pub async fn health() -> Json<HealthResponse> {
 
 pub async fn vault(
     State(state): State<AppState>,
-) -> Result<Json<kataan_core::index::VaultIndex>, ApiError> {
+) -> Result<Json<kataan_core::index::VaultConfig>, ApiError> {
     Ok(Json(open_vault(&state)?.index))
 }
 

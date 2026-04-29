@@ -6,7 +6,9 @@ use std::{
 
 use crate::{
     checksum,
-    constants::{ACTOR_VALUES, CORE_TYPES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES},
+    constants::{
+        ACTOR_VALUES, CORE_TYPES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES, VAULT_CONFIG_FILE,
+    },
     diagnostic::{Diagnostic, DiagnosticReport},
     diagnostic_codes as codes,
     document::DocumentMetadata,
@@ -78,7 +80,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                     codes::MISSING_TYPE_FOLDER,
                     format!("missing type_folders entry for `{required_type}`"),
                 )
-                .with_path("index.toml"),
+                .with_path(VAULT_CONFIG_FILE),
             );
         }
     }
@@ -1183,7 +1185,7 @@ markdown = "summary.md"
         let root = unique_temp_dir();
         fs::create_dir_all(&root).unwrap();
         fs::write(
-            root.join("index.toml"),
+            root.join(VAULT_CONFIG_FILE),
             r#"
 schema_version = "0.1.0"
 name = "Test Vault"
@@ -1226,7 +1228,7 @@ cardinality = "many-to-many"
         )
         .unwrap();
         fs::write(
-            root.join("index.toml"),
+            root.join(VAULT_CONFIG_FILE),
             r#"
 schema_version = "0.1.0"
 name = "Test Vault"
@@ -1244,8 +1246,6 @@ type-definition = "type"
     }
 
     fn unique_temp_dir() -> PathBuf {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        std::env::temp_dir().join(format!("kataan-test-{}-{counter}", std::process::id()))
+        crate::test_support::unique_temp_dir("validate")
     }
 }

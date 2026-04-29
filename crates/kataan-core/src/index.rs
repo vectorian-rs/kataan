@@ -16,7 +16,7 @@ impl Default for VaultLimits {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VaultIndex {
+pub struct VaultConfig {
     pub schema_version: String,
     pub name: String,
     pub created_at: Option<String>,

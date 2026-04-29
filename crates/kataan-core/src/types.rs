@@ -80,6 +80,8 @@ mod tests {
         path::{Path, PathBuf},
     };
 
+    use crate::constants::VAULT_CONFIG_FILE;
+
     use super::*;
 
     #[test]
@@ -109,7 +111,7 @@ markdown = "project.md"
 
     fn write_root_index(root: &Path) {
         fs::write(
-            root.join("index.toml"),
+            root.join(VAULT_CONFIG_FILE),
             r#"schema_version = "0.1.0"
 name = "Test Vault"
 
@@ -122,11 +124,6 @@ project = "projects"
     }
 
     fn unique_temp_dir() -> PathBuf {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "kataan-types-test-{}-{counter}",
-            std::process::id()
-        ))
+        crate::test_support::unique_temp_dir("types")
     }
 }

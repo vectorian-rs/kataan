@@ -2,18 +2,19 @@ use std::{fs, path::Path};
 
 use crate::{
     checksum,
-    index::{FolderDocument, VaultIndex},
+    constants::VAULT_CONFIG_FILE,
+    index::{FolderDocument, VaultConfig},
     write, Error, Result,
 };
 
 pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
     let root = root.as_ref();
-    let root_index_path = root.join("index.toml");
+    let root_index_path = root.join(VAULT_CONFIG_FILE);
     let root_index_text = fs::read_to_string(&root_index_path).map_err(|source| Error::Io {
         path: root_index_path.clone(),
         source,
     })?;
-    let root_index: VaultIndex =
+    let root_index: VaultConfig =
         toml::from_str(&root_index_text).map_err(|source| Error::TomlParse {
             path: root_index_path,
             source,
@@ -262,7 +263,7 @@ last_updated_by = "human"
     fn write_root_index(root: &Path) {
         fs::write(root.join("ontology.toml"), "schema_version = \"0.1.0\"\n").unwrap();
         fs::write(
-            root.join("index.toml"),
+            root.join(VAULT_CONFIG_FILE),
             r#"schema_version = "0.1.0"
 name = "Test Vault"
 created_at = "2026-04-28T12:00:00Z"
@@ -281,11 +282,6 @@ type-definition = "type"
     }
 
     fn unique_temp_dir() -> PathBuf {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "kataan-rebuild-test-{}-{counter}",
-            std::process::id()
-        ))
+        crate::test_support::unique_temp_dir("rebuild")
     }
 }

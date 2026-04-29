@@ -1,4 +1,5 @@
 pub const SCHEMA_VERSION: &str = "0.1.0";
+pub const VAULT_CONFIG_FILE: &str = "kataan.toml";
 pub const DEFAULT_MAX_FOLDER_DEPTH: usize = 4;
 
 pub const ACTOR_HUMAN: &str = "human";

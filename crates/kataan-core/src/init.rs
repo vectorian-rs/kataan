@@ -1,6 +1,11 @@
 use std::path::Path;
 
-use crate::{checksum, constants::SCHEMA_VERSION, rebuild::rebuild_indexes, write, Error, Result};
+use crate::{
+    checksum,
+    constants::{SCHEMA_VERSION, VAULT_CONFIG_FILE},
+    rebuild::rebuild_indexes,
+    write, Error, Result,
+};
 const DEFAULT_ONTOLOGY: &str = include_str!("../templates/default-ontology.toml");
 
 pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {
@@ -12,7 +17,7 @@ pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {
 
     let now = "2026-04-28T12:00:00Z";
     write_file(
-        &root.join("index.toml"),
+        &root.join(VAULT_CONFIG_FILE),
         &format!(
             r#"schema_version = "{SCHEMA_VERSION}"
 name = "{name}"
@@ -157,7 +162,7 @@ mod tests {
 
         init_vault(&root, "My Knowledgebase").unwrap();
 
-        assert!(root.join("index.toml").exists());
+        assert!(root.join("kataan.toml").exists());
         for folder in ["raw", "projects", "people", "notes", "topics", "type"] {
             assert!(
                 root.join(folder).join("index.toml").exists(),
@@ -176,7 +181,7 @@ mod tests {
             assert!(root.join("type").join(format!("{ty}.toml")).exists());
         }
 
-        let root_index = fs::read_to_string(root.join("index.toml")).unwrap();
+        let root_index = fs::read_to_string(root.join("kataan.toml")).unwrap();
         assert!(root_index.contains("schema_version = \"0.1.0\""));
         assert!(root_index.contains("name = \"My Knowledgebase\""));
 
@@ -192,8 +197,6 @@ mod tests {
     }
 
     fn unique_temp_dir() -> PathBuf {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        std::env::temp_dir().join(format!("kataan-init-test-{}-{counter}", std::process::id()))
+        crate::test_support::unique_temp_dir("init")
     }
 }

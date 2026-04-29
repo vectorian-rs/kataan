@@ -20,7 +20,7 @@ impl TestVault {
 
     pub fn with_root_index(self) -> Self {
         fs::write(
-            self.root.join("index.toml"),
+            self.root.join("kataan.toml"),
             r#"schema_version = "0.1.0"
 name = "Test Vault"
 
@@ -90,7 +90,7 @@ impl Drop for TestVault {
     }
 }
 
-fn unique_temp_dir(name: &str) -> PathBuf {
+pub fn unique_temp_dir(name: &str) -> PathBuf {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::env::temp_dir().join(format!("kataan-{name}-{}-{counter}", std::process::id()))

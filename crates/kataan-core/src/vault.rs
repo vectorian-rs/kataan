@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 use std::collections::BTreeMap;
 
 use crate::{
+    constants::VAULT_CONFIG_FILE,
     document::DocumentMetadata,
     graph::VaultGraph,
     id::CanonicalId,
-    index::{FolderIndex, VaultIndex},
+    index::{FolderIndex, VaultConfig},
     ontology::Ontology,
     types::TypeRegistry,
     walk::{walk_type_folder, VaultEntry},
@@ -16,7 +17,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Vault {
     pub root: PathBuf,
-    pub index: VaultIndex,
+    pub index: VaultConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -31,7 +32,7 @@ pub struct LoadedDocument {
 #[derive(Debug, Clone)]
 pub struct LoadedVault {
     pub root: PathBuf,
-    pub index: VaultIndex,
+    pub index: VaultConfig,
     pub type_registry: TypeRegistry,
     pub ontology: Ontology,
     pub documents: BTreeMap<CanonicalId, LoadedDocument>,
@@ -52,7 +53,7 @@ impl LoadedVault {
 impl Vault {
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
-        let index_path = root.join("index.toml");
+        let index_path = root.join(VAULT_CONFIG_FILE);
         let index_text = std::fs::read_to_string(&index_path).map_err(|source| Error::Io {
             path: index_path.clone(),
             source,
@@ -416,7 +417,7 @@ markdown = "index.md"
 
     fn write_root_index(root: &Path) {
         fs::write(
-            root.join("index.toml"),
+            root.join(VAULT_CONFIG_FILE),
             r#"schema_version = "0.1.0"
 name = "Test Vault"
 
@@ -429,11 +430,6 @@ note = "notes"
     }
 
     fn unique_temp_dir() -> PathBuf {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "kataan-vault-test-{}-{counter}",
-            std::process::id()
-        ))
+        crate::test_support::unique_temp_dir("vault")
     }
 }

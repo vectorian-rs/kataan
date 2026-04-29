@@ -14,7 +14,7 @@ Implement in `crates/kataan-core`.
 - Regular documents use folder path plus slug, e.g. `projects/company-x/q2-launch`.
 - Define path segment validation: every segment is lowercase kebab-case.
 - Determine document type from the top-level folder only; intermediate segments do not change type.
-- Load `[limits].max_folder_depth` from `vault/index.toml`; default to `4`.
+- Load `[limits].max_folder_depth` from `vault/kataan.toml`; default to `4`.
 - Count depth as segments after the type folder, so `projects/a/b/c/foo` has depth `4`.
 - Add helpers for:
   - ID → Markdown path
@@ -167,7 +167,7 @@ Should:
 - Recompute document `markdown_checksum` fields.
 - Rebuild every folder's direct `[[documents]]` and subfolder entries.
 - Recompute folder `markdown_checksum`, `toml_checksum`, subfolder checksums, and recursive `folder_checksum` values.
-- Update `updated_at` in root `index.toml`.
+- Update `updated_at` in root `kataan.toml`.
 - Preserve human-authored metadata where possible.
 
 This command makes direct filesystem edits repairable and keeps system-managed indexes canonical. Rebuild fixes checksum/index drift only; it does not auto-fix invariant violations such as missing sidecars, unresolved refs, unknown types, edge/ontology errors, or depth violations.

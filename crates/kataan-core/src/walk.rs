@@ -181,8 +181,6 @@ mod tests {
     }
 
     fn unique_temp_dir() -> PathBuf {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        std::env::temp_dir().join(format!("kataan-walk-test-{}-{counter}", std::process::id()))
+        crate::test_support::unique_temp_dir("walk")
     }
 }

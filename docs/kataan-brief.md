@@ -27,7 +27,7 @@ A Kataan vault is a normal directory:
 
 ```txt
 vault/
-├── index.toml
+├── kataan.toml
 ├── ontology.toml
 ├── raw/
 │   ├── index.md
@@ -79,9 +79,9 @@ vault/
 
 ## Vault index
 
-The vault root contains an `index.toml` file with vault-level metadata and schema information.
+The vault root contains a `kataan.toml` file with vault-level metadata and schema information.
 
-Example `vault/index.toml`:
+Example `vault/kataan.toml`:
 
 ```toml
 schema_version = "0.1.0"
@@ -297,7 +297,7 @@ A predicate cannot be both `symmetric = true` and have an `inverse`. If `symmetr
 
 Every predicate used in document `[edges]` must exist in `ontology.toml`. Validation checks source type, target resolution, target type, predicate shape, and ontology presence. Edges are written only by the UI or agent through the API write queue; humans should not hand-edit edge tables in TOML.
 
-`kataan init` creates a default ontology with common people, organization, project, authorship, provenance, topical, and lateral predicates. Users may edit `vault/ontology.toml` directly. The ontology is vault-root configuration alongside `index.toml` and is not checksummed into the folder Merkle tree in v1.
+`kataan init` creates a default ontology with common people, organization, project, authorship, provenance, topical, and lateral predicates. Users may edit `vault/ontology.toml` directly. The ontology is vault-root configuration alongside `kataan.toml` and is not checksummed into the folder Merkle tree in v1.
 
 Path structure remains the primary containment model. Ontology predicates such as `subproject_of`, `subtopic_of`, and `member_of` cover explicit containment. `related_to` is a symmetric ontology edge. `derived_from` records provenance. Folder nodes are documents via their `index.md` and `index.toml`, but their canonical IDs are the folder paths themselves, such as `projects` or `projects/company-x`, not `projects/index`. Ancestors are derived from canonical IDs.
 
@@ -382,7 +382,7 @@ Users may define additional types. Every valid `type` value, core or custom, mus
 
 Type definitions live in `type/`.
 
-To add a custom type, create `type/{name}.md` and `type/{name}.toml`, set `type = "type-definition"`, include `name` and `folder`, add the corresponding `[type_folders]` entry in `vault/index.toml`, and create the target folder.
+To add a custom type, create `type/{name}.md` and `type/{name}.toml`, set `type = "type-definition"`, include `name` and `folder`, add the corresponding `[type_folders]` entry in `vault/kataan.toml`, and create the target folder.
 
 A type definition has a Markdown explanation and a TOML metadata file:
 
