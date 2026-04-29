@@ -6,6 +6,7 @@ pub mod graph;
 pub mod id;
 pub mod index;
 pub mod init;
+pub mod ontology;
 pub mod rebuild;
 pub mod types;
 pub mod validate;

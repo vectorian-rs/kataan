@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 use crate::{
     checksum,
@@ -6,6 +10,8 @@ use crate::{
     document::DocumentMetadata,
     id::CanonicalId,
     index::{FolderDocument, FolderIndex},
+    ontology::{type_allowed, Ontology},
+    types::TypeRegistry,
     vault::Vault,
     Result,
 };
@@ -15,6 +21,31 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
     let mut issues = Vec::new();
     let mut known_document_ids = BTreeSet::new();
     let mut loaded_metadata = Vec::new();
+    let max_folder_depth = vault.index.limits.max_folder_depth.unwrap_or(4);
+
+    let ontology = match Ontology::load(&vault.root) {
+        Ok(ontology) => {
+            issues.extend(ontology.validate());
+            Some(ontology)
+        }
+        Err(crate::Error::Io { .. }) => {
+            issues.push(
+                Diagnostic::error("missing-ontology", "vault is missing ontology.toml")
+                    .with_path("ontology.toml"),
+            );
+            None
+        }
+        Err(error) => return Err(error),
+    };
+
+    let type_registry = TypeRegistry::load(&vault).ok();
+    let mut known_document_types = BTreeMap::new();
+    if let Ok(documents) = vault.load_documents() {
+        for document in documents {
+            known_document_ids.insert(document.id.as_str().to_owned());
+            known_document_types.insert(document.id.as_str().to_owned(), document.metadata.r#type);
+        }
+    }
 
     for required_type in [
         "raw",
@@ -88,7 +119,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
             let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str()) else {
                 continue;
             };
-            if file_name == "index.toml" {
+            if file_name == "index.toml" || file_name == "index.md" {
                 continue;
             }
 
@@ -167,12 +198,27 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
             };
             let document_id = format!("{folder}/{stem}");
             known_document_ids.insert(document_id.clone());
-            loaded_metadata.push((relative_toml_path.clone(), metadata.clone()));
+            known_document_types.insert(document_id.clone(), metadata.r#type.clone());
+            loaded_metadata.push((
+                relative_toml_path.clone(),
+                document_id.clone(),
+                metadata.clone(),
+            ));
+
+            if let Ok(id) = CanonicalId::parse(&document_id) {
+                if id.depth_after_type_folder() > max_folder_depth {
+                    issues.push(
+                        Diagnostic::error(
+                            "folder-depth-exceeded",
+                            format!("document depth exceeds max_folder_depth `{max_folder_depth}`"),
+                        )
+                        .with_path(relative_toml_path.clone()),
+                    );
+                }
+            }
 
             if let Some(status) = &metadata.status {
-                if !["raw", "draft", "active", "paused", "done", "archived"]
-                    .contains(&status.as_str())
-                {
+                if !["draft", "active", "paused", "done", "archived"].contains(&status.as_str()) {
                     issues.push(
                         Diagnostic::error("invalid-status", format!("unknown status `{status}`"))
                             .with_path(relative_toml_path.clone()),
@@ -197,7 +243,18 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 }
             }
 
-            match vault.index.type_folders.get(&metadata.r#type) {
+            let expected_type_folder = type_registry
+                .as_ref()
+                .and_then(|registry| registry.folder_for(&metadata.r#type))
+                .or_else(|| {
+                    vault
+                        .index
+                        .type_folders
+                        .get(&metadata.r#type)
+                        .map(String::as_str)
+                });
+
+            match expected_type_folder {
                 Some(expected_folder) if expected_folder != folder => {
                     issues.push(
                         Diagnostic::error(
@@ -242,21 +299,59 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         }
     }
 
-    for (path, metadata) in loaded_metadata {
-        for target in metadata
-            .belongs_to
-            .iter()
-            .chain(metadata.related_to.iter())
-            .chain(metadata.sources.iter())
-        {
-            if !known_document_ids.contains(target) {
-                issues.push(
-                    Diagnostic::error(
-                        "unresolved-reference",
-                        format!("reference target `{target}` does not exist"),
-                    )
-                    .with_path(path.clone()),
-                );
+    for (path, _, metadata) in loaded_metadata {
+        if let Some(ontology) = &ontology {
+            for (predicate_name, targets) in &metadata.edges {
+                let Some(predicate) = ontology.edges.get(predicate_name) else {
+                    issues.push(
+                        Diagnostic::error(
+                            "unknown-predicate",
+                            format!(
+                                "edge predicate `{predicate_name}` is not defined in ontology.toml"
+                            ),
+                        )
+                        .with_path(path.clone()),
+                    );
+                    continue;
+                };
+
+                if !type_allowed(&predicate.from, &metadata.r#type) {
+                    issues.push(
+                        Diagnostic::error(
+                            "predicate-source-type-mismatch",
+                            format!(
+                                "predicate `{predicate_name}` cannot be used from type `{}`",
+                                metadata.r#type
+                            ),
+                        )
+                        .with_path(path.clone()),
+                    );
+                }
+
+                for target in targets {
+                    let Some(target_type) = known_document_types.get(target) else {
+                        issues.push(
+                            Diagnostic::error(
+                                "unresolved-edge-target",
+                                format!("edge target `{target}` does not exist"),
+                            )
+                            .with_path(path.clone()),
+                        );
+                        continue;
+                    };
+
+                    if !type_allowed(&predicate.to, target_type) {
+                        issues.push(
+                            Diagnostic::error(
+                                "predicate-target-type-mismatch",
+                                format!(
+                                    "predicate `{predicate_name}` cannot target `{target}` of type `{target_type}`"
+                                ),
+                            )
+                            .with_path(path.clone()),
+                        );
+                    }
+                }
             }
         }
     }
@@ -433,41 +528,6 @@ markdown = "kataan-redesign.md"
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == "index-drift"));
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn reports_unresolved_relationship_references() {
-        let root = unique_temp_dir();
-        fs::create_dir_all(root.join("projects")).unwrap();
-        write_root_index(&root);
-        fs::write(
-            root.join("projects/kataan-redesign.md"),
-            "# Kataan Redesign\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("projects/kataan-redesign.toml"),
-            r#"
-type = "project"
-markdown = "kataan-redesign.md"
-related_to = ["topics/missing-topic"]
-belongs_to = ["projects/missing-parent"]
-sources = ["raw/missing-source"]
-"#,
-        )
-        .unwrap();
-
-        let report = validate(&root).unwrap();
-
-        assert!(!report.is_ok());
-        let unresolved_count = report
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| diagnostic.code == "unresolved-reference")
-            .count();
-        assert_eq!(unresolved_count, 3);
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -672,6 +732,55 @@ markdown = "kataan-redesign.md"
     }
 
     #[test]
+    fn reports_edge_and_ontology_errors() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        fs::create_dir_all(root.join("notes")).unwrap();
+        write_root_index(&root);
+        fs::write(root.join("projects/kataan-redesign.md"), "# Project\n").unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign.toml"),
+            r#"type = "project"
+markdown = "kataan-redesign.md"
+
+[edges]
+derived_from = ["projects/kataan-redesign"]
+missing_predicate = ["notes/summary"]
+related_to = ["notes/missing"]
+"#,
+        )
+        .unwrap();
+        fs::write(root.join("notes/summary.md"), "# Summary\n").unwrap();
+        fs::write(
+            root.join("notes/summary.toml"),
+            r#"type = "note"
+markdown = "summary.md"
+"#,
+        )
+        .unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(!report.is_ok());
+        for code in [
+            "unknown-predicate",
+            "predicate-target-type-mismatch",
+            "unresolved-edge-target",
+        ] {
+            assert!(
+                report
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == code),
+                "missing {code}: {:#?}",
+                report.diagnostics
+            );
+        }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn reports_missing_required_type_folder_entries() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).unwrap();
@@ -700,6 +809,24 @@ raw = "raw"
     }
 
     fn write_root_index(root: &Path) {
+        fs::write(
+            root.join("ontology.toml"),
+            r#"schema_version = "0.1.0"
+
+[edges.related_to]
+from = ["*"]
+to = ["*"]
+symmetric = true
+cardinality = "many-to-many"
+
+[edges.derived_from]
+from = ["*"]
+to = ["raw", "note"]
+inverse = "derived"
+cardinality = "many-to-many"
+"#,
+        )
+        .unwrap();
         fs::write(
             root.join("index.toml"),
             r#"

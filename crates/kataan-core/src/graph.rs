@@ -171,6 +171,7 @@ mod tests {
                 markdown_checksum: None,
                 aliases: Vec::new(),
                 labels: Vec::new(),
+                edges: Default::default(),
                 belongs_to: Vec::new(),
                 related_to: Vec::new(),
                 sources: Vec::new(),
@@ -178,6 +179,8 @@ mod tests {
                 last_updated_by: None,
             },
             markdown: String::new(),
+            ancestors: id.ancestors().into_iter().map(str::to_owned).collect(),
+            is_folder_index: false,
             id,
         }
     }

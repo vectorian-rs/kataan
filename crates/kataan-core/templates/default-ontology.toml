@@ -1,0 +1,36 @@
+schema_version = "0.1.0"
+
+[edges.related_to]
+from = ["*"]
+to = ["*"]
+symmetric = true
+cardinality = "many-to-many"
+description = "Generic lateral relationship; use a more specific edge if one fits."
+
+[edges.derived_from]
+from = ["*"]
+to = ["raw", "note"]
+inverse = "derived"
+cardinality = "many-to-many"
+description = "Document was derived from a raw or note source."
+
+[edges.mentions]
+from = ["*"]
+to = ["*"]
+inverse = "mentioned_in"
+cardinality = "many-to-many"
+description = "Document mentions another document."
+
+[edges.subtopic_of]
+from = ["topic"]
+to = ["topic"]
+inverse = "has_subtopic"
+cardinality = "many-to-one"
+description = "Topic is a narrower instance of a broader topic."
+
+[edges.subproject_of]
+from = ["project"]
+to = ["project"]
+inverse = "has_subproject"
+cardinality = "many-to-one"
+description = "Project is a subproject of a larger project."

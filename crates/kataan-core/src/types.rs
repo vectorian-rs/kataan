@@ -19,6 +19,16 @@ pub struct TypeRegistry {
 }
 
 impl TypeRegistry {
+    pub fn contains(&self, name: &str) -> bool {
+        self.definitions.contains_key(name)
+    }
+
+    pub fn folder_for(&self, name: &str) -> Option<&str> {
+        self.definitions
+            .get(name)
+            .map(|definition| definition.folder.as_str())
+    }
+
     pub fn load(vault: &Vault) -> Result<Self> {
         let type_folder = vault
             .index

@@ -109,7 +109,6 @@ Validation should check:
 - Canonical ID depth does not exceed `[limits].max_folder_depth`; report `folder-depth-exceeded`.
 - `created_by` and `last_updated_by` are one of `human`, `agent`, `system` when present.
 - `status` is one of the normal lifecycle values when present; `raw` is not a valid status.
-- Legacy relationship fields `belongs_to`, `related_to`, and `sources` are not part of the schema.
 - Every predicate in a document `[edges]` table exists in `vault/ontology.toml`.
 - The source document type is allowed by the predicate `from` list, or `from = ["*"]`.
 - Every edge target canonical ID resolves to an existing document.
@@ -306,13 +305,7 @@ Initial proposal support:
 
 Defer hardened base-checksum conflict handling until the end-to-end flow works.
 
-## Relationship migration and v1 scope
-
-No automatic migration tool is required before 1.0. Existing vaults can be hand-edited:
-
-- `belongs_to` containment becomes path containment or ontology predicates such as `subproject_of`, `subtopic_of`, and `member_of`.
-- `related_to` becomes the symmetric ontology edge `related_to`.
-- `sources` becomes `derived_from`.
+## Relationship v1 scope
 
 Out of scope for v1:
 

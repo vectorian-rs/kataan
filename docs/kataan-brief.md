@@ -100,7 +100,7 @@ topic = "topics"
 type-definition = "type"
 ```
 
-`schema_version` is required and gives Kataan a migration path as the vault format evolves. The `type_folders` table defines the authoritative type-to-folder mapping for the vault. `[limits].max_folder_depth` defaults to `4` and counts segments after the type folder, so `projects/a/b/c/foo` has depth `4`.
+`schema_version` is required and identifies the vault format version. The `type_folders` table defines the authoritative type-to-folder mapping for the vault. `[limits].max_folder_depth` defaults to `4` and counts segments after the type folder, so `projects/a/b/c/foo` has depth `4`.
 
 ## File model
 
@@ -155,14 +155,14 @@ Kataan uses a 1:1 mapping between types and top-level folders. A document with `
 
 Core mappings:
 
-| Type | Folder |
-|---|---|
-| `raw` | `raw/` |
-| `project` | `projects/` |
-| `person` | `people/` |
-| `note` | `notes/` |
-| `topic` | `topics/` |
-| `type-definition` | `type/` |
+| Type              | Folder      |
+| ----------------- | ----------- |
+| `raw`             | `raw/`      |
+| `project`         | `projects/` |
+| `person`          | `people/`   |
+| `note`            | `notes/`    |
+| `topic`           | `topics/`   |
+| `type-definition` | `type/`     |
 
 ## Folder indexes
 
@@ -223,13 +223,13 @@ Kataan should include a `rebuild-indexes` command from the start. Rebuild fixes 
 
 Folder index document fields:
 
-| Field | Meaning |
-|---|---|
-| `slug` | Filename without `.md` or `.toml`, relative to the folder. |
-| `markdown` | Markdown filename for the document. |
-| `toml` | TOML sidecar filename for the document. |
-| `markdown_checksum` | BLAKE3 checksum of the Markdown file. |
-| `toml_checksum` | BLAKE3 checksum of the document TOML sidecar. |
+| Field               | Meaning                                                    |
+| ------------------- | ---------------------------------------------------------- |
+| `slug`              | Filename without `.md` or `.toml`, relative to the folder. |
+| `markdown`          | Markdown filename for the document.                        |
+| `toml`              | TOML sidecar filename for the document.                    |
+| `markdown_checksum` | BLAKE3 checksum of the Markdown file.                      |
+| `toml_checksum`     | BLAKE3 checksum of the document TOML sidecar.              |
 
 ## Identity, references, and naming
 
@@ -298,23 +298,21 @@ Every predicate used in document `[edges]` must exist in `ontology.toml`. Valida
 
 `kataan init` creates a default ontology with common people, organization, project, authorship, provenance, topical, and lateral predicates. Users may edit `vault/ontology.toml` directly. The ontology is vault-root configuration alongside `index.toml` and is not checksummed into the folder Merkle tree in v1.
 
-The previous top-level TOML fields `belongs_to`, `related_to`, and `sources` are removed from the schema. Path containment covers filesystem hierarchy; ontology predicates such as `subproject_of`, `subtopic_of`, and `member_of` cover explicit containment. `related_to` remains as a symmetric ontology edge. `sources` becomes `derived_from`.
-
-Path structure remains the primary containment model. Folder nodes are documents via their `index.md` and `index.toml`, but their canonical IDs are the folder paths themselves, such as `projects` or `projects/company-x`, not `projects/index`. Ancestors are derived from canonical IDs.
+Path structure remains the primary containment model. Ontology predicates such as `subproject_of`, `subtopic_of`, and `member_of` cover explicit containment. `related_to` is a symmetric ontology edge. `derived_from` records provenance. Folder nodes are documents via their `index.md` and `index.toml`, but their canonical IDs are the folder paths themselves, such as `projects` or `projects/company-x`, not `projects/index`. Ancestors are derived from canonical IDs.
 
 ## Core metadata fields
 
-| Field | Meaning |
-|---|---|
-| `type` | What kind of thing this file is: `raw`, `project`, `person`, `topic`, `note`, `type-definition`, etc. |
-| `status` | Optional lifecycle state, such as draft, active, paused, done, or archived. Raw documents use `type = "raw"`; they do not need `status = "raw"`. |
-| `markdown` | Markdown file associated with this TOML sidecar. |
-| `markdown_checksum` | BLAKE3 checksum of the associated Markdown file. |
-| `aliases` | Alternative names the human or agent can use to recognize this thing. |
-| `labels` | Lightweight tags for filtering and grouping, such as `aws`, `arm64`, `rust`, or `local-first`. |
-| `edges` | Relationship table keyed by ontology predicate name. |
-| `created_by` | Who created the file: human or agent. |
-| `last_updated_by` | Who last changed the file: human or agent. |
+| Field               | Meaning                                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `type`              | What kind of thing this file is: `raw`, `project`, `person`, `topic`, `note`, `type-definition`, etc.                                            |
+| `status`            | Optional lifecycle state, such as draft, active, paused, done, or archived. Raw documents use `type = "raw"`; they do not need `status = "raw"`. |
+| `markdown`          | Markdown file associated with this TOML sidecar.                                                                                                 |
+| `markdown_checksum` | BLAKE3 checksum of the associated Markdown file.                                                                                                 |
+| `aliases`           | Alternative names the human or agent can use to recognize this thing.                                                                            |
+| `labels`            | Lightweight tags for filtering and grouping, such as `aws`, `arm64`, `rust`, or `local-first`.                                                   |
+| `edges`             | Relationship table keyed by ontology predicate name.                                                                                             |
+| `created_by`        | Who created the file: human or agent.                                                                                                            |
+| `last_updated_by`   | Who last changed the file: human or agent.                                                                                                       |
 
 ## Enums and lifecycle
 
@@ -442,12 +440,12 @@ Initial raw `source` values:
 
 Optional raw source detail fields:
 
-| Field | Meaning |
-|---|---|
-| `source_label` | Human-readable label for the source. |
-| `source_url` | Original URL for `url` sources. |
-| `source_file` | Original or attached file path for `pdf`, `image`, or `file` sources. |
-| `ingested_at` | When Kataan saved the raw file. |
+| Field          | Meaning                                                                      |
+| -------------- | ---------------------------------------------------------------------------- |
+| `source_label` | Human-readable label for the source.                                         |
+| `source_url`   | Original URL for `url` sources.                                              |
+| `source_file`  | Original or attached file path for `pdf`, `image`, or `file` sources.        |
+| `ingested_at`  | When Kataan saved the raw file.                                              |
 | `retrieved_at` | When content was fetched from its origin; only meaningful for `url` sources. |
 
 Example URL source:

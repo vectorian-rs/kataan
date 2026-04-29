@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,6 +13,9 @@ pub struct DocumentMetadata {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub edges: BTreeMap<String, Vec<String>>,
+
     #[serde(default)]
     pub belongs_to: Vec<String>,
     #[serde(default)]

@@ -43,6 +43,7 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
             let path = entry.path();
             if !path.is_file()
                 || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+                || path.file_name().and_then(|name| name.to_str()) == Some("index.md")
             {
                 continue;
             }
@@ -249,6 +250,7 @@ last_updated_by = "human"
     }
 
     fn write_root_index(root: &Path) {
+        fs::write(root.join("ontology.toml"), "schema_version = \"0.1.0\"\n").unwrap();
         fs::write(
             root.join("index.toml"),
             r#"schema_version = "0.1.0"

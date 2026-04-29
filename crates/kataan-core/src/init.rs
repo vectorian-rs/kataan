@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::{checksum, rebuild::rebuild_indexes, Error, Result};
 
 const SCHEMA_VERSION: &str = "0.1.0";
+const DEFAULT_ONTOLOGY: &str = include_str!("../templates/default-ontology.toml");
 
 pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {
     let root = root.as_ref();
@@ -20,6 +21,9 @@ name = "{name}"
 created_at = "{now}"
 updated_at = "{now}"
 
+[limits]
+max_folder_depth = 4
+
 [type_folders]
 raw = "raw"
 project = "projects"
@@ -30,6 +34,8 @@ type-definition = "type"
 "#
         ),
     )?;
+
+    write_file(&root.join("ontology.toml"), DEFAULT_ONTOLOGY)?;
 
     for (folder, title, description, default_type) in [
         (
@@ -55,11 +61,17 @@ type-definition = "type"
             source,
         })?;
         write_file(
+            &folder_path.join("index.md"),
+            &format!("# {title}\n\n{description}\n"),
+        )?;
+        write_file(
             &folder_path.join("index.toml"),
             &format!(
-                r#"name = "{title}"
+                r#"type = "{default_type}"
+name = "{title}"
 description = "{description}"
 default_type = "{default_type}"
+markdown = "index.md"
 folder_checksum = "blake3:todo"
 "#
             ),

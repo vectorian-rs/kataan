@@ -1,11 +1,26 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultLimits {
+    pub max_folder_depth: Option<usize>,
+}
+
+impl Default for VaultLimits {
+    fn default() -> Self {
+        Self {
+            max_folder_depth: Some(4),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultIndex {
     pub schema_version: String,
     pub name: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub limits: VaultLimits,
     pub type_folders: std::collections::BTreeMap<String, String>,
 }
 
