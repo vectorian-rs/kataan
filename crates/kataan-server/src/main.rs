@@ -27,7 +27,7 @@ async fn main() {
     let cli = Cli::parse();
     let state = AppState::new(cli.vault);
     if let Some(error) = state.boot_error() {
-        error!(error = %error, "kataan-server starting in degraded mode");
+        error!(%error, "vault load failed; starting in degraded mode");
     } else {
         info!("loaded vault successfully");
     }

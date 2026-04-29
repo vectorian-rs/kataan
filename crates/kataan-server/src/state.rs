@@ -1,9 +1,10 @@
 use std::{
+    fmt::Display,
     path::PathBuf,
     sync::{Arc, RwLock},
 };
 
-use kataan_core::vault::LoadedVault;
+use kataan_core::{vault::LoadedVault, Error};
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -16,7 +17,7 @@ impl AppState {
     pub fn new(vault_path: PathBuf) -> Self {
         let (loaded, boot_error) = match LoadedVault::load(&vault_path) {
             Ok(vault) => (Some(vault), None),
-            Err(error) => (None, Some(error.to_string())),
+            Err(error) => (None, Some(format_boot_error(&error))),
         };
 
         Self {
@@ -42,4 +43,41 @@ impl AppState {
     pub fn boot_error(&self) -> Option<String> {
         self.boot_error.read().ok().and_then(|error| error.clone())
     }
+}
+
+fn format_boot_error(error: &Error) -> String {
+    match error {
+        Error::TomlParse { path, source } => format!(
+            "Invalid TOML metadata at {}: {}. The server is running in degraded mode; fix this file or run validation for the full diagnostic list.",
+            path.display(),
+            toml_error_message(source)
+        ),
+        Error::Io { path, source } => format!(
+            "Could not read vault file at {}: {}. The server is running in degraded mode.",
+            path.display(),
+            source
+        ),
+        Error::InvalidCanonicalIdAtPath { path, source } => format!(
+            "Invalid canonical ID at {}: {}. The server is running in degraded mode.",
+            path.display(),
+            source
+        ),
+        Error::InvalidCanonicalId(source) => format!(
+            "Invalid canonical ID while loading vault: {source}. The server is running in degraded mode."
+        ),
+        Error::InvalidVaultStructure(message) => format!(
+            "Invalid vault structure: {message}. The server is running in degraded mode."
+        ),
+    }
+}
+
+fn toml_error_message(source: &impl Display) -> String {
+    source
+        .to_string()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .next_back()
+        .unwrap_or("invalid TOML")
+        .trim()
+        .to_owned()
 }
