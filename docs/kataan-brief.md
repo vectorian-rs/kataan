@@ -254,9 +254,9 @@ related_to = ["topics/knowledge-bases"]
 derived_from = ["raw/pasted-chat-about-ai-kbs"]
 ```
 
-Filenames, IDs, and every path segment use lowercase kebab-case. The Markdown file, TOML sidecar, and index entry all share the same slug.
+Filenames are preserved exactly as authored. Canonical IDs allow mixed-case URL-safe path segments, so externally meaningful names such as `projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429` are valid and map to files such as `HU-otp-travel-POC-SOW1-260429.md`. Kataan must not silently lowercase or rename user files. The Markdown file, TOML sidecar, and index entry all share the same slug and case.
 
-Because canonical IDs are path-based, rename and move operations must update the Markdown file, TOML sidecar, containing folder indexes, checksums, and references to the old canonical ID.
+Because canonical IDs are path-based and case-sensitive, rename and move operations must update the Markdown file, TOML sidecar, containing folder indexes, checksums, and references to the old canonical ID. Validation should detect case-insensitive collisions for cross-platform safety.
 
 ## Relationship ontology
 

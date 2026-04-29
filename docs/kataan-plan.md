@@ -12,7 +12,7 @@ Implement in `crates/kataan-core`.
 - Use no leading slash and `/` separators on every platform; normalize Windows paths at load time.
 - Folder index documents use the folder path directly, e.g. `projects` and `projects/company-x`.
 - Regular documents use folder path plus slug, e.g. `projects/company-x/q2-launch`.
-- Define path segment validation: every segment is lowercase kebab-case.
+- Define path segment validation: every segment is URL-safe and may use mixed case; preserve authored case exactly and never silently lowercase filenames or canonical IDs.
 - Determine document type from the top-level folder only; intermediate segments do not change type.
 - Load `[limits].max_folder_depth` from `vault/kataan.toml`; default to `4`.
 - Count depth as segments after the type folder, so `projects/a/b/c/foo` has depth `4`.
@@ -106,7 +106,7 @@ Validation should check:
 - `markdown_checksum` matches exact Markdown bytes.
 - Document `type` is known.
 - Document top-level folder matches the type-folder mapping.
-- Filenames and every canonical ID segment are lowercase kebab-case.
+- Filenames and every canonical ID segment are preserved exactly as authored; mixed-case IDs such as `projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429` are valid.
 - Canonical ID depth does not exceed `[limits].max_folder_depth`; report `folder-depth-exceeded`.
 - `created_by` and `last_updated_by` are one of `human`, `agent`, `system` when present.
 - `status` is one of the normal lifecycle values when present; `raw` is not a valid status.
