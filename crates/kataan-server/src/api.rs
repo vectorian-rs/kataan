@@ -1,10 +1,10 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::state::AppState;
 
@@ -39,6 +39,22 @@ pub struct FolderResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct CanonicalFolderResponse {
+    pub id: String,
+    pub metadata: Option<kataan_core::document::DocumentMetadata>,
+    pub markdown: Option<String>,
+    pub folders: Vec<FolderChildResponse>,
+    pub documents: Vec<FolderDocumentResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FolderChildResponse {
+    pub id: String,
+    pub name: String,
+    pub has_index: bool,
+}
+
+#[derive(Debug, Serialize)]
 pub struct FolderDocumentResponse {
     pub id: String,
     pub slug: String,
@@ -59,6 +75,11 @@ pub struct ValidateResponse {
     pub diagnostics: Vec<DiagnosticResponse>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct IdQuery {
+    pub id: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct DiagnosticResponse {
     pub severity: String,
@@ -72,6 +93,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/vault", get(vault))
         .route("/api/folders", get(folders))
+        .route("/api/folder", get(folder_by_id))
+        .route("/api/document", get(document_by_id))
         .route("/api/folders/:folder", get(folder))
         .route("/api/documents/*id", get(document))
         .route("/api/validate", post(validate))
@@ -134,20 +157,25 @@ pub async fn folder(
     }))
 }
 
+pub async fn folder_by_id(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> Result<Json<CanonicalFolderResponse>, ApiError> {
+    canonical_folder_response(&state, &query.id).map(Json)
+}
+
+pub async fn document_by_id(
+    State(state): State<AppState>,
+    Query(query): Query<IdQuery>,
+) -> Result<Json<DocumentResponse>, ApiError> {
+    document_response(&state, &query.id).map(Json)
+}
+
 pub async fn document(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<DocumentResponse>, ApiError> {
-    let vault = open_vault(&state)?;
-    let id = kataan_core::id::CanonicalId::parse(id)
-        .map_err(|_| ApiError(anyhow::anyhow!("invalid canonical id")))?;
-    let document = vault.load_document(&id).map_err(ApiError::from)?;
-
-    Ok(Json(DocumentResponse {
-        id: id.as_str().to_owned(),
-        metadata: document.metadata,
-        markdown: document.markdown,
-    }))
+    document_response(&state, &id).map(Json)
 }
 
 pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResponse>, ApiError> {
@@ -170,6 +198,91 @@ pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResp
 pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
     kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(ApiError::from)?;
     Ok(Json(OkResponse { ok: true }))
+}
+
+fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {
+    let vault = open_vault(state)?;
+    let id = kataan_core::id::CanonicalId::parse(id)
+        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    let document = vault.load_document(&id).map_err(ApiError::from)?;
+
+    Ok(DocumentResponse {
+        id: id.as_str().to_owned(),
+        metadata: document.metadata,
+        markdown: document.markdown,
+    })
+}
+
+fn canonical_folder_response(
+    state: &AppState,
+    id: &str,
+) -> Result<CanonicalFolderResponse, ApiError> {
+    let vault = open_vault(state)?;
+    let id = kataan_core::id::CanonicalId::parse(id)
+        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    let folder_path = vault.root.join(id.as_str());
+    if !folder_path.is_dir() {
+        return Err(ApiError(anyhow::anyhow!("folder `{}` does not exist", id)));
+    }
+
+    let folder_document = vault.load_document(&id).ok();
+    let mut folders = Vec::new();
+    let mut documents = Vec::new();
+
+    for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
+        path: folder_path.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| kataan_core::Error::Io {
+            path: folder_path.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        if path.is_dir() {
+            let child_id = format!("{}/{}", id.as_str(), name);
+            folders.push(FolderChildResponse {
+                id: child_id,
+                name,
+                has_index: path.join("index.toml").exists() && path.join("index.md").exists(),
+            });
+            continue;
+        }
+
+        if !path.is_file()
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+            || name == "index.md"
+        {
+            continue;
+        }
+        let Some(slug) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let toml_path = folder_path.join(format!("{slug}.toml"));
+        if !toml_path.exists() {
+            continue;
+        }
+        documents.push(FolderDocumentResponse {
+            id: format!("{}/{}", id.as_str(), slug),
+            slug: slug.to_owned(),
+            markdown: name,
+            toml: format!("{slug}.toml"),
+        });
+    }
+
+    folders.sort_by(|left, right| left.id.cmp(&right.id));
+    documents.sort_by(|left, right| left.id.cmp(&right.id));
+
+    Ok(CanonicalFolderResponse {
+        id: id.as_str().to_owned(),
+        metadata: folder_document
+            .as_ref()
+            .map(|document| document.metadata.clone()),
+        markdown: folder_document.map(|document| document.markdown),
+        folders,
+        documents,
+    })
 }
 
 fn open_vault(state: &AppState) -> Result<kataan_core::vault::Vault, ApiError> {
@@ -244,6 +357,71 @@ mod tests {
         let app = test_app(&root);
 
         let response = request(app, "GET", "/api/folders/type").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn canonical_folder_endpoint_returns_nested_folder() {
+        let root = test_vault();
+        fs::create_dir_all(root.join("projects/snappy/sows")).unwrap();
+        fs::write(root.join("projects/snappy/index.md"), "# Snappy\n").unwrap();
+        fs::write(
+            root.join("projects/snappy/index.toml"),
+            r#"type = "project"
+name = "Snappy"
+markdown = "index.md"
+"#,
+        )
+        .unwrap();
+        fs::write(root.join("projects/snappy/sows/index.md"), "# SOWs\n").unwrap();
+        fs::write(
+            root.join("projects/snappy/sows/index.toml"),
+            r#"type = "project"
+name = "SOWs"
+markdown = "index.md"
+"#,
+        )
+        .unwrap();
+        fs::write(root.join("projects/snappy/sows/demo.md"), "# Demo\n").unwrap();
+        fs::write(
+            root.join("projects/snappy/sows/demo.toml"),
+            r#"type = "project"
+markdown = "demo.md"
+"#,
+        )
+        .unwrap();
+        let app = test_app(&root);
+
+        let response = request(app, "GET", "/api/folder?id=projects%2Fsnappy%2Fsows").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn query_document_endpoint_returns_nested_document() {
+        let root = test_vault();
+        fs::create_dir_all(root.join("projects/snappy/sows")).unwrap();
+        fs::write(root.join("projects/snappy/sows/demo.md"), "# Demo\n").unwrap();
+        fs::write(
+            root.join("projects/snappy/sows/demo.toml"),
+            r#"type = "project"
+markdown = "demo.md"
+"#,
+        )
+        .unwrap();
+        let app = test_app(&root);
+
+        let response = request(
+            app,
+            "GET",
+            "/api/document?id=projects%2Fsnappy%2Fsows%2Fdemo",
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::OK);
 
