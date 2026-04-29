@@ -31,8 +31,7 @@ fn walk_folder(root: &Path, relative_folder: &Path, entries: &mut Vec<VaultEntry
     let index_md = folder_path.join("index.md");
     let index_toml = folder_path.join("index.toml");
     if index_md.exists() && index_toml.exists() {
-        let id = CanonicalId::from_document_path(relative_folder.join("index.toml"))
-            .map_err(|_| Error::ValidationFailed)?;
+        let id = CanonicalId::from_document_path(relative_folder.join("index.toml"))?;
         entries.push(VaultEntry::FolderIndex {
             id,
             markdown_path: index_md,
@@ -71,8 +70,7 @@ fn walk_folder(root: &Path, relative_folder: &Path, entries: &mut Vec<VaultEntry
             continue;
         }
 
-        let id = CanonicalId::from_document_path(relative_folder.join(&file_name))
-            .map_err(|_| Error::ValidationFailed)?;
+        let id = CanonicalId::from_document_path(relative_folder.join(&file_name))?;
         entries.push(VaultEntry::Document {
             id,
             markdown_path: path,

@@ -36,8 +36,7 @@ impl VaultGraph {
         for (source, predicates) in edges {
             for (predicate_name, targets) in predicates {
                 for target in targets {
-                    let target =
-                        CanonicalId::parse(target).map_err(|_| crate::Error::ValidationFailed)?;
+                    let target = CanonicalId::parse(target)?;
                     graph
                         .outgoing_edges
                         .entry(source.clone())
