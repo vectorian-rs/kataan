@@ -324,7 +324,8 @@ function updateActiveRows() {
   });
 }
 
-function folderIcon(type: string): IconNode {
+function folderIcon(typeOrFolder: string): IconNode {
+  const key = normalizeFolderIconKey(typeOrFolder);
   const icons: Record<string, IconNode> = {
     code: Code,
     note: FileText,
@@ -334,7 +335,18 @@ function folderIcon(type: string): IconNode {
     topic: Lightbulb,
     'type-definition': Boxes,
   };
-  return icons[type] ?? Circle;
+  return icons[key] ?? Circle;
+}
+
+function normalizeFolderIconKey(typeOrFolder: string) {
+  const aliases: Record<string, string> = {
+    notes: 'note',
+    people: 'person',
+    projects: 'project',
+    topics: 'topic',
+    type: 'type-definition',
+  };
+  return aliases[typeOrFolder] ?? typeOrFolder;
 }
 
 function folderTitleFromResponse(id: string, metadata?: Record<string, unknown>) {

@@ -158,6 +158,24 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
         });
     }
 
+    if !loaded
+        .index
+        .type_folders
+        .values()
+        .any(|folder| kataan_core::constants::is_code_folder(folder))
+        && state
+            .vault_path
+            .join(kataan_core::constants::CODE_FOLDER)
+            .is_dir()
+    {
+        folders.push(FolderSummaryResponse {
+            r#type: kataan_core::constants::TYPE_CODE.to_owned(),
+            folder: kataan_core::constants::CODE_FOLDER.to_owned(),
+            name: Some("Code".to_owned()),
+            document_count: 0,
+        });
+    }
+
     Ok(Json(FoldersResponse { folders }))
 }
 
