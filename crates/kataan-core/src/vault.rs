@@ -217,12 +217,29 @@ markdown = "kataan-redesign.md"
 "#,
         )
         .unwrap();
-        fs::write(root.join("notes/project-brief.md"), "# Project Brief\n").unwrap();
+        fs::create_dir_all(root.join("projects/kataan-redesign")).unwrap();
         fs::write(
-            root.join("notes/project-brief.toml"),
-            r#"type = "note"
+            root.join("projects/kataan-redesign/index.md"),
+            "# Project\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign/index.toml"),
+            r#"type = "project"
+name = "Kataan Redesign"
+markdown = "index.md"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign/project-brief.md"),
+            "# Project Brief\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/kataan-redesign/project-brief.toml"),
+            r#"type = "project"
 markdown = "project-brief.md"
-belongs_to = ["projects/kataan-redesign"]
 "#,
         )
         .unwrap();
@@ -231,7 +248,7 @@ belongs_to = ["projects/kataan-redesign"]
         let graph = vault.load_graph().unwrap();
 
         let project_id = CanonicalId::parse("projects/kataan-redesign").unwrap();
-        let note_id = CanonicalId::parse("notes/project-brief").unwrap();
+        let note_id = CanonicalId::parse("projects/kataan-redesign/project-brief").unwrap();
         assert_eq!(
             graph.children_of(&project_id),
             std::collections::BTreeSet::from([note_id])

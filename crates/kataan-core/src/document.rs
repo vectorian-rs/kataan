@@ -16,13 +16,6 @@ pub struct DocumentMetadata {
     #[serde(default)]
     pub edges: BTreeMap<String, Vec<String>>,
 
-    #[serde(default)]
-    pub belongs_to: Vec<String>,
-    #[serde(default)]
-    pub related_to: Vec<String>,
-    #[serde(default)]
-    pub sources: Vec<String>,
-
     pub created_by: Option<String>,
     pub last_updated_by: Option<String>,
 }
