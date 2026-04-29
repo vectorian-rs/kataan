@@ -69,7 +69,21 @@ await runAction(async () => {
 
 async function loadVault() {
   const vault = await getVault();
-  vaultSummary.textContent = `${vault.name} · schema ${vault.schema_version}`;
+  vaultSummary.replaceChildren();
+
+  const name = document.createElement('span');
+  name.className = 'vault-name';
+  name.textContent = vault.name;
+
+  const separator = document.createElement('span');
+  separator.className = 'vault-separator';
+  separator.textContent = '·';
+
+  const schema = document.createElement('span');
+  schema.className = 'vault-schema';
+  schema.textContent = `schema ${vault.schema_version}`;
+
+  vaultSummary.append(name, separator, schema);
 }
 
 async function loadFolders() {
