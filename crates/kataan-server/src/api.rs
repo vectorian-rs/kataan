@@ -316,6 +316,14 @@ pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResp
             path: diagnostic.path,
         })
         .collect();
+
+    match state.reload() {
+        Ok(()) => debug!(vault = %state.vault_path.display(), "reloaded vault after validation"),
+        Err(error) => {
+            debug!(vault = %state.vault_path.display(), error = %error, "vault reload after validation skipped")
+        }
+    }
+
     Ok(Json(ValidateResponse { ok, diagnostics }))
 }
 
