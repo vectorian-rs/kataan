@@ -75,6 +75,19 @@ export type ValidateResponse = {
   diagnostics: Diagnostic[];
 };
 
+export type TomlSchemaResponse = {
+  kind: string;
+  schema: Record<string, unknown>;
+  constraints: {
+    allowed_status: string[];
+    allowed_actors: string[];
+    allowed_types: string[];
+    allowed_edge_predicates: string[];
+    notes: string[];
+  };
+  toml_template: string;
+};
+
 export async function getVault() {
   return getJson<VaultIndex>('/api/vault');
 }
@@ -93,6 +106,10 @@ export async function getDocument(id: string) {
 
 export async function resolveRoute(type: string, token: string) {
   return getJson<ResolveResponse>(`/api/resolve?type=${encodeURIComponent(type)}&token=${encodeURIComponent(token)}`);
+}
+
+export async function getSchema(kind: string) {
+  return getJson<TomlSchemaResponse>(`/api/schema/${encodeURIComponent(kind)}`);
 }
 
 export async function validateVault() {

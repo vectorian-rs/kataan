@@ -113,6 +113,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/folder", get(folder_by_id))
         .route("/api/document", get(document_by_id))
         .route("/api/resolve", get(resolve_route))
+        .route("/api/schema/:kind", get(schema))
         .route("/api/folders/:folder", get(folder))
         .route("/api/documents/*id", get(document))
         .route("/api/validate", post(validate))
@@ -261,6 +262,16 @@ pub async fn document(
     Path(id): Path<String>,
 ) -> Result<Json<DocumentResponse>, ApiError> {
     document_response(&state, &id).map(Json)
+}
+
+pub async fn schema(
+    State(state): State<AppState>,
+    Path(kind): Path<String>,
+) -> Result<Json<kataan_core::schema::TomlSchemaResponse>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
+    let response = kataan_core::schema::schema_response(&kind, Some(&loaded))
+        .ok_or_else(|| ApiError(anyhow::anyhow!("unknown schema kind `{kind}`")))?;
+    Ok(Json(response))
 }
 
 pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResponse>, ApiError> {

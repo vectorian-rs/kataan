@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::Deserialize;
 
 use crate::{vault::Vault, Error, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
 pub struct TypeDefinition {
     pub r#type: String,
     pub name: String,

@@ -16,6 +16,7 @@ import {
   getDocument,
   getFolder,
   getFolders,
+  getSchema,
   getVault,
   rebuildIndexes,
   resolveRoute,
@@ -25,6 +26,7 @@ import {
   type FolderChild,
   type FolderDocument,
   type FolderSummary,
+  type TomlSchemaResponse,
   type ValidateResponse,
 } from './api';
 
@@ -37,6 +39,7 @@ const breadcrumb = requireElement<HTMLElement>('breadcrumb');
 const documentTitle = requireElement<HTMLElement>('document-title');
 const documentBody = requireElement<HTMLElement>('document-body');
 const metadataPanel = requireElement<HTMLElement>('metadata-panel');
+const schemaPanel = requireElement<HTMLElement>('schema-panel');
 const validateButton = requireElement<HTMLButtonElement>('validate-button');
 const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
 
@@ -194,6 +197,7 @@ async function selectDocument(id: string, options: { updateUrl?: boolean } = {})
   }
   renderDocumentBody(vaultDocument);
   renderMetadata(vaultDocument);
+  renderSchema(await getSchema('document'));
 }
 
 async function restoreRouteSelection() {
@@ -236,6 +240,46 @@ function renderDocumentBody(vaultDocument: DocumentResponse) {
   documentBody.innerHTML = '';
 
   documentBody.innerHTML = marked.parse(vaultDocument.markdown, { async: false });
+}
+
+function renderSchema(schema: TomlSchemaResponse) {
+  schemaPanel.className = 'schema-content';
+
+  const templateLabel = document.createElement('div');
+  templateLabel.className = 'property-label';
+  templateLabel.textContent = 'minimum TOML';
+
+  const template = document.createElement('pre');
+  template.className = 'schema-template';
+  template.textContent = schema.toml_template.trim();
+
+  const details = document.createElement('div');
+  details.className = 'schema-details';
+  details.replaceChildren(
+    schemaLine('Required', requiredFields(schema).join(', ') || '—'),
+    schemaLine('Types', schema.constraints.allowed_types.join(', ') || '—'),
+    schemaLine('Status', schema.constraints.allowed_status.join(', ') || '—'),
+    schemaLine('Actors', schema.constraints.allowed_actors.join(', ') || '—'),
+    schemaLine('Edges', schema.constraints.allowed_edge_predicates.join(', ') || '—'),
+  );
+
+  schemaPanel.replaceChildren(templateLabel, template, details);
+}
+
+function schemaLine(label: string, value: string) {
+  const row = document.createElement('div');
+  row.className = 'schema-line';
+  const labelEl = document.createElement('span');
+  labelEl.textContent = label;
+  const valueEl = document.createElement('span');
+  valueEl.textContent = value;
+  row.append(labelEl, valueEl);
+  return row;
+}
+
+function requiredFields(schema: TomlSchemaResponse) {
+  const root = schema.schema as { schema?: { required?: string[] }; required?: string[] };
+  return root.schema?.required ?? root.required ?? [];
 }
 
 function renderMetadata(vaultDocument: DocumentResponse) {

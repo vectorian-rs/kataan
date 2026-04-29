@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::DEFAULT_MAX_FOLDER_DEPTH;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VaultLimits {
     pub max_folder_depth: Option<usize>,
 }
@@ -15,7 +16,7 @@ impl Default for VaultLimits {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VaultConfig {
     pub schema_version: String,
     pub name: String,
@@ -26,7 +27,7 @@ pub struct VaultConfig {
     pub type_folders: std::collections::BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FolderIndex {
     pub name: String,
     pub description: Option<String>,
@@ -37,7 +38,7 @@ pub struct FolderIndex {
     pub documents: Vec<FolderDocument>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FolderDocument {
     pub slug: String,
     pub markdown: String,

@@ -1,19 +1,20 @@
 use std::{collections::BTreeMap, path::Path};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{diagnostic::Diagnostic, Error, Result};
 
 pub const ONTOLOGY_FILE: &str = "ontology.toml";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Ontology {
     pub schema_version: String,
     #[serde(default)]
     pub edges: BTreeMap<String, EdgePredicate>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EdgePredicate {
     #[serde(default)]
     pub from: Vec<String>,

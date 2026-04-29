@@ -445,6 +445,53 @@ button:focus-visible,
   padding-block: var(--size-3);
 }
 
+.schema-panel {
+  border-block-start: 1px solid var(--border);
+  padding: var(--size-4);
+}
+
+.schema-content {
+  display: grid;
+  gap: var(--size-3);
+}
+
+.schema-template {
+  overflow: auto;
+  max-block-size: 180px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  padding: var(--size-3);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-family: "DM Mono", var(--font-mono);
+  font-size: var(--font-size-0);
+  line-height: var(--font-lineheight-3);
+  white-space: pre-wrap;
+}
+
+.schema-details {
+  display: grid;
+  gap: var(--size-2);
+}
+
+.schema-line {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: var(--size-2);
+  font-size: var(--font-size-0);
+}
+
+.schema-line span:first-child {
+  color: var(--text-2);
+  text-transform: uppercase;
+}
+
+.schema-line span:last-child {
+  overflow-wrap: anywhere;
+  color: var(--text-1);
+}
+
 .property {
   display: grid;
   grid-template-columns: minmax(5.5rem, 0.8fr) minmax(0, 1fr);
