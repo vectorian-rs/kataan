@@ -1,8 +1,6 @@
 use std::path::Path;
 
-use crate::{checksum, rebuild::rebuild_indexes, Error, Result};
-
-const SCHEMA_VERSION: &str = "0.1.0";
+use crate::{checksum, constants::SCHEMA_VERSION, rebuild::rebuild_indexes, Error, Result};
 const DEFAULT_ONTOLOGY: &str = include_str!("../templates/default-ontology.toml");
 
 pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {

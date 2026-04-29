@@ -1,5 +1,7 @@
 pub mod checksum;
+pub mod constants;
 pub mod diagnostic;
+pub mod diagnostic_codes;
 pub mod document;
 pub mod error;
 pub mod graph;

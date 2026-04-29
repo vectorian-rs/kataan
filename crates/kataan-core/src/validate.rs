@@ -6,7 +6,9 @@ use std::{
 
 use crate::{
     checksum,
+    constants::{ACTOR_VALUES, CORE_TYPES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES},
     diagnostic::{Diagnostic, DiagnosticReport},
+    diagnostic_codes as codes,
     document::DocumentMetadata,
     id::CanonicalId,
     index::{FolderDocument, FolderIndex},
@@ -21,7 +23,11 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
     let mut issues = Vec::new();
     let mut known_document_ids = BTreeSet::new();
     let mut loaded_metadata = Vec::new();
-    let max_folder_depth = vault.index.limits.max_folder_depth.unwrap_or(4);
+    let max_folder_depth = vault
+        .index
+        .limits
+        .max_folder_depth
+        .unwrap_or(DEFAULT_MAX_FOLDER_DEPTH);
 
     let ontology = match Ontology::load(&vault.root) {
         Ok(ontology) => {
@@ -30,7 +36,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         }
         Err(crate::Error::Io { .. }) => {
             issues.push(
-                Diagnostic::error("missing-ontology", "vault is missing ontology.toml")
+                Diagnostic::error(codes::MISSING_ONTOLOGY, "vault is missing ontology.toml")
                     .with_path("ontology.toml"),
             );
             None
@@ -47,18 +53,11 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         }
     }
 
-    for required_type in [
-        "raw",
-        "project",
-        "person",
-        "note",
-        "topic",
-        "type-definition",
-    ] {
-        if !vault.index.type_folders.contains_key(required_type) {
+    for required_type in CORE_TYPES {
+        if !vault.index.type_folders.contains_key(*required_type) {
             issues.push(
                 Diagnostic::error(
-                    "missing-type-folder",
+                    codes::MISSING_TYPE_FOLDER,
                     format!("missing type_folders entry for `{required_type}`"),
                 )
                 .with_path("index.toml"),
@@ -70,8 +69,11 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         let folder_path = vault.root.join(folder);
         if !folder_path.exists() {
             issues.push(
-                Diagnostic::error("missing-required-folder", "Required type folder is missing")
-                    .with_path(folder),
+                Diagnostic::error(
+                    codes::MISSING_REQUIRED_FOLDER,
+                    "Required type folder is missing",
+                )
+                .with_path(folder),
             );
             continue;
         }
@@ -79,7 +81,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         let folder_index_path = folder_path.join("index.toml");
         let folder_index = if !folder_index_path.exists() {
             issues.push(
-                Diagnostic::error("missing-folder-index", "Folder is missing index.toml")
+                Diagnostic::error(codes::MISSING_FOLDER_INDEX, "Folder is missing index.toml")
                     .with_path(format!("{folder}/index.toml")),
             );
             None
@@ -150,7 +152,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         for slug in markdown_slugs.difference(&toml_slugs) {
             issues.push(
                 Diagnostic::error(
-                    "missing-toml-sidecar",
+                    codes::MISSING_TOML_SIDECAR,
                     "Markdown file is missing a matching TOML sidecar",
                 )
                 .with_path(format!("{folder}/{slug}.md")),
@@ -160,7 +162,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
         for slug in toml_slugs.difference(&markdown_slugs) {
             issues.push(
                 Diagnostic::error(
-                    "missing-markdown-file",
+                    codes::MISSING_MARKDOWN_FILE,
                     "TOML sidecar is missing its Markdown file",
                 )
                 .with_path(format!("{folder}/{slug}.toml")),
@@ -209,7 +211,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 if id.depth_after_type_folder() > max_folder_depth {
                     issues.push(
                         Diagnostic::error(
-                            "folder-depth-exceeded",
+                            codes::FOLDER_DEPTH_EXCEEDED,
                             format!("document depth exceeds max_folder_depth `{max_folder_depth}`"),
                         )
                         .with_path(relative_toml_path.clone()),
@@ -218,10 +220,13 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
             }
 
             if let Some(status) = &metadata.status {
-                if !["draft", "active", "paused", "done", "archived"].contains(&status.as_str()) {
+                if !STATUS_VALUES.contains(&status.as_str()) {
                     issues.push(
-                        Diagnostic::error("invalid-status", format!("unknown status `{status}`"))
-                            .with_path(relative_toml_path.clone()),
+                        Diagnostic::error(
+                            codes::INVALID_STATUS,
+                            format!("unknown status `{status}`"),
+                        )
+                        .with_path(relative_toml_path.clone()),
                     );
                 }
             }
@@ -231,10 +236,10 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 ("last_updated_by", metadata.last_updated_by.as_deref()),
             ] {
                 if let Some(actor) = actor {
-                    if !["human", "agent", "system"].contains(&actor) {
+                    if !ACTOR_VALUES.contains(&actor) {
                         issues.push(
                             Diagnostic::error(
-                                "invalid-actor",
+                                codes::INVALID_ACTOR,
                                 format!("{field} has unknown actor `{actor}`"),
                             )
                             .with_path(relative_toml_path.clone()),
@@ -258,7 +263,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 Some(expected_folder) if expected_folder != folder => {
                     issues.push(
                         Diagnostic::error(
-                            "type-folder-mismatch",
+                            codes::TYPE_FOLDER_MISMATCH,
                             format!(
                                 "document type `{}` belongs in `{expected_folder}`, not `{folder}`",
                                 metadata.r#type
@@ -271,7 +276,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 None => {
                     issues.push(
                         Diagnostic::error(
-                            "invalid-type",
+                            codes::INVALID_TYPE,
                             format!("unknown type `{}`", metadata.r#type),
                         )
                         .with_path(relative_toml_path.clone()),
@@ -289,7 +294,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 if actual_checksum != expected_checksum {
                     issues.push(
                         Diagnostic::error(
-                            "checksum-mismatch",
+                            codes::CHECKSUM_MISMATCH,
                             "Markdown checksum does not match file contents",
                         )
                         .with_path(relative_toml_path),
@@ -305,7 +310,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 let Some(predicate) = ontology.edges.get(predicate_name) else {
                     issues.push(
                         Diagnostic::error(
-                            "unknown-predicate",
+                            codes::UNKNOWN_PREDICATE,
                             format!(
                                 "edge predicate `{predicate_name}` is not defined in ontology.toml"
                             ),
@@ -318,7 +323,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                 if !type_allowed(&predicate.from, &metadata.r#type) {
                     issues.push(
                         Diagnostic::error(
-                            "predicate-source-type-mismatch",
+                            codes::PREDICATE_SOURCE_TYPE_MISMATCH,
                             format!(
                                 "predicate `{predicate_name}` cannot be used from type `{}`",
                                 metadata.r#type
@@ -332,7 +337,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                     let Some(target_type) = known_document_types.get(target) else {
                         issues.push(
                             Diagnostic::error(
-                                "unresolved-edge-target",
+                                codes::UNRESOLVED_EDGE_TARGET,
                                 format!("edge target `{target}` does not exist"),
                             )
                             .with_path(path.clone()),
@@ -343,7 +348,7 @@ pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
                     if !type_allowed(&predicate.to, target_type) {
                         issues.push(
                             Diagnostic::error(
-                                "predicate-target-type-mismatch",
+                                codes::PREDICATE_TARGET_TYPE_MISMATCH,
                                 format!(
                                     "predicate `{predicate_name}` cannot target `{target}` of type `{target_type}`"
                                 ),
@@ -379,7 +384,7 @@ fn validate_folder_index(
 
     for slug in actual_slugs.difference(&indexed_slugs) {
         issues.push(
-            Diagnostic::warning("index-drift", "Document is missing from folder index")
+            Diagnostic::warning(codes::INDEX_DRIFT, "Document is missing from folder index")
                 .with_path(format!("{folder}/{slug}.md")),
         );
     }
@@ -387,7 +392,7 @@ fn validate_folder_index(
     for _slug in indexed_slugs.difference(&actual_slugs) {
         issues.push(
             Diagnostic::warning(
-                "index-drift",
+                codes::INDEX_DRIFT,
                 "Folder index contains a stale document entry",
             )
             .with_path(format!("{folder}/index.toml")),
@@ -406,7 +411,7 @@ fn validate_folder_index(
         if actual_markdown_checksum != document.markdown_checksum {
             issues.push(
                 Diagnostic::error(
-                    "checksum-mismatch",
+                    codes::CHECKSUM_MISMATCH,
                     "Folder index Markdown checksum does not match file contents",
                 )
                 .with_path(format!("{folder}/index.toml")),
@@ -417,7 +422,7 @@ fn validate_folder_index(
         if actual_toml_checksum != document.toml_checksum {
             issues.push(
                 Diagnostic::error(
-                    "checksum-mismatch",
+                    codes::CHECKSUM_MISMATCH,
                     "Folder index TOML checksum does not match file contents",
                 )
                 .with_path(format!("{folder}/index.toml")),
@@ -438,7 +443,7 @@ fn validate_folder_index(
         if &actual_folder_checksum != expected_folder_checksum {
             issues.push(
                 Diagnostic::error(
-                    "checksum-mismatch",
+                    codes::CHECKSUM_MISMATCH,
                     "Folder checksum does not match indexed document checksums",
                 )
                 .with_path(format!("{folder}/index.toml")),
@@ -497,7 +502,7 @@ toml_checksum = "blake3:not-real"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "checksum-mismatch"
+            .any(|diagnostic| diagnostic.code == codes::CHECKSUM_MISMATCH
                 && diagnostic.path.as_deref() == Some("projects/index.toml")));
 
         fs::remove_dir_all(root).unwrap();
@@ -527,7 +532,7 @@ markdown = "kataan-redesign.md"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "index-drift"));
+            .any(|diagnostic| diagnostic.code == codes::INDEX_DRIFT));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -553,7 +558,7 @@ markdown = "project.md"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "missing-markdown-file"
+            .any(|diagnostic| diagnostic.code == codes::MISSING_MARKDOWN_FILE
                 && diagnostic.path.as_deref() == Some("type/project.toml")));
 
         fs::remove_dir_all(root).unwrap();
@@ -568,15 +573,13 @@ markdown = "project.md"
         let report = validate(&root).unwrap();
 
         assert!(!report.is_ok());
+        assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code
+            == codes::MISSING_REQUIRED_FOLDER
+            && diagnostic.path.as_deref() == Some("raw")));
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "missing-required-folder"
-                && diagnostic.path.as_deref() == Some("raw")));
-        assert!(report
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "missing-folder-index"
+            .any(|diagnostic| diagnostic.code == codes::MISSING_FOLDER_INDEX
                 && diagnostic.path.as_deref() == Some("projects/index.toml")));
 
         fs::remove_dir_all(root).unwrap();
@@ -610,11 +613,11 @@ last_updated_by = "agent"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "invalid-status"));
+            .any(|diagnostic| diagnostic.code == codes::INVALID_STATUS));
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "invalid-actor"));
+            .any(|diagnostic| diagnostic.code == codes::INVALID_ACTOR));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -644,7 +647,7 @@ markdown = "kataan-redesign.md"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "type-folder-mismatch"
+            .any(|diagnostic| diagnostic.code == codes::TYPE_FOLDER_MISMATCH
                 && diagnostic.path.as_deref() == Some("projects/kataan-redesign.toml")));
 
         fs::remove_dir_all(root).unwrap();
@@ -676,7 +679,7 @@ markdown_checksum = "blake3:not-the-real-hash"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "checksum-mismatch"
+            .any(|diagnostic| diagnostic.code == codes::CHECKSUM_MISMATCH
                 && diagnostic.path.as_deref() == Some("projects/kataan-redesign.toml")));
 
         fs::remove_dir_all(root).unwrap();
@@ -699,7 +702,7 @@ markdown_checksum = "blake3:not-the-real-hash"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "missing-toml-sidecar"
+            .any(|diagnostic| diagnostic.code == codes::MISSING_TOML_SIDECAR
                 && diagnostic.path.as_deref() == Some("projects/kataan-redesign.md")));
 
         fs::remove_dir_all(root).unwrap();
@@ -725,7 +728,7 @@ markdown = "kataan-redesign.md"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "missing-markdown-file"
+            .any(|diagnostic| diagnostic.code == codes::MISSING_MARKDOWN_FILE
                 && diagnostic.path.as_deref() == Some("projects/kataan-redesign.toml")));
 
         fs::remove_dir_all(root).unwrap();
@@ -763,9 +766,9 @@ markdown = "summary.md"
 
         assert!(!report.is_ok());
         for code in [
-            "unknown-predicate",
-            "predicate-target-type-mismatch",
-            "unresolved-edge-target",
+            codes::UNKNOWN_PREDICATE,
+            codes::PREDICATE_TARGET_TYPE_MISMATCH,
+            codes::UNRESOLVED_EDGE_TARGET,
         ] {
             assert!(
                 report
@@ -802,7 +805,7 @@ raw = "raw"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "missing-type-folder"
+            .any(|diagnostic| diagnostic.code == codes::MISSING_TYPE_FOLDER
                 && diagnostic.message.contains("project")));
 
         fs::remove_dir_all(root).unwrap();

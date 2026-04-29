@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::constants::DEFAULT_MAX_FOLDER_DEPTH;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultLimits {
     pub max_folder_depth: Option<usize>,
@@ -8,7 +10,7 @@ pub struct VaultLimits {
 impl Default for VaultLimits {
     fn default() -> Self {
         Self {
-            max_folder_depth: Some(4),
+            max_folder_depth: Some(DEFAULT_MAX_FOLDER_DEPTH),
         }
     }
 }
