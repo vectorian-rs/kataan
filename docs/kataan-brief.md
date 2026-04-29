@@ -19,6 +19,7 @@ The system should be understandable without a database or proprietary format:
 - Folders provide human-friendly organization.
 - Agents operate directly on the same files humans use.
 - Raw input is preserved before it is transformed.
+- The server keeps a metadata-only in-memory vault index; Markdown bodies are read on demand.
 
 ## Vault structure
 
@@ -257,7 +258,7 @@ Filenames, IDs, and every path segment use lowercase kebab-case. The Markdown fi
 
 Because canonical IDs are path-based, rename and move operations must update the Markdown file, TOML sidecar, containing folder indexes, checksums, and references to the old canonical ID.
 
-## Relationship ontology and edges
+## Relationship ontology
 
 Document relationships live under one `[edges]` table. Keys are predicate names defined in `vault/ontology.toml`; values are target canonical IDs.
 
@@ -581,19 +582,23 @@ Agent changes should be diff-based and non-destructive. Agents should not silent
 
 ## Concurrency and writes
 
-Kataan uses a single-writer model in the server. API writes are serialized through a command queue drained by one task holding mutable vault state. Reads use `arc-swap<Vault>` for parallel lock-free access to an atomically swapped `Arc` snapshot.
+Kataan uses a single-writer model in the server. API writes are serialized through a command queue and then update an `Arc<RwLock<LoadedVault>>` metadata index. Reads take a short read lock and should avoid holding it while reading large Markdown bodies.
 
-Each successful write bumps a vault generation counter. In-flight agent proposals carry the generation they were computed against, and apply-time refuses stale proposals if the counter advanced.
+`LoadedVault` is metadata-only: it stores config, ontology, type registry, document records, labels/facets, graph, checksums, diagnostics, paths, and a generation counter. It does not keep full Markdown bodies in memory. Markdown is read on demand from the file path in the document record.
+
+Each successful write bumps the vault generation counter. In-flight agent proposals carry the generation they were computed against, and apply-time refuses stale proposals if the counter advanced.
 
 Every Markdown and TOML write is atomic: write a temporary file in the same directory, fsync, then rename/persist. Rebuild operations are per-folder atomic so a crash mid-rebuild does not corrupt indexes.
 
-There is no cross-process file lock in v1. Users should not run mutating CLI commands while the server is up.
+External file changes are detected with filesystem notifications where available. Watcher events are debounced and batched. Kataan applies the smallest safe metadata update for clear changes, such as reparsing one TOML file or recomputing one Markdown checksum. Ambiguous structural changes fall back to reloading the whole `LoadedVault`.
+
+There is no cross-process file lock in v1. Mutating CLI commands should be avoided while the server is running unless the watcher can observe and reconcile the changes.
 
 ## Boot and API modes
 
 Server boot:
 
-1. Load `vault/index.toml` and limits.
+1. Load `vault/kataan.toml` and limits.
 2. Walk the vault and compute BLAKE3 checksums on all files.
 3. Detect drift vs. stored checksums in folder indexes.
 4. Validate structure, references, depth, and type-folder mapping.

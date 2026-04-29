@@ -26,10 +26,11 @@ Implement in `crates/kataan-core`.
 
 ### 2. TOML and Markdown loading
 
-- Load root `index.toml`.
+- Load root `kataan.toml`.
 - Load every folder's `index.md` and `index.toml` files, including intermediate folders.
 - Load document TOML sidecars.
-- Read associated Markdown files.
+- Build metadata-only `DocumentRecord` values containing paths, metadata, ancestors, facets, checksums, and folder-document marker.
+- Do not load full Markdown bodies into `LoadedVault`; read Markdown on demand from `markdown_path`.
 - Preserve unknown TOML fields where practical or avoid rewriting document TOML until needed.
 
 ### 3. Checksums
@@ -71,9 +72,9 @@ After document and ontology loading works, build an in-memory graph from loaded 
 
 The graph should include:
 
-- All documents keyed by canonical ID in a `HashMap<CanonicalId, Document>`.
+- All documents keyed by canonical ID in a `HashMap<CanonicalId, DocumentRecord>`.
 - Folder index documents keyed by folder path directly, not by `/index` suffix.
-- `Document` holds parsed TOML metadata, Markdown content or lazy handle, and computed ancestors.
+- `DocumentRecord` holds parsed TOML metadata, Markdown/TOML paths, checksums, facets, folder marker, and computed ancestors. Full Markdown is read on demand.
 - Path containment edges derived from canonical ID ancestors.
 - `Document` carries `edges: HashMap<PredicateName, Vec<CanonicalId>>` parsed from `[edges]`.
 - Graph builds `inverse_edges: HashMap<CanonicalId, HashMap<PredicateName, Vec<CanonicalId>>>` from ontology inverse declarations.
@@ -97,7 +98,7 @@ Expand `crates/kataan-cli` and `crates/kataan-core::validate`.
 
 Validation should check:
 
-- Root `index.toml` exists and has `schema_version`.
+- Root `kataan.toml` exists and has `schema_version`.
 - Required type folders exist.
 - Every folder has `index.md` and `index.toml`.
 - Every `.md` document has a matching `.toml` sidecar.
@@ -181,7 +182,7 @@ kataan init <path> --name "My Vault"
 
 Should create:
 
-- Root `index.toml` with `[limits].max_folder_depth = 4`.
+- Root `kataan.toml` with `[limits].max_folder_depth = 4`.
 - Default `ontology.toml` with the core edge vocabulary.
 - Core folders: `raw`, `projects`, `people`, `notes`, `topics`, `type`.
 - Folder `index.md` and `index.toml` files for every core folder.
@@ -215,20 +216,23 @@ The server should be thin. Most logic stays in `kataan-core`.
 
 Boot sequence:
 
-1. Load `vault/index.toml` and read limits.
+1. Load `vault/kataan.toml` and read limits.
 2. Walk the vault and compute BLAKE3 checksums on all files.
 3. Detect drift vs. stored checksums in folder indexes.
 4. Validate structure, references, depth, and type-folder mapping.
 5. If errors exist, serve read-only API plus diagnostics and expose rebuild.
 6. If clean, enable the full read/write API.
 
-Concurrency model:
+Concurrency and live state model:
 
-- Single writer: API writes are serialized through an mpsc command queue drained by one task holding `&mut Vault`.
-- Reads use `arc-swap<Vault>` for lock-free parallel access.
-- Each successful write bumps a vault generation counter.
+- Server state holds `Arc<RwLock<LoadedVault>>`.
+- `LoadedVault` is metadata-only and stores config, type registry, ontology, document records, facets, graph, checksums, diagnostics, and generation.
+- Markdown bodies are read on demand and should not be held in the loaded vault index.
+- Single writer: API writes are serialized through an mpsc command queue.
+- A successful write atomically changes files, rebuilds affected indexes/checksums, updates or reloads `LoadedVault`, and bumps generation.
 - Agent proposals carry the generation they were computed against; apply-time refuses if the counter advanced.
-- No cross-process file lock in v1; document that the CLI should not mutate the vault while the server is running.
+- Filesystem watcher events are debounced and batched. Clear changes patch the minimum affected metadata; ambiguous structural changes reload the whole `LoadedVault`.
+- No cross-process file lock in v1; mutating CLI commands should be avoided while the server is running unless the watcher can observe/reconcile the changes.
 - The API checks depth on every write and rejects violations with `folder-depth-exceeded`.
 - Edge mutations are serialized through the same queue and validate against the ontology before commit.
 - Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate` operations.
@@ -317,26 +321,31 @@ Out of scope for v1:
 
 ## Recommended build order
 
-1. `CanonicalId` and path helpers.
-2. Vault and document loaders.
-3. Checksum functions.
-4. Type registry.
-5. Load and validate `vault/ontology.toml`.
-6. Full `kataan validate`, including edge and ontology checks.
-7. `kataan rebuild-indexes`.
-8. `kataan init`, including default `ontology.toml`.
-9. In-memory vault graph, with at least one test exercising graph construction before the server depends on it.
-10. Build inverse-edge adjacency map from ontology.
-11. Server read API.
-12. Read-only Astro UI.
-13. Manual raw intake.
-14. Edge mutation API.
-15. `kataan-agent` crate skeleton and API-key provider boundary.
-16. OpenAI/Anthropic ask commands.
-17. Server `/api/agent` endpoint.
-18. Global UI agent overlay.
-19. MCP read/repair surface.
-20. Agent proposals.
+1. Rename root config from `index.toml` to `kataan.toml`.
+2. Redesign `LoadedVault` around metadata-only `DocumentRecord` and on-demand Markdown reads.
+3. Add `FacetIndex` for labels + ancestors + type/status filtering.
+4. Server boot loads `LoadedVault` into `Arc<RwLock<LoadedVault>>`.
+5. Add filesystem watcher with debounced minimal metadata updates and full-reload fallback.
+6. `CanonicalId` and path helpers.
+7. Vault and document loaders.
+8. Checksum functions.
+9. Type registry.
+10. Load and validate `vault/ontology.toml`.
+11. Full `kataan validate`, including edge and ontology checks.
+12. `kataan rebuild-indexes`.
+13. `kataan init`, including default `ontology.toml`.
+14. In-memory vault graph, with at least one test exercising graph construction before the server depends on it.
+15. Build inverse-edge adjacency map from ontology.
+16. Server read API.
+17. Read-only Astro UI.
+18. Manual raw intake.
+19. Edge mutation API.
+20. `kataan-agent` crate skeleton and API-key provider boundary.
+21. OpenAI/Anthropic ask commands.
+22. Server `/api/agent` endpoint.
+23. Global UI agent overlay.
+24. MCP read/repair surface.
+25. Agent proposals.
 
 ## Near-term success criteria
 
