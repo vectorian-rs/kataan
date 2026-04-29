@@ -5,12 +5,16 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info};
 
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub ok: bool,
+    pub loaded: bool,
+    pub degraded: bool,
+    pub boot_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -121,15 +125,27 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-pub async fn health() -> Json<HealthResponse> {
-    Json(HealthResponse { ok: true })
+pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
+    let boot_error = state.boot_error();
+    let loaded = state.vault.read().is_ok_and(|vault| vault.is_some());
+    Json(HealthResponse {
+        ok: true,
+        loaded,
+        degraded: !loaded || boot_error.is_some(),
+        boot_error,
+    })
 }
 
 pub async fn vault(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_core::index::VaultConfig>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
-    Ok(Json(loaded.index.clone()))
+    if let Ok(loaded) = read_loaded_vault(&state) {
+        return Ok(Json(loaded.index.clone()));
+    }
+
+    let vault =
+        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    Ok(Json(vault.index))
 }
 
 pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersResponse>, ApiError> {
@@ -268,13 +284,14 @@ pub async fn schema(
     State(state): State<AppState>,
     Path(kind): Path<String>,
 ) -> Result<Json<kataan_core::schema::TomlSchemaResponse>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
-    let response = kataan_core::schema::schema_response(&kind, Some(&loaded))
+    let loaded = read_loaded_vault(&state).ok();
+    let response = kataan_core::schema::schema_response(&kind, loaded.as_ref())
         .ok_or_else(|| ApiError(anyhow::anyhow!("unknown schema kind `{kind}`")))?;
     Ok(Json(response))
 }
 
 pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResponse>, ApiError> {
+    debug!(vault = %state.vault_path.display(), "validating vault");
     let report =
         kataan_core::validate::validate(state.vault_path.as_ref()).map_err(ApiError::from)?;
     let ok = report.is_ok();
@@ -292,8 +309,10 @@ pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResp
 }
 
 pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
+    info!(vault = %state.vault_path.display(), "rebuilding indexes");
     kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(ApiError::from)?;
     state.reload().map_err(ApiError::from)?;
+    info!(vault = %state.vault_path.display(), "reloaded vault after rebuild");
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -405,13 +424,17 @@ fn direct_code_folders(state: &AppState, id: &str) -> Result<Vec<FolderChildResp
     Ok(folders)
 }
 
-fn read_loaded_vault(
-    state: &AppState,
-) -> Result<std::sync::RwLockReadGuard<'_, kataan_core::vault::LoadedVault>, ApiError> {
+fn read_loaded_vault(state: &AppState) -> Result<kataan_core::vault::LoadedVault, ApiError> {
     state
         .vault
         .read()
-        .map_err(|_| ApiError(anyhow::anyhow!("vault lock poisoned")))
+        .map_err(|_| ApiError(anyhow::anyhow!("vault lock poisoned")))?
+        .clone()
+        .ok_or_else(|| {
+            ApiError(anyhow::anyhow!(
+                "vault is not loaded; server is running in degraded mode"
+            ))
+        })
 }
 
 fn direct_folders(
@@ -504,6 +527,7 @@ where
 
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
+        error!(error = %self.0, "api request failed");
         let body = Json(serde_json::json!({
             "ok": false,
             "error": self.0.to_string(),
@@ -682,7 +706,7 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
     }
 
     fn test_app(root: &Path) -> Router {
-        router(AppState::new(root.to_path_buf()).unwrap())
+        router(AppState::new(root.to_path_buf()))
     }
 
     fn test_vault() -> PathBuf {

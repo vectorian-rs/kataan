@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use tracing::{error, info};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod api;
 mod state;
@@ -20,12 +22,27 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
+    init_tracing();
+
     let cli = Cli::parse();
-    let state = AppState::new(cli.vault).expect("load vault");
+    let state = AppState::new(cli.vault);
+    if let Some(error) = state.boot_error() {
+        error!(error = %error, "kataan-server starting in degraded mode");
+    } else {
+        info!("loaded vault successfully");
+    }
+
     let app = api::router(state);
     let listener = tokio::net::TcpListener::bind(&cli.bind)
         .await
         .expect("bind server");
-    println!("kataan-server listening on http://{}", cli.bind);
+    info!(bind = %cli.bind, "kataan-server listening");
     axum::serve(listener, app).await.expect("serve");
+}
+
+fn init_tracing() {
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 }

@@ -237,10 +237,11 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
             let metadata: DocumentMetadata = match toml::from_str(&toml_text) {
                 Ok(metadata) => metadata,
                 Err(source) => {
-                    return Err(crate::Error::TomlParse {
-                        path: toml_path,
-                        source,
-                    });
+                    issues.push(
+                        Diagnostic::error(codes::INVALID_TOML, source.to_string())
+                            .with_path(relative_toml_path),
+                    );
+                    continue;
                 }
             };
 
@@ -585,11 +586,16 @@ fn validate_document_metadata(
         path: toml_path.to_path_buf(),
         source,
     })?;
-    let metadata: DocumentMetadata =
-        toml::from_str(&toml_text).map_err(|source| crate::Error::TomlParse {
-            path: toml_path.to_path_buf(),
-            source,
-        })?;
+    let metadata: DocumentMetadata = match toml::from_str(&toml_text) {
+        Ok(metadata) => metadata,
+        Err(source) => {
+            issues.push(
+                Diagnostic::error(codes::INVALID_TOML, source.to_string())
+                    .with_path(relative_toml_path.to_owned()),
+            );
+            return Ok(());
+        }
+    };
 
     let Some(document_id) = relative_toml_path.strip_suffix(".toml") else {
         return Ok(());

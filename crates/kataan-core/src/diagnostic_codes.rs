@@ -4,6 +4,7 @@ pub const INDEX_DRIFT: &str = "index-drift";
 pub const INVALID_ACTOR: &str = "invalid-actor";
 pub const INVALID_ONTOLOGY_ENTRY: &str = "invalid-ontology-entry";
 pub const INVALID_STATUS: &str = "invalid-status";
+pub const INVALID_TOML: &str = "invalid-toml";
 pub const INVALID_TYPE: &str = "invalid-type";
 pub const MISSING_FOLDER_INDEX: &str = "missing-folder-index";
 pub const MISSING_MARKDOWN_FILE: &str = "missing-markdown-file";
