@@ -97,7 +97,7 @@ function renderFolderButton(folder: FolderSummary) {
   badge.textContent = String(folder.document_count);
 
   button.append(label, badge);
-  button.addEventListener('click', () => selectFolder(folder.folder));
+  button.addEventListener('click', () => runAction(() => selectFolder(folder.folder)));
   return button;
 }
 
@@ -155,7 +155,7 @@ function renderChildFolderButton(folder: FolderChild, depth: number) {
 
   label.append(icon, name);
   button.append(label);
-  button.addEventListener('click', () => selectFolder(folder.id));
+  button.addEventListener('click', () => runAction(() => selectFolder(folder.id)));
   return button;
 }
 
@@ -171,7 +171,7 @@ function renderDocumentButton(vaultDocument: FolderDocument) {
   meta.textContent = vaultDocument.id;
 
   button.append(title, meta);
-  button.addEventListener('click', () => selectDocument(vaultDocument.id));
+  button.addEventListener('click', () => runAction(() => selectDocument(vaultDocument.id)));
   return button;
 }
 
@@ -242,11 +242,17 @@ function renderDiagnostic(diagnostic: Diagnostic) {
 }
 
 function renderError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+
   diagnosticsEl.className = 'list';
   const item = document.createElement('div');
   item.className = 'diagnostic error';
-  item.textContent = error instanceof Error ? error.message : String(error);
+  item.textContent = message;
   diagnosticsEl.replaceChildren(item);
+
+  documentTitle.textContent = 'Unable to load document';
+  documentBody.className = 'reader-body';
+  documentBody.textContent = message;
 }
 
 function clickableRow(className: string) {
