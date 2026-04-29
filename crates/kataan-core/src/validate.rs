@@ -20,6 +20,24 @@ use crate::{
 
 pub fn validate(root: impl AsRef<Path>) -> Result<DiagnosticReport> {
     let vault = Vault::open(root)?;
+    Validator::new(vault).validate()
+}
+
+pub struct Validator {
+    vault: Vault,
+}
+
+impl Validator {
+    pub fn new(vault: Vault) -> Self {
+        Self { vault }
+    }
+
+    pub fn validate(&self) -> Result<DiagnosticReport> {
+        validate_open_vault(&self.vault)
+    }
+}
+
+fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
     let mut issues = Vec::new();
     let mut known_document_ids = BTreeSet::new();
     let mut loaded_metadata = Vec::new();
