@@ -16,4 +16,7 @@ pub mod vault;
 pub mod walk;
 pub mod write;
 
+#[cfg(test)]
+mod test_support;
+
 pub use error::{Error, Result};
