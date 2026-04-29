@@ -13,6 +13,7 @@ kataan-core = { path = "../kataan-core" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+toml.workspace = true
 tower = "0.5"
 tower-http.workspace = true
 tracing.workspace = true

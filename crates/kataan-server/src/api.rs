@@ -149,49 +149,66 @@ pub async fn vault(
 }
 
 pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersResponse>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
     let mut folders = Vec::new();
 
-    for (ty, folder) in &loaded.index.type_folders {
-        let id = kataan_core::id::CanonicalId::parse(folder)
-            .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
-        let record = loaded.documents.get(&id);
-        let document_count = loaded
-            .documents
-            .values()
-            .filter(|document| {
-                !document.is_folder_index && document.id.containing_folder() == folder
-            })
-            .count();
+    if let Ok(loaded) = read_loaded_vault(&state) {
+        for (ty, folder) in &loaded.index.type_folders {
+            let id = kataan_core::id::CanonicalId::parse(folder)
+                .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+            let record = loaded.documents.get(&id);
+            let document_count = loaded
+                .documents
+                .values()
+                .filter(|document| {
+                    !document.is_folder_index && document.id.containing_folder() == folder
+                })
+                .count();
+            folders.push(FolderSummaryResponse {
+                r#type: ty.clone(),
+                folder: folder.clone(),
+                name: Some(
+                    record
+                        .and_then(document_name)
+                        .unwrap_or_else(|| title_from_id(folder)),
+                ),
+                document_count,
+            });
+        }
+        push_code_folder_if_needed(
+            &state,
+            loaded
+                .index
+                .type_folders
+                .values()
+                .any(|folder| kataan_core::constants::is_code_folder(folder)),
+            &mut folders,
+        );
+        return Ok(Json(FoldersResponse { folders }));
+    }
+
+    let vault =
+        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    for (ty, folder) in &vault.index.type_folders {
+        let index = vault.load_folder_index(folder).ok();
         folders.push(FolderSummaryResponse {
             r#type: ty.clone(),
             folder: folder.clone(),
-            name: Some(
-                record
-                    .and_then(document_name)
-                    .unwrap_or_else(|| title_from_id(folder)),
-            ),
-            document_count,
+            name: index
+                .as_ref()
+                .map(|index| index.name.clone())
+                .or_else(|| Some(title_from_id(folder))),
+            document_count: index.map(|index| index.documents.len()).unwrap_or_default(),
         });
     }
-
-    if !loaded
-        .index
-        .type_folders
-        .values()
-        .any(|folder| kataan_core::constants::is_code_folder(folder))
-        && state
-            .vault_path
-            .join(kataan_core::constants::CODE_FOLDER)
-            .is_dir()
-    {
-        folders.push(FolderSummaryResponse {
-            r#type: kataan_core::constants::TYPE_CODE.to_owned(),
-            folder: kataan_core::constants::CODE_FOLDER.to_owned(),
-            name: Some("Code".to_owned()),
-            document_count: 0,
-        });
-    }
+    push_code_folder_if_needed(
+        &state,
+        vault
+            .index
+            .type_folders
+            .values()
+            .any(|folder| kataan_core::constants::is_code_folder(folder)),
+        &mut folders,
+    );
 
     Ok(Json(FoldersResponse { folders }))
 }
@@ -200,7 +217,9 @@ pub async fn folder(
     State(state): State<AppState>,
     Path(folder): Path<String>,
 ) -> Result<Json<FolderResponse>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
+    let Ok(loaded) = read_loaded_vault(&state) else {
+        return filesystem_folder_response(&state, &folder).map(Json);
+    };
     let id = kataan_core::id::CanonicalId::parse(&folder)
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
     let Some(record) = loaded.documents.get(&id) else {
@@ -352,8 +371,10 @@ fn canonical_folder_response(
 ) -> Result<CanonicalFolderResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(id)
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    let Ok(loaded) = read_loaded_vault(state) else {
+        return filesystem_canonical_folder_response(state, &id);
+    };
     let (record, folders, documents, markdown_path) = {
-        let loaded = read_loaded_vault(state)?;
         let Some(record) = loaded.documents.get(&id).cloned() else {
             if kataan_core::constants::is_code_path(id.as_str()) {
                 return Ok(CanonicalFolderResponse {
@@ -382,6 +403,128 @@ fn canonical_folder_response(
         folders,
         documents,
     })
+}
+
+fn filesystem_folder_response(state: &AppState, folder: &str) -> Result<FolderResponse, ApiError> {
+    let id = kataan_core::id::CanonicalId::parse(folder)
+        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    let response = filesystem_canonical_folder_response(state, &id)?;
+    Ok(FolderResponse {
+        folder: response.id.clone(),
+        index: kataan_core::index::FolderIndex {
+            name: response
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.aliases.first().cloned())
+                .unwrap_or_else(|| title_from_id(&response.id)),
+            description: None,
+            default_type: response.metadata.map(|metadata| metadata.r#type),
+            folder_checksum: None,
+            documents: Vec::new(),
+        },
+        documents: response.documents,
+    })
+}
+
+fn filesystem_canonical_folder_response(
+    state: &AppState,
+    id: &kataan_core::id::CanonicalId,
+) -> Result<CanonicalFolderResponse, ApiError> {
+    if kataan_core::constants::is_code_path(id.as_str()) {
+        return Ok(CanonicalFolderResponse {
+            id: id.as_str().to_owned(),
+            metadata: None,
+            markdown: None,
+            folders: direct_code_folders(state, id.as_str())?,
+            documents: Vec::new(),
+        });
+    }
+
+    let folder_path = state.vault_path.join(id.as_str());
+    if !folder_path.is_dir() {
+        return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
+    }
+
+    let metadata = read_document_metadata_if_valid(&folder_path.join("index.toml"));
+    let markdown = std::fs::read_to_string(folder_path.join("index.md")).ok();
+    let mut folders = Vec::new();
+    let mut documents = Vec::new();
+
+    for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
+        path: folder_path.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| kataan_core::Error::Io {
+            path: folder_path.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            folders.push(FolderChildResponse {
+                id: format!("{}/{}", id.as_str(), name),
+                name,
+                has_index: path.join("index.md").exists() && path.join("index.toml").exists(),
+            });
+            continue;
+        }
+        if path.extension().and_then(|extension| extension.to_str()) != Some("md")
+            || name == "index.md"
+        {
+            continue;
+        }
+        let Some(slug) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let toml_path = folder_path.join(format!("{slug}.toml"));
+        if read_document_metadata_if_valid(&toml_path).is_none() {
+            continue;
+        }
+        documents.push(FolderDocumentResponse {
+            id: format!("{}/{}", id.as_str(), slug),
+            slug: slug.to_owned(),
+            markdown: name,
+            toml: format!("{slug}.toml"),
+        });
+    }
+
+    folders.sort_by(|left, right| left.id.cmp(&right.id));
+    documents.sort_by(|left, right| left.id.cmp(&right.id));
+
+    Ok(CanonicalFolderResponse {
+        id: id.as_str().to_owned(),
+        metadata,
+        markdown,
+        folders,
+        documents,
+    })
+}
+
+fn read_document_metadata_if_valid(
+    path: &std::path::Path,
+) -> Option<kataan_core::document::DocumentMetadata> {
+    let text = std::fs::read_to_string(path).ok()?;
+    toml::from_str(&text).ok()
+}
+
+fn push_code_folder_if_needed(
+    state: &AppState,
+    has_code_mapping: bool,
+    folders: &mut Vec<FolderSummaryResponse>,
+) {
+    if !has_code_mapping
+        && state
+            .vault_path
+            .join(kataan_core::constants::CODE_FOLDER)
+            .is_dir()
+    {
+        folders.push(FolderSummaryResponse {
+            r#type: kataan_core::constants::TYPE_CODE.to_owned(),
+            folder: kataan_core::constants::CODE_FOLDER.to_owned(),
+            name: Some("Code".to_owned()),
+            document_count: 0,
+        });
+    }
 }
 
 fn empty_code_folder_index(id: &str) -> kataan_core::index::FolderIndex {
