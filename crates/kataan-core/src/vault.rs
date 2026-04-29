@@ -1,8 +1,10 @@
-use std::path::{Path, PathBuf};
-
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use crate::{
+    checksum,
     constants::VAULT_CONFIG_FILE,
     document::DocumentMetadata,
     graph::VaultGraph,
@@ -21,11 +23,27 @@ pub struct Vault {
 }
 
 #[derive(Debug, Clone)]
-pub struct LoadedDocument {
+pub struct DocumentRecord {
+    pub id: CanonicalId,
+    pub metadata: DocumentMetadata,
+    pub markdown_path: PathBuf,
+    pub toml_path: PathBuf,
+    pub ancestors: Vec<String>,
+    pub facets: Vec<String>,
+    pub is_folder_index: bool,
+    pub markdown_checksum: Option<String>,
+    pub toml_checksum: String,
+}
+
+pub type LoadedDocument = DocumentRecord;
+
+#[derive(Debug, Clone)]
+pub struct DocumentContent {
     pub id: CanonicalId,
     pub metadata: DocumentMetadata,
     pub markdown: String,
     pub ancestors: Vec<String>,
+    pub facets: Vec<String>,
     pub is_folder_index: bool,
 }
 
@@ -35,7 +53,7 @@ pub struct LoadedVault {
     pub index: VaultConfig,
     pub type_registry: TypeRegistry,
     pub ontology: Ontology,
-    pub documents: BTreeMap<CanonicalId, LoadedDocument>,
+    pub documents: BTreeMap<CanonicalId, DocumentRecord>,
     pub graph: VaultGraph,
 }
 
@@ -45,8 +63,19 @@ impl LoadedVault {
         vault.load()
     }
 
-    pub fn get_document(&self, id: &CanonicalId) -> Option<&LoadedDocument> {
+    pub fn get_document(&self, id: &CanonicalId) -> Option<&DocumentRecord> {
         self.documents.get(id)
+    }
+
+    pub fn read_markdown(&self, id: &CanonicalId) -> Result<String> {
+        let record = self
+            .documents
+            .get(id)
+            .ok_or_else(|| Error::InvalidVaultStructure(format!("unknown document `{id}`")))?;
+        std::fs::read_to_string(&record.markdown_path).map_err(|source| Error::Io {
+            path: record.markdown_path.clone(),
+            source,
+        })
     }
 }
 
@@ -74,7 +103,7 @@ impl Vault {
         toml::from_str(&text).map_err(|source| Error::TomlParse { path, source })
     }
 
-    pub fn load_documents(&self) -> Result<Vec<LoadedDocument>> {
+    pub fn load_documents(&self) -> Result<Vec<DocumentRecord>> {
         let mut documents = Vec::new();
         for folder in self.index.type_folders.values() {
             let folder_path = self.root.join(folder);
@@ -113,75 +142,95 @@ impl Vault {
         VaultGraph::build_with_ontology(self.load_documents()?, ontology.as_ref())
     }
 
-    pub fn load_document(&self, id: &CanonicalId) -> Result<LoadedDocument> {
-        let folder_index_toml = self.root.join(id.folder_index_toml_path());
-        let is_folder_index = folder_index_toml.exists();
-
-        let (metadata, markdown_path) = if is_folder_index {
-            let toml_path = folder_index_toml;
-            let toml_text = std::fs::read_to_string(&toml_path).map_err(|source| Error::Io {
-                path: toml_path.clone(),
+    pub fn load_document(&self, id: &CanonicalId) -> Result<DocumentContent> {
+        let record = self.load_document_record(id)?;
+        let markdown =
+            std::fs::read_to_string(&record.markdown_path).map_err(|source| Error::Io {
+                path: record.markdown_path.clone(),
                 source,
             })?;
-            let metadata: DocumentMetadata =
-                toml::from_str(&toml_text).map_err(|source| Error::TomlParse {
-                    path: toml_path,
-                    source,
-                })?;
-            (metadata, self.root.join(id.folder_index_markdown_path()))
-        } else {
-            let toml_path = self.root.join(id.toml_path());
-            let toml_text = std::fs::read_to_string(&toml_path).map_err(|source| Error::Io {
-                path: toml_path.clone(),
-                source,
-            })?;
-            let metadata: DocumentMetadata =
-                toml::from_str(&toml_text).map_err(|source| Error::TomlParse {
-                    path: toml_path,
-                    source,
-                })?;
-            let markdown_path = self.root.join(id.folder()).join(&metadata.markdown);
-            (metadata, markdown_path)
-        };
 
-        let markdown = std::fs::read_to_string(&markdown_path).map_err(|source| Error::Io {
-            path: markdown_path,
-            source,
-        })?;
-
-        Ok(LoadedDocument {
-            id: id.clone(),
-            metadata,
+        Ok(DocumentContent {
+            id: record.id,
+            metadata: record.metadata,
             markdown,
-            ancestors: id.ancestors().into_iter().map(str::to_owned).collect(),
-            is_folder_index,
+            ancestors: record.ancestors,
+            facets: record.facets,
+            is_folder_index: record.is_folder_index,
         })
     }
 
-    fn load_entry(&self, entry: &VaultEntry) -> Result<LoadedDocument> {
-        let toml_text = std::fs::read_to_string(entry.toml_path()).map_err(|source| Error::Io {
-            path: entry.toml_path().to_path_buf(),
-            source,
-        })?;
-        let metadata: DocumentMetadata =
-            toml::from_str(&toml_text).map_err(|source| Error::TomlParse {
-                path: entry.toml_path().to_path_buf(),
-                source,
-            })?;
-        let markdown =
-            std::fs::read_to_string(entry.markdown_path()).map_err(|source| Error::Io {
-                path: entry.markdown_path().to_path_buf(),
-                source,
-            })?;
+    pub fn load_document_record(&self, id: &CanonicalId) -> Result<DocumentRecord> {
+        let folder_index_toml = self.root.join(id.folder_index_toml_path());
+        if folder_index_toml.exists() {
+            let entry = VaultEntry::FolderIndex {
+                id: id.clone(),
+                markdown_path: self.root.join(id.folder_index_markdown_path()),
+                toml_path: folder_index_toml,
+            };
+            return self.load_entry(&entry);
+        }
+
+        let toml_path = self.root.join(id.toml_path());
+        let metadata = read_metadata(&toml_path)?;
+        let markdown_path = self.root.join(id.folder()).join(&metadata.markdown);
+        let entry = VaultEntry::Document {
+            id: id.clone(),
+            markdown_path,
+            toml_path,
+        };
+        self.load_entry(&entry)
+    }
+
+    fn load_entry(&self, entry: &VaultEntry) -> Result<DocumentRecord> {
+        let metadata = read_metadata(entry.toml_path())?;
         let id = entry.id().clone();
-        Ok(LoadedDocument {
-            ancestors: id.ancestors().into_iter().map(str::to_owned).collect(),
-            is_folder_index: entry.is_folder_index(),
+        let ancestors = id
+            .ancestors()
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let facets = facets_for(&metadata, &ancestors);
+        let markdown_checksum = if entry.markdown_path().exists() {
+            Some(checksum::blake3_file(entry.markdown_path())?)
+        } else {
+            None
+        };
+        let toml_checksum = checksum::blake3_file(entry.toml_path())?;
+
+        Ok(DocumentRecord {
             id,
             metadata,
-            markdown,
+            markdown_path: entry.markdown_path().to_path_buf(),
+            toml_path: entry.toml_path().to_path_buf(),
+            ancestors,
+            facets,
+            is_folder_index: entry.is_folder_index(),
+            markdown_checksum,
+            toml_checksum,
         })
     }
+}
+
+fn read_metadata(path: &Path) -> Result<DocumentMetadata> {
+    let toml_text = std::fs::read_to_string(path).map_err(|source| Error::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    toml::from_str(&toml_text).map_err(|source| Error::TomlParse {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn facets_for(metadata: &DocumentMetadata, ancestors: &[String]) -> Vec<String> {
+    let mut facets = ancestors.to_vec();
+    for label in &metadata.labels {
+        if !facets.contains(label) {
+            facets.push(label.clone());
+        }
+    }
+    facets
 }
 
 #[cfg(test)]
@@ -317,6 +366,38 @@ markdown = "project.md"
     }
 
     #[test]
+    fn loaded_vault_reads_markdown_on_demand() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("ontology.toml"),
+            include_str!("../templates/default-ontology.toml"),
+        )
+        .unwrap();
+        write_folder_doc(&root, "projects", "project", "Projects");
+        fs::create_dir_all(root.join("type")).unwrap();
+        fs::write(root.join("type/project.md"), "# Project\n").unwrap();
+        fs::write(
+            root.join("type/project.toml"),
+            r#"type = "type-definition"
+name = "project"
+folder = "projects"
+markdown = "project.md"
+"#,
+        )
+        .unwrap();
+
+        let loaded = LoadedVault::load(&root).unwrap();
+        let project_id = CanonicalId::parse("projects").unwrap();
+        assert_eq!(loaded.read_markdown(&project_id).unwrap(), "# Projects\n");
+        fs::write(root.join("projects/index.md"), "# Changed\n").unwrap();
+        assert_eq!(loaded.read_markdown(&project_id).unwrap(), "# Changed\n");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn recursively_loads_folder_index_documents_and_regular_documents() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects/company-x/internal")).unwrap();
@@ -333,6 +414,7 @@ markdown = "project.md"
             root.join("projects/company-x/internal/q2-launch.toml"),
             r#"type = "project"
 markdown = "q2-launch.md"
+labels = ["launch"]
 "#,
         )
         .unwrap();
@@ -358,6 +440,15 @@ markdown = "q2-launch.md"
             .find(|document| document.id.as_str() == "projects/company-x/internal/q2-launch")
             .unwrap();
         assert_eq!(q2.ancestors, vec!["company-x", "internal"]);
+        assert_eq!(q2.facets, vec!["company-x", "internal", "launch"]);
+        assert!(q2
+            .markdown_path
+            .ends_with("projects/company-x/internal/q2-launch.md"));
+        assert!(q2
+            .toml_path
+            .ends_with("projects/company-x/internal/q2-launch.toml"));
+        assert!(q2.markdown_checksum.is_some());
+        assert!(!q2.toml_checksum.is_empty());
         assert!(!q2.is_folder_index);
         assert!(
             documents
@@ -371,7 +462,7 @@ markdown = "q2-launch.md"
     }
 
     #[test]
-    fn loads_document_metadata_and_markdown() {
+    fn loads_document_metadata_and_markdown_on_demand() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects")).unwrap();
         write_root_index(&root);
@@ -391,10 +482,14 @@ markdown = "kataan-redesign.md"
 
         let vault = Vault::open(&root).unwrap();
         let id = CanonicalId::parse("projects/kataan-redesign").unwrap();
+        let record = vault.load_document_record(&id).unwrap();
         let document = vault.load_document(&id).unwrap();
 
-        assert_eq!(document.id, id);
-        assert_eq!(document.metadata.r#type, "project");
+        assert_eq!(record.id, id);
+        assert_eq!(record.metadata.r#type, "project");
+        assert!(record
+            .markdown_path
+            .ends_with("projects/kataan-redesign.md"));
         assert_eq!(document.markdown, "# Kataan Redesign\n");
         assert!(!document.is_folder_index);
 

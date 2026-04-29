@@ -250,9 +250,13 @@ mod tests {
                 created_by: None,
                 last_updated_by: None,
             },
-            markdown: String::new(),
+            markdown_path: id.markdown_path(),
+            toml_path: id.toml_path(),
             ancestors: id.ancestors().into_iter().map(str::to_owned).collect(),
+            facets: Vec::new(),
             is_folder_index: false,
+            markdown_checksum: None,
+            toml_checksum: String::new(),
             id,
         }
     }
