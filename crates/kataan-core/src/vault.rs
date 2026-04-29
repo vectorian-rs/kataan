@@ -118,7 +118,11 @@ impl Vault {
             let folder_path = self.root.join(folder);
             if folder_path.exists() {
                 for entry in walk_type_folder(&self.root, folder)? {
-                    documents.push(self.load_entry(&entry)?);
+                    match self.load_entry(&entry) {
+                        Ok(document) => documents.push(document),
+                        Err(Error::TomlParse { .. }) if !entry.is_folder_index() => continue,
+                        Err(error) => return Err(error),
+                    }
                 }
             }
         }

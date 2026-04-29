@@ -13,8 +13,6 @@ use crate::state::AppState;
 pub struct HealthResponse {
     pub ok: bool,
     pub loaded: bool,
-    pub degraded: bool,
-    pub boot_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,14 +124,8 @@ pub fn router(state: AppState) -> Router {
 }
 
 pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
-    let boot_error = state.boot_error();
-    let loaded = state.vault.read().is_ok_and(|vault| vault.is_some());
-    Json(HealthResponse {
-        ok: true,
-        loaded,
-        degraded: !loaded || boot_error.is_some(),
-        boot_error,
-    })
+    let loaded = state.vault.read().is_ok();
+    Json(HealthResponse { ok: true, loaded })
 }
 
 pub async fn vault(
@@ -595,13 +587,8 @@ fn read_loaded_vault(state: &AppState) -> Result<kataan_core::vault::LoadedVault
     state
         .vault
         .read()
-        .map_err(|_| ApiError(anyhow::anyhow!("vault lock poisoned")))?
-        .clone()
-        .ok_or_else(|| {
-            ApiError(anyhow::anyhow!(
-                "vault is not loaded; server is running in degraded mode"
-            ))
-        })
+        .map_err(|_| ApiError(anyhow::anyhow!("vault lock poisoned")))
+        .map(|vault| vault.clone())
 }
 
 fn direct_folders(
@@ -873,7 +860,7 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
     }
 
     fn test_app(root: &Path) -> Router {
-        router(AppState::new(root.to_path_buf()))
+        router(AppState::new(root.to_path_buf()).unwrap())
     }
 
     fn test_vault() -> PathBuf {

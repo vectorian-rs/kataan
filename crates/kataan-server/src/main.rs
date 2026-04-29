@@ -25,12 +25,14 @@ async fn main() {
     init_tracing();
 
     let cli = Cli::parse();
-    let state = AppState::new(cli.vault);
-    if let Some(error) = state.boot_error() {
-        error!(%error, "vault load failed; starting in degraded mode");
-    } else {
-        info!("loaded vault successfully");
-    }
+    let state = match AppState::new(cli.vault) {
+        Ok(state) => state,
+        Err(error) => {
+            error!(error = %error, "failed to load vault");
+            std::process::exit(1);
+        }
+    };
+    info!("loaded vault successfully");
 
     let app = api::router(state);
     let listener = tokio::net::TcpListener::bind(&cli.bind)
