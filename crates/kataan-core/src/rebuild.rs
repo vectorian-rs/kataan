@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 use crate::{
     checksum,
     index::{FolderDocument, VaultIndex},
-    Error, Result,
+    write, Error, Result,
 };
 
 pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
@@ -115,10 +115,7 @@ fn update_document_markdown_checksum(
     );
 
     let updated = toml::to_string_pretty(&value).expect("serialize document TOML");
-    fs::write(toml_path, updated).map_err(|source| Error::Io {
-        path: toml_path.to_path_buf(),
-        source,
-    })
+    write::atomic_write_string(toml_path, &updated)
 }
 
 fn parse_folder_index_header(text: &str, folder: &str) -> (String, Option<String>, Option<String>) {
@@ -171,10 +168,7 @@ fn write_folder_index(
         output.push_str(&format!("toml_checksum = \"{}\"\n", document.toml_checksum));
     }
 
-    fs::write(path, output).map_err(|source| Error::Io {
-        path: path.to_path_buf(),
-        source,
-    })
+    write::atomic_write_string(path, &output)
 }
 
 fn title_case(value: &str) -> String {

@@ -14,5 +14,6 @@ pub mod types;
 pub mod validate;
 pub mod vault;
 pub mod walk;
+pub mod write;
 
 pub use error::{Error, Result};

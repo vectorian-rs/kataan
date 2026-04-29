@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{checksum, constants::SCHEMA_VERSION, rebuild::rebuild_indexes, Error, Result};
+use crate::{checksum, constants::SCHEMA_VERSION, rebuild::rebuild_indexes, write, Error, Result};
 const DEFAULT_ONTOLOGY: &str = include_str!("../templates/default-ontology.toml");
 
 pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {
@@ -116,10 +116,7 @@ last_updated_by = "system"
 }
 
 fn write_file(path: &Path, content: &str) -> Result<()> {
-    std::fs::write(path, content).map_err(|source| Error::Io {
-        path: path.to_path_buf(),
-        source,
-    })
+    write::atomic_write_string(path, content)
 }
 
 fn type_folder(ty: &str) -> &str {
