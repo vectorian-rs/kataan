@@ -198,13 +198,29 @@ mod tests {
         write_root_index(&root);
         for folder in ["raw", "people", "notes", "topics", "type"] {
             fs::create_dir_all(root.join(folder)).unwrap();
+            fs::write(root.join(folder).join("index.md"), format!("# {folder}\n")).unwrap();
             fs::write(
                 root.join(folder).join("index.toml"),
-                format!("name = \"{folder}\"\n"),
+                format!(
+                    "type = \"{}\"\nname = \"{folder}\"\nmarkdown = \"index.md\"\n",
+                    match folder {
+                        "raw" => "raw",
+                        "people" => "person",
+                        "notes" => "note",
+                        "topics" => "topic",
+                        "type" => "type-definition",
+                        _ => "project",
+                    }
+                ),
             )
             .unwrap();
         }
-        fs::write(root.join("projects/index.toml"), "name = \"Projects\"\n").unwrap();
+        fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
+        fs::write(
+            root.join("projects/index.toml"),
+            "type = \"project\"\nname = \"Projects\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
         fs::write(
             root.join("projects/kataan-redesign.md"),
             "# Kataan Redesign\n",
