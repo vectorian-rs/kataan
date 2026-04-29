@@ -8,7 +8,7 @@ pub struct CanonicalId(String);
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum CanonicalIdError {
-    #[error("canonical ID must be a relative path with kebab-case segments: {0}")]
+    #[error("canonical ID must be a relative path with URL-safe path segments: {0}")]
     InvalidShape(String),
     #[error("canonical ID contains an invalid path segment: {0}")]
     InvalidSegment(String),
@@ -32,7 +32,7 @@ impl CanonicalId {
             return Err(CanonicalIdError::InvalidShape(value));
         }
 
-        if !value.split('/').all(is_kebab_segment) {
+        if !value.split('/').all(is_canonical_segment) {
             return Err(CanonicalIdError::InvalidSegment(value));
         }
 
@@ -150,14 +150,14 @@ fn normalize_separators(value: &str) -> String {
     value.replace('\\', "/")
 }
 
-fn is_kebab_segment(value: &str) -> bool {
+fn is_canonical_segment(value: &str) -> bool {
     if value.is_empty() || value.starts_with('-') || value.ends_with('-') || value.contains("--") {
         return false;
     }
 
     value
         .bytes()
-        .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 #[cfg(test)]
@@ -188,11 +188,20 @@ mod tests {
     }
 
     #[test]
+    fn permits_mixed_case_document_ids() {
+        let id =
+            CanonicalId::parse("projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429")
+                .unwrap();
+        assert_eq!(
+            id.as_str(),
+            "projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429"
+        );
+    }
+
+    #[test]
     fn rejects_invalid_canonical_ids() {
         for value in [
             "",
-            "Projects/kataan-redesign",
-            "projects/Kataan",
             "projects/kataan_redesign",
             "projects/.hidden",
             "projects/kataan.md",

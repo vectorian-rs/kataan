@@ -126,12 +126,12 @@ mod tests {
     #[test]
     fn reports_invalid_nested_paths_with_path_context() {
         let root = unique_temp_dir();
-        fs::create_dir_all(root.join("projects/Company-X")).unwrap();
+        fs::create_dir_all(root.join("projects/company_x")).unwrap();
         fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
         fs::write(root.join("projects/index.toml"), "type = \"project\"\n").unwrap();
-        fs::write(root.join("projects/Company-X/index.md"), "# Company\n").unwrap();
+        fs::write(root.join("projects/company_x/index.md"), "# Company\n").unwrap();
         fs::write(
-            root.join("projects/Company-X/index.toml"),
+            root.join("projects/company_x/index.toml"),
             "type = \"project\"\n",
         )
         .unwrap();
@@ -140,7 +140,7 @@ mod tests {
         assert!(matches!(
             error,
             Error::InvalidCanonicalIdAtPath { path, .. }
-                if path.to_string_lossy() == "projects/Company-X/index.toml"
+                if path.to_string_lossy() == "projects/company_x/index.toml"
         ));
 
         fs::remove_dir_all(root).unwrap();

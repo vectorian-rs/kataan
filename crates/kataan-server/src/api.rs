@@ -405,12 +405,16 @@ markdown = "demo.md"
     #[tokio::test]
     async fn query_document_endpoint_returns_nested_document() {
         let root = test_vault();
-        fs::create_dir_all(root.join("projects/snappy/sows")).unwrap();
-        fs::write(root.join("projects/snappy/sows/demo.md"), "# Demo\n").unwrap();
+        fs::create_dir_all(root.join("projects/snappy/sows/otp-travel")).unwrap();
         fs::write(
-            root.join("projects/snappy/sows/demo.toml"),
+            root.join("projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429.md"),
+            "# Demo\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429.toml"),
             r#"type = "project"
-markdown = "demo.md"
+markdown = "HU-otp-travel-POC-SOW1-260429.md"
 "#,
         )
         .unwrap();
@@ -419,7 +423,7 @@ markdown = "demo.md"
         let response = request(
             app,
             "GET",
-            "/api/document?id=projects%2Fsnappy%2Fsows%2Fdemo",
+            "/api/document?id=projects%2Fsnappy%2Fsows%2Fotp-travel%2FHU-otp-travel-POC-SOW1-260429",
         )
         .await;
 
