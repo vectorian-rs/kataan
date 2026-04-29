@@ -17,6 +17,7 @@ import {
   getFolders,
   getVault,
   rebuildIndexes,
+  resolveRoute,
   validateVault,
   type Diagnostic,
   type DocumentResponse,
@@ -59,6 +60,7 @@ rebuildButton.addEventListener('click', async () => {
 await runAction(async () => {
   await loadVault();
   await loadFolders();
+  await restoreRouteSelection();
 });
 
 async function loadVault() {
@@ -71,7 +73,7 @@ async function loadFolders() {
   foldersEl.replaceChildren(...response.folders.map(renderFolderButton));
 
   const firstNonEmptyFolder = response.folders.find((folder) => folder.document_count > 0);
-  if (response.folders.length > 0) {
+  if (!currentRouteLocator() && response.folders.length > 0) {
     await selectFolder(firstNonEmptyFolder?.folder ?? response.folders[0].folder);
   }
 }
@@ -101,7 +103,8 @@ function renderFolderButton(folder: FolderSummary) {
   return button;
 }
 
-async function selectFolder(folder: string) {
+async function selectFolder(folder: string, options: { selectFirst?: boolean } = {}) {
+  const selectFirst = options.selectFirst ?? true;
   selectedFolder = folder;
   updateActiveRows();
 
@@ -120,7 +123,9 @@ async function selectFolder(folder: string) {
 
   documentsEl.className = 'list';
   documentsEl.replaceChildren(...response.documents.map(renderDocumentButton));
-  await selectDocument(response.documents[0].id);
+  if (selectFirst) {
+    await selectDocument(response.documents[0].id);
+  }
 }
 
 function renderChildFolders(parentId: string, folders: FolderChild[]) {
@@ -175,15 +180,54 @@ function renderDocumentButton(vaultDocument: FolderDocument) {
   return button;
 }
 
-async function selectDocument(id: string) {
+async function selectDocument(id: string, options: { updateUrl?: boolean } = {}) {
+  const updateUrl = options.updateUrl ?? true;
   selectedDocument = id;
   updateActiveRows();
 
   const vaultDocument = await getDocument(id);
   breadcrumb.textContent = vaultDocument.id.replaceAll('/', ' › ');
   documentTitle.textContent = titleFromId(vaultDocument.id);
+  if (updateUrl) {
+    updateRouteUrl(vaultDocument);
+  }
   renderDocumentBody(vaultDocument);
   renderMetadata(vaultDocument);
+}
+
+async function restoreRouteSelection() {
+  const locator = currentRouteLocator();
+  if (!locator) return;
+
+  const resolved = await resolveRoute(locator.type, locator.token);
+  if (resolved.is_folder_index) {
+    await selectFolder(resolved.id, { selectFirst: false });
+    return;
+  }
+
+  for (const folder of folderChain(resolved.folder)) {
+    await selectFolder(folder, { selectFirst: false });
+  }
+  await selectDocument(resolved.id, { updateUrl: false });
+}
+
+function currentRouteLocator() {
+  const [, type, token, extra] = window.location.pathname.split('/');
+  if (!type || !token || extra) return null;
+  if (!/^[0-9a-f]{32}$/.test(token)) return null;
+  return { type, token };
+}
+
+function updateRouteUrl(vaultDocument: DocumentResponse) {
+  const nextPath = `/${encodeURIComponent(vaultDocument.type_folder)}/${vaultDocument.route_token}`;
+  if (window.location.pathname !== nextPath) {
+    window.history.pushState({}, '', nextPath);
+  }
+}
+
+function folderChain(folder: string) {
+  const parts = folder.split('/').filter(Boolean);
+  return parts.map((_, index) => parts.slice(0, index + 1).join('/'));
 }
 
 function renderDocumentBody(vaultDocument: DocumentResponse) {

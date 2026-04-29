@@ -1,0 +1,18 @@
+---
+import AppLayout from '../../layouts/AppLayout.astro';
+import Sidebar from '../../components/Sidebar.astro';
+import NoteList from '../../components/NoteList.astro';
+import ContentPane from '../../components/ContentPane.astro';
+import PropertiesPanel from '../../components/PropertiesPanel.astro';
+---
+
+<AppLayout title="Kataan">
+  <Sidebar slot="sidebar" />
+  <NoteList slot="list" />
+  <ContentPane slot="content" />
+  <PropertiesPanel slot="properties" />
+</AppLayout>
+
+<script>
+  import '../../lib/dashboard';
+</script>

@@ -49,8 +49,18 @@ export type CanonicalFolderResponse = {
 
 export type DocumentResponse = {
   id: string;
+  type_folder: string;
+  route_token: string;
   metadata: Record<string, unknown>;
   markdown: string;
+};
+
+export type ResolveResponse = {
+  id: string;
+  folder: string;
+  type_folder: string;
+  route_token: string;
+  is_folder_index: boolean;
 };
 
 export type Diagnostic = {
@@ -79,6 +89,10 @@ export async function getFolder(id: string) {
 
 export async function getDocument(id: string) {
   return getJson<DocumentResponse>(`/api/document?id=${encodeURIComponent(id)}`);
+}
+
+export async function resolveRoute(type: string, token: string) {
+  return getJson<ResolveResponse>(`/api/resolve?type=${encodeURIComponent(type)}&token=${encodeURIComponent(token)}`);
 }
 
 export async function validateVault() {

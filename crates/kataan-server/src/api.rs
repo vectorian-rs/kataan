@@ -65,8 +65,19 @@ pub struct FolderDocumentResponse {
 #[derive(Debug, Serialize)]
 pub struct DocumentResponse {
     pub id: String,
+    pub type_folder: String,
+    pub route_token: String,
     pub metadata: kataan_core::document::DocumentMetadata,
     pub markdown: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResolveResponse {
+    pub id: String,
+    pub folder: String,
+    pub type_folder: String,
+    pub route_token: String,
+    pub is_folder_index: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,6 +89,12 @@ pub struct ValidateResponse {
 #[derive(Debug, Deserialize)]
 pub struct IdQuery {
     pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveQuery {
+    pub r#type: String,
+    pub token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,6 +112,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/folders", get(folders))
         .route("/api/folder", get(folder_by_id))
         .route("/api/document", get(document_by_id))
+        .route("/api/resolve", get(resolve_route))
         .route("/api/folders/:folder", get(folder))
         .route("/api/documents/*id", get(document))
         .route("/api/validate", post(validate))
@@ -184,6 +202,34 @@ pub async fn document_by_id(
     document_response(&state, &query.id).map(Json)
 }
 
+pub async fn resolve_route(
+    State(state): State<AppState>,
+    Query(query): Query<ResolveQuery>,
+) -> Result<Json<ResolveResponse>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
+    let id = loaded
+        .resolve_route_token(&query.r#type, &query.token)
+        .cloned()
+        .ok_or_else(|| {
+            ApiError(anyhow::anyhow!(
+                "route token `{}` for type `{}` does not resolve",
+                query.token,
+                query.r#type
+            ))
+        })?;
+    let document = loaded
+        .documents
+        .get(&id)
+        .ok_or_else(|| ApiError(anyhow::anyhow!("document `{id}` does not exist")))?;
+    Ok(Json(ResolveResponse {
+        id: id.as_str().to_owned(),
+        folder: id.containing_folder().to_owned(),
+        type_folder: id.top_level_folder().to_owned(),
+        route_token: kataan_core::vault::route_token_for_id(&id),
+        is_folder_index: document.is_folder_index,
+    }))
+}
+
 pub async fn document(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -237,6 +283,8 @@ fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, Api
 
     Ok(DocumentResponse {
         id: id.as_str().to_owned(),
+        type_folder: id.top_level_folder().to_owned(),
+        route_token: kataan_core::vault::route_token_for_id(&id),
         metadata: record.metadata,
         markdown,
     })

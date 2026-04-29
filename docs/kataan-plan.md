@@ -336,15 +336,16 @@ Out of scope for v1:
 14. In-memory vault graph, with at least one test exercising graph construction before the server depends on it.
 15. Build inverse-edge adjacency map from ontology.
 16. Server read API.
-17. Read-only Astro UI.
-18. Manual raw intake.
-19. Edge mutation API.
-20. `kataan-agent` crate skeleton and API-key provider boundary.
-21. OpenAI/Anthropic ask commands.
-22. Server `/api/agent` endpoint.
-23. Global UI agent overlay.
-24. MCP read/repair surface.
-25. Agent proposals.
+17. UI route locators: derive a 32-hex token from `blake3(canonical_id)`, index `(type-folder, token) -> canonical ID` in `LoadedVault`, expose `/api/resolve?type=...&token=...`, and use `/<type-folder>/<token>` for reloadable document URLs.
+18. Read-only Astro UI.
+19. Manual raw intake.
+20. Edge mutation API.
+21. `kataan-agent` crate skeleton and API-key provider boundary.
+22. OpenAI/Anthropic ask commands.
+23. Server `/api/agent` endpoint.
+24. Global UI agent overlay.
+25. MCP read/repair surface.
+26. Agent proposals.
 
 ## Near-term success criteria
 

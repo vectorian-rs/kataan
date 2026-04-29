@@ -258,6 +258,25 @@ Filenames are preserved exactly as authored. Canonical IDs allow mixed-case URL-
 
 Because canonical IDs are path-based and case-sensitive, rename and move operations must update the Markdown file, TOML sidecar, containing folder indexes, checksums, and references to the old canonical ID. Validation should detect case-insensitive collisions for cross-platform safety.
 
+## UI route locators
+
+Canonical IDs remain the source-of-truth document identity. The web UI may expose shorter reloadable routes that preserve the current document without putting canonical IDs or filesystem-like paths in the browser route.
+
+Route form:
+
+```txt
+/<type-folder>/<route-token>
+/projects/8d8f2a41e5a6b07d9c948b9f7d6be2a1
+```
+
+`type-folder` is the visible top-level type folder, such as `projects`, `people`, or `topics`. `route-token` is derived from the canonical ID, for example the first 16 bytes of `blake3(canonical_id)` rendered as 32 lowercase hex characters. `LoadedVault` builds an in-memory lookup from `(type-folder, route-token)` to canonical ID. This lookup is only a UI locator, not a persistent identity field. Rename or move invalidates the old route; edits do not change it.
+
+The API resolves locators explicitly, for example:
+
+```txt
+GET /api/resolve?type=projects&token=8d8f2a41e5a6b07d9c948b9f7d6be2a1
+```
+
 ## Relationship ontology
 
 Document relationships live under one `[edges]` table. Keys are predicate names defined in `vault/ontology.toml`; values are target canonical IDs.
