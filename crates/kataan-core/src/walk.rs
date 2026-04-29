@@ -31,7 +31,8 @@ fn walk_folder(root: &Path, relative_folder: &Path, entries: &mut Vec<VaultEntry
     let index_md = folder_path.join("index.md");
     let index_toml = folder_path.join("index.toml");
     if index_md.exists() && index_toml.exists() {
-        let id = CanonicalId::from_document_path(relative_folder.join("index.toml"))?;
+        let relative_index = relative_folder.join("index.toml");
+        let id = canonical_id_from_path(&relative_index)?;
         entries.push(VaultEntry::FolderIndex {
             id,
             markdown_path: index_md,
@@ -70,7 +71,8 @@ fn walk_folder(root: &Path, relative_folder: &Path, entries: &mut Vec<VaultEntry
             continue;
         }
 
-        let id = CanonicalId::from_document_path(relative_folder.join(&file_name))?;
+        let relative_document = relative_folder.join(&file_name);
+        let id = canonical_id_from_path(&relative_document)?;
         entries.push(VaultEntry::Document {
             id,
             markdown_path: path,
@@ -79,6 +81,13 @@ fn walk_folder(root: &Path, relative_folder: &Path, entries: &mut Vec<VaultEntry
     }
 
     Ok(())
+}
+
+fn canonical_id_from_path(path: &Path) -> Result<CanonicalId> {
+    CanonicalId::from_document_path(path).map_err(|source| Error::InvalidCanonicalIdAtPath {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 impl VaultEntry {
@@ -113,6 +122,29 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::*;
+
+    #[test]
+    fn reports_invalid_nested_paths_with_path_context() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects/Company-X")).unwrap();
+        fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
+        fs::write(root.join("projects/index.toml"), "type = \"project\"\n").unwrap();
+        fs::write(root.join("projects/Company-X/index.md"), "# Company\n").unwrap();
+        fs::write(
+            root.join("projects/Company-X/index.toml"),
+            "type = \"project\"\n",
+        )
+        .unwrap();
+
+        let error = walk_type_folder(&root, "projects").unwrap_err();
+        assert!(matches!(
+            error,
+            Error::InvalidCanonicalIdAtPath { path, .. }
+                if path.to_string_lossy() == "projects/Company-X/index.toml"
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn walks_folder_indexes_and_documents_recursively() {

@@ -1,10 +1,14 @@
 use std::path::{Path, PathBuf};
 
+use std::collections::BTreeMap;
+
 use crate::{
     document::DocumentMetadata,
     graph::VaultGraph,
     id::CanonicalId,
     index::{FolderIndex, VaultIndex},
+    ontology::Ontology,
+    types::TypeRegistry,
     walk::{walk_type_folder, VaultEntry},
     Error, Result,
 };
@@ -22,6 +26,27 @@ pub struct LoadedDocument {
     pub markdown: String,
     pub ancestors: Vec<String>,
     pub is_folder_index: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadedVault {
+    pub root: PathBuf,
+    pub index: VaultIndex,
+    pub type_registry: TypeRegistry,
+    pub ontology: Ontology,
+    pub documents: BTreeMap<CanonicalId, LoadedDocument>,
+    pub graph: VaultGraph,
+}
+
+impl LoadedVault {
+    pub fn load(root: impl AsRef<Path>) -> Result<Self> {
+        let vault = Vault::open(root)?;
+        vault.load()
+    }
+
+    pub fn get_document(&self, id: &CanonicalId) -> Option<&LoadedDocument> {
+        self.documents.get(id)
+    }
 }
 
 impl Vault {
@@ -62,8 +87,29 @@ impl Vault {
         Ok(documents)
     }
 
+    pub fn load(&self) -> Result<LoadedVault> {
+        let type_registry = TypeRegistry::load(self)?;
+        let ontology = Ontology::load(&self.root)?;
+        let documents = self
+            .load_documents()?
+            .into_iter()
+            .map(|document| (document.id.clone(), document))
+            .collect::<BTreeMap<_, _>>();
+        let graph = VaultGraph::build_with_ontology(documents.values().cloned(), Some(&ontology))?;
+
+        Ok(LoadedVault {
+            root: self.root.clone(),
+            index: self.index.clone(),
+            type_registry,
+            ontology,
+            documents,
+            graph,
+        })
+    }
+
     pub fn load_graph(&self) -> Result<VaultGraph> {
-        VaultGraph::build(self.load_documents()?)
+        let ontology = Ontology::load(&self.root).ok();
+        VaultGraph::build_with_ontology(self.load_documents()?, ontology.as_ref())
     }
 
     pub fn load_document(&self, id: &CanonicalId) -> Result<LoadedDocument> {
@@ -232,6 +278,39 @@ markdown = "project-brief.md"
             graph.children_of(&project_id),
             std::collections::BTreeSet::from([note_id])
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn loads_semantic_loaded_vault() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("ontology.toml"),
+            include_str!("../templates/default-ontology.toml"),
+        )
+        .unwrap();
+        write_folder_doc(&root, "projects", "project", "Projects");
+        fs::create_dir_all(root.join("type")).unwrap();
+        fs::write(root.join("type/project.md"), "# Project\n").unwrap();
+        fs::write(
+            root.join("type/project.toml"),
+            r#"type = "type-definition"
+name = "project"
+folder = "projects"
+markdown = "project.md"
+"#,
+        )
+        .unwrap();
+
+        let loaded = LoadedVault::load(&root).unwrap();
+        let project_id = CanonicalId::parse("projects").unwrap();
+        assert!(loaded.type_registry.contains("project"));
+        assert!(loaded.ontology.edges.contains_key("related_to"));
+        assert!(loaded.get_document(&project_id).is_some());
+        assert!(loaded.graph.documents.contains_key(&project_id));
 
         fs::remove_dir_all(root).unwrap();
     }

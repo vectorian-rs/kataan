@@ -21,6 +21,12 @@ pub enum Error {
     #[error("invalid canonical ID: {0}")]
     InvalidCanonicalId(#[from] CanonicalIdError),
 
+    #[error("invalid canonical ID at {path}: {source}")]
+    InvalidCanonicalIdAtPath {
+        path: PathBuf,
+        source: CanonicalIdError,
+    },
+
     #[error("invalid vault structure: {0}")]
     InvalidVaultStructure(String),
 }
