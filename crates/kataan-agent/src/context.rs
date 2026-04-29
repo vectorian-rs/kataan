@@ -59,7 +59,7 @@ fn push_section(target: &mut String, title: &str, body: &str) {
     }
     target.push_str("## ");
     target.push_str(title);
-    target.push_str("\n");
+    target.push('\n');
     target.push_str(body.trim());
     target.push('\n');
 }

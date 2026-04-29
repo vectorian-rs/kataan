@@ -62,7 +62,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         Err(error) => return Err(error),
     };
 
-    let type_registry = TypeRegistry::load(&vault).ok();
+    let type_registry = TypeRegistry::load(vault).ok();
     let mut known_document_types = BTreeMap::new();
     if let Ok(documents) = vault.load_documents() {
         for document in documents {

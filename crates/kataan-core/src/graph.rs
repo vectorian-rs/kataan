@@ -35,6 +35,20 @@ impl VaultGraph {
 
         for (source, predicates) in edges {
             for (predicate_name, targets) in predicates {
+                let predicate_def =
+                    ontology.and_then(|ontology| ontology.edges.get(&predicate_name));
+                let is_symmetric = predicate_def.is_some_and(|p| p.symmetric);
+                let incoming_predicate = predicate_def
+                    .and_then(|p| {
+                        if p.symmetric {
+                            Some(predicate_name.as_str())
+                        } else {
+                            p.inverse.as_deref()
+                        }
+                    })
+                    .unwrap_or(predicate_name.as_str())
+                    .to_owned();
+
                 for target in targets {
                     let target = CanonicalId::parse(target)?;
                     graph
@@ -45,18 +59,6 @@ impl VaultGraph {
                         .or_default()
                         .insert(target.clone());
 
-                    let incoming_predicate = ontology
-                        .and_then(|ontology| ontology.edges.get(&predicate_name))
-                        .and_then(|predicate| {
-                            if predicate.symmetric {
-                                Some(predicate_name.as_str())
-                            } else {
-                                predicate.inverse.as_deref()
-                            }
-                        })
-                        .unwrap_or(predicate_name.as_str())
-                        .to_owned();
-
                     graph
                         .incoming_edges
                         .entry(target.clone())
@@ -65,10 +67,7 @@ impl VaultGraph {
                         .or_default()
                         .insert(source.clone());
 
-                    if ontology
-                        .and_then(|ontology| ontology.edges.get(&predicate_name))
-                        .is_some_and(|predicate| predicate.symmetric)
-                    {
+                    if is_symmetric {
                         graph
                             .outgoing_edges
                             .entry(target)
@@ -112,10 +111,11 @@ impl VaultGraph {
 
     fn build_path_children(&mut self) {
         for id in self.documents.keys() {
-            let Some((parent, _)) = id.as_str().rsplit_once('/') else {
+            let folder = id.containing_folder();
+            if folder.is_empty() {
                 continue;
-            };
-            let Ok(parent) = CanonicalId::parse(parent) else {
+            }
+            let Ok(parent) = CanonicalId::parse(folder) else {
                 continue;
             };
             if self.documents.contains_key(&parent) {

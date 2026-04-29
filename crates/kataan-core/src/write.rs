@@ -17,10 +17,6 @@ pub fn atomic_write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<()> {
         path: path.to_path_buf(),
         source,
     })?;
-    tempfile.flush().map_err(|source| Error::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
     tempfile.as_file().sync_all().map_err(|source| Error::Io {
         path: path.to_path_buf(),
         source,

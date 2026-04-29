@@ -23,7 +23,4 @@ pub enum Error {
 
     #[error("invalid vault structure: {0}")]
     InvalidVaultStructure(String),
-
-    #[error("validation failed")]
-    ValidationFailed,
 }
