@@ -226,17 +226,16 @@ Boot sequence:
 Concurrency and live state model:
 
 - Server state holds `Arc<RwLock<LoadedVault>>`.
-- `LoadedVault` is metadata-only and stores config, type registry, ontology, document records, facets, graph, checksums, diagnostics, and generation.
+- `LoadedVault` is metadata-only and stores config, type registry, ontology, document records, facets, graph, checksums, diagnostics, and paths.
 - Markdown bodies are read on demand and should not be held in the loaded vault index.
 - Single writer: API writes are serialized through an mpsc command queue.
-- A successful write atomically changes files, rebuilds affected indexes/checksums, updates or reloads `LoadedVault`, and bumps generation.
-- Agent proposals carry the generation they were computed against; apply-time refuses if the counter advanced.
+- A successful write atomically changes files, rebuilds affected indexes/checksums, and updates or reloads `LoadedVault`.
+- Agent proposals carry base content hashes for every document they intend to edit; apply-time recomputes current hashes and refuses or asks the agent to re-read when a hash no longer matches.
 - Filesystem watcher events are debounced and batched. Clear changes patch the minimum affected metadata; ambiguous structural changes reload the whole `LoadedVault`.
 - No cross-process file lock in v1; mutating CLI commands should be avoided while the server is running unless the watcher can observe/reconcile the changes.
 - The API checks depth on every write and rejects violations with `folder-depth-exceeded`.
 - Edge mutations are serialized through the same queue and validate against the ontology before commit.
 - Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate` operations.
-- Edge mutations bump the vault generation counter like any other write.
 
 ## Phase 6: Astro web UI
 

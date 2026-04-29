@@ -578,15 +578,15 @@ Agents can:
 
 The agent is a collaborator, not the owner.
 
-Agent changes should be diff-based and non-destructive. Agents should not silently overwrite human edits. If the vault generation changed since the agent analyzed it, the proposal should be regenerated or shown as a conflict for human review.
+Agent changes should be diff-based and non-destructive. Agents should not silently overwrite human edits. Agent proposals include base content hashes for each edited document; if the current hash no longer matches, the proposal is stale and the agent must re-read or present a conflict for human review.
 
 ## Concurrency and writes
 
 Kataan uses a single-writer model in the server. API writes are serialized through a command queue and then update an `Arc<RwLock<LoadedVault>>` metadata index. Reads take a short read lock and should avoid holding it while reading large Markdown bodies.
 
-`LoadedVault` is metadata-only: it stores config, ontology, type registry, document records, labels/facets, graph, checksums, diagnostics, paths, and a generation counter. It does not keep full Markdown bodies in memory. Markdown is read on demand from the file path in the document record.
+`LoadedVault` is metadata-only: it stores config, ontology, type registry, document records, labels/facets, graph, checksums, diagnostics, and paths. It does not keep full Markdown bodies in memory. Markdown is read on demand from the file path in the document record.
 
-Each successful write bumps the vault generation counter. In-flight agent proposals carry the generation they were computed against, and apply-time refuses stale proposals if the counter advanced.
+Conflict detection is content-hash based. In-flight agent proposals carry the base hashes of documents they intend to edit. Apply-time recomputes current hashes and refuses or asks for re-read/review when a hash no longer matches.
 
 Every Markdown and TOML write is atomic: write a temporary file in the same directory, fsync, then rename/persist. Rebuild operations are per-folder atomic so a crash mid-rebuild does not corrupt indexes.
 
@@ -605,7 +605,7 @@ Server boot:
 5. If errors exist, serve read-only API plus diagnostics and expose rebuild.
 6. If clean, enable the full read/write API.
 
-The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`. Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate`; each mutation validates against `ontology.toml` before commit and bumps the vault generation counter.
+The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`. Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate`; each mutation validates against `ontology.toml` before commit.
 
 ## MCP surface
 
