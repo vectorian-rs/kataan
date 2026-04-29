@@ -27,7 +27,7 @@ Implement in `crates/kataan-core`.
 ### 2. TOML and Markdown loading
 
 - Load root `kataan.toml`.
-- Load every folder's `index.md` and `index.toml` files, including intermediate folders.
+- Load every document folder's `index.md` and `index.toml` files, including intermediate document folders; skip the special `code/` tool folder.
 - Load document TOML sidecars.
 - Build metadata-only `DocumentRecord` values containing paths, metadata, ancestors, facets, checksums, and folder-document marker.
 - Do not load full Markdown bodies into `LoadedVault`; read Markdown on demand from `markdown_path`.
@@ -38,7 +38,7 @@ Implement in `crates/kataan-core`.
 - Compute BLAKE3 over exact raw file bytes.
 - Validate `markdown_checksum` in document TOML.
 - Compute `toml_checksum` for folder index entries.
-- Compute recursive post-order `folder_checksum` values from sorted direct documents and sorted direct subfolder checksums.
+- Compute recursive post-order `folder_checksum` values from sorted direct documents and sorted direct document-subfolder checksums; exclude `code/`.
 - Ensure every write path uses atomic write semantics: tempfile in the same directory, fsync, then rename/persist.
 
 ### 4. Type registry
@@ -114,8 +114,8 @@ Validation should check:
 - The source document type is allowed by the predicate `from` list, or `from = ["*"]`.
 - Every edge target canonical ID resolves to an existing document.
 - Every target document type is allowed by the predicate `to` list, or `to = ["*"]`.
-- `index.toml` document entries and subfolder entries match files in the folder.
-- Folder `markdown_checksum`, `toml_checksum`, subfolder checksums, and recursive `folder_checksum` values are correct for document folders; `code/` is excluded from Merkle/index checks.
+- `index.toml` document entries and document-subfolder entries match files in the folder.
+- Folder `markdown_checksum`, `toml_checksum`, document-subfolder checksums, and recursive `folder_checksum` values are correct for document folders; `code/` is excluded from Merkle/index checks.
 
 CLI behavior:
 
@@ -165,8 +165,9 @@ kataan rebuild-indexes <vault>
 Should:
 
 - Recompute document `markdown_checksum` fields.
-- Rebuild every folder's direct `[[documents]]` and subfolder entries.
-- Recompute folder `markdown_checksum`, `toml_checksum`, subfolder checksums, and recursive `folder_checksum` values.
+- Rebuild every document folder's direct `[[documents]]` and `[[subfolders]]` entries.
+- Recompute folder `markdown_checksum`, `toml_checksum`, document-subfolder checksums, and recursive `folder_checksum` values.
+- Exclude the special `code/` folder from document-pair checks, folder indexes, and Merkle checksums.
 - Update `updated_at` in root `kataan.toml`.
 - Preserve human-authored metadata where possible.
 
@@ -185,7 +186,7 @@ Should create:
 - Root `kataan.toml` with `[limits].max_folder_depth = 4`.
 - Default `ontology.toml` with the core edge vocabulary.
 - Core folders: `raw`, `projects`, `people`, `notes`, `topics`, `code`, `type`.
-- Folder `index.md` and `index.toml` files for every core folder.
+- Folder `index.md` and `index.toml` files for every core document folder; do not create them for `code/`.
 - Core type definitions:
   - `raw`
   - `project`

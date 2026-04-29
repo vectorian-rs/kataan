@@ -60,6 +60,11 @@ vault/
 │   ├── index.toml
 │   ├── knowledge-bases.md
 │   └── knowledge-bases.toml
+├── code/
+│   ├── tools/
+│   │   └── classify_raw.py
+│   └── mcp-adapters/
+│       └── README.md
 └── type/
     ├── index.md
     ├── index.toml
@@ -73,9 +78,13 @@ vault/
     ├── note.toml
     ├── topic.md
     ├── topic.toml
+    ├── code.md
+    ├── code.toml
     ├── type-definition.md
     └── type-definition.toml
 ```
+
+All folders except `code/` are document folders. Document folders use Markdown/TOML sidecars and folder index documents. `code/` is a tool/code asset tree and is intentionally exempt from document sidecar, folder index, loader, and Merkle rules.
 
 ## Vault index
 
@@ -164,11 +173,14 @@ Core mappings:
 | `person`          | `people/`   |
 | `note`            | `notes/`    |
 | `topic`           | `topics/`   |
+| `code`            | `code/`     |
 | `type-definition` | `type/`     |
 
 ## Folder indexes
 
-Every folder, including intermediate folders, has `index.md` and `index.toml`. The index pair is the document for that folder node; there are no untyped scaffolding folders. Each folder index describes that folder and lists direct child documents and subfolders. This lets Kataan assemble and render folder views quickly by loading folder indexes instead of scanning every file.
+Every document folder, including intermediate document folders, has `index.md` and `index.toml`. The index pair is the document for that folder node; there are no untyped scaffolding folders in document trees. The special `code/` folder is not a document tree and does not require folder indexes.
+
+Each document-folder index describes that folder and lists direct child documents and direct child document subfolders. This lets Kataan assemble and render folder views quickly from stored metadata. Implementations may still walk the filesystem for validation and repair, but normal read paths should prefer loaded metadata.
 
 Example `projects/index.toml`:
 
@@ -185,9 +197,14 @@ markdown = "kataan-redesign.md"
 toml = "kataan-redesign.toml"
 markdown_checksum = "blake3:..."
 toml_checksum = "blake3:..."
+
+[[subfolders]]
+name = "company-x"
+folder_checksum = "blake3:..."
 ```
 
-Each `documents` entry identifies one direct document in the folder. `slug` is the filename without `.md` or `.toml`, relative to the folder that owns the index. A folder's own `index.md` and `index.toml` hash into that folder's checksum, not the parent's document list.
+
+Each `documents` entry identifies one direct non-index document in the folder. `slug` is the filename without `.md` or `.toml`, relative to the folder that owns the index. Each `subfolders` entry identifies one direct child document folder by name and records that child's recursive `folder_checksum`. A folder's own `index.md` and `index.toml` hash into that folder's checksum, not the parent's document list.
 
 `index.toml` is system-managed. Humans may read it, but normal editing should happen through the application or agent tools so the index does not drift from the actual files. Validation should report any mismatch between `documents` and the files in the folder.
 
@@ -206,7 +223,7 @@ This lets Kataan quickly detect whether the human-readable content changed since
 
 Checksums are computed over exact raw file bytes. Kataan does not normalize line endings, strip BOMs, trim whitespace, or parse and re-serialize before hashing.
 
-Each folder `index.toml` stores a recursive Merkle-style folder checksum. The checksum is deterministic, post-order, and includes sorted direct documents plus sorted direct subfolder checksums.
+Each document folder `index.toml` stores a recursive Merkle-style folder checksum. The checksum is deterministic, post-order, and includes sorted direct documents plus sorted direct document-subfolder checksums. `code/` is excluded.
 
 Conceptually:
 
@@ -221,7 +238,7 @@ folder_checksum = blake3(
 
 The folder's own `index.md` and `index.toml` hash into the folder's checksum, not the parent's document list.
 
-Kataan should include a `rebuild-indexes` command from the start. Rebuild fixes drift by recalculating document entries, Markdown checksums, TOML sidecar checksums, and recursive folder checksums from the filesystem. Rebuild does not auto-fix structural violations such as missing sidecars, unresolved refs, unknown types, or depth violations; validation reports those.
+Kataan should include a `rebuild-indexes` command from the start. Rebuild fixes drift by recalculating document entries, subfolder entries, Markdown checksums, TOML sidecar checksums, and recursive folder checksums from the filesystem. Rebuild excludes `code/`. Rebuild does not auto-fix structural violations such as missing sidecars, unresolved refs, unknown types, or depth violations; validation reports those.
 
 Folder index document fields:
 
@@ -232,6 +249,13 @@ Folder index document fields:
 | `toml`              | TOML sidecar filename for the document.                    |
 | `markdown_checksum` | BLAKE3 checksum of the Markdown file.                      |
 | `toml_checksum`     | BLAKE3 checksum of the document TOML sidecar.              |
+
+Folder index subfolder fields:
+
+| Field             | Meaning                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| `name`            | Direct child folder name, relative to the folder owning index. |
+| `folder_checksum` | Recursive checksum of that child document folder.              |
 
 ## Identity, references, and naming
 
@@ -325,7 +349,7 @@ Path structure remains the primary containment model. Ontology predicates such a
 
 | Field               | Meaning                                                                                                                                          |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `type`              | What kind of thing this file is: `raw`, `project`, `person`, `topic`, `note`, `type-definition`, etc.                                            |
+| `type`              | What kind of thing this file is: `raw`, `project`, `person`, `topic`, `note`, `code`, `type-definition`, etc.                                    |
 | `status`            | Optional lifecycle state, such as draft, active, paused, done, or archived. Raw documents use `type = "raw"`; they do not need `status = "raw"`. |
 | `markdown`          | Markdown file associated with this TOML sidecar.                                                                                                 |
 | `markdown_checksum` | BLAKE3 checksum of the associated Markdown file.                                                                                                 |
@@ -396,9 +420,10 @@ The vault ships with a fixed core set:
 - `person`
 - `note`
 - `topic`
+- `code`
 - `type-definition`
 
-Users may define additional types. Every valid `type` value, core or custom, must have a corresponding type definition in `type/` and a matching entry in root `[type_folders]`. Custom types behave identically to built-in types at runtime: path-as-containment, ancestors-as-keywords, depth limits, sidecar TOML, validation, and checksums all apply.
+Users may define additional types. Every valid `type` value, core or custom, must have a corresponding type definition in `type/` and a matching entry in root `[type_folders]`. Custom document types behave identically to built-in document types at runtime: path-as-containment, ancestors-as-keywords, depth limits, sidecar TOML, validation, and checksums all apply. `code` is the only core non-document type folder and is exempt from document sidecar/index/Merkle rules.
 
 Type definitions live in `type/`.
 
