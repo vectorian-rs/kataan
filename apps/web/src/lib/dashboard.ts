@@ -2,6 +2,7 @@ import {
   Archive,
   Boxes,
   Circle,
+  Code,
   FileText,
   FolderKanban,
   Lightbulb,
@@ -153,7 +154,7 @@ function renderChildFolderButton(folder: FolderChild, depth: number) {
 
   const icon = document.createElement('span');
   icon.className = 'folder-icon';
-  icon.append(createElement(FolderKanban, { width: 18, height: 18, 'stroke-width': 2 }));
+  icon.append(createElement(folderIcon(folder.id.split('/')[0] ?? ''), { width: 18, height: 18, 'stroke-width': 2 }));
 
   const name = document.createElement('span');
   name.textContent = folder.name;
@@ -325,6 +326,7 @@ function updateActiveRows() {
 
 function folderIcon(type: string): IconNode {
   const icons: Record<string, IconNode> = {
+    code: Code,
     note: FileText,
     person: User,
     project: FolderKanban,

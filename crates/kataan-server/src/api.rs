@@ -169,10 +169,10 @@ pub async fn folder(
     let id = kataan_core::id::CanonicalId::parse(&folder)
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
     let Some(record) = loaded.documents.get(&id) else {
-        if kataan_core::constants::is_code_folder(id.as_str()) {
+        if kataan_core::constants::is_code_path(id.as_str()) {
             return Ok(Json(FolderResponse {
                 folder,
-                index: empty_code_folder_index(),
+                index: empty_code_folder_index(id.as_str()),
                 documents: Vec::new(),
             }));
         }
@@ -307,12 +307,12 @@ fn canonical_folder_response(
     let (record, folders, documents, markdown_path) = {
         let loaded = read_loaded_vault(state)?;
         let Some(record) = loaded.documents.get(&id).cloned() else {
-            if kataan_core::constants::is_code_folder(id.as_str()) {
+            if kataan_core::constants::is_code_path(id.as_str()) {
                 return Ok(CanonicalFolderResponse {
                     id: id.as_str().to_owned(),
                     metadata: None,
                     markdown: None,
-                    folders: Vec::new(),
+                    folders: direct_code_folders(state, id.as_str())?,
                     documents: Vec::new(),
                 });
             }
@@ -336,14 +336,44 @@ fn canonical_folder_response(
     })
 }
 
-fn empty_code_folder_index() -> kataan_core::index::FolderIndex {
+fn empty_code_folder_index(id: &str) -> kataan_core::index::FolderIndex {
     kataan_core::index::FolderIndex {
-        name: "Code".to_owned(),
+        name: title_from_id(id),
         description: Some("Agent tools and code assets.".to_owned()),
         default_type: Some("code".to_owned()),
         folder_checksum: None,
         documents: Vec::new(),
     }
+}
+
+fn direct_code_folders(state: &AppState, id: &str) -> Result<Vec<FolderChildResponse>, ApiError> {
+    let folder_path = state.vault_path.join(id);
+    if !folder_path.is_dir() {
+        return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
+    }
+
+    let mut folders = Vec::new();
+    for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
+        path: folder_path.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| kataan_core::Error::Io {
+            path: folder_path.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        folders.push(FolderChildResponse {
+            id: format!("{id}/{name}"),
+            name,
+            has_index: false,
+        });
+    }
+    folders.sort_by(|left, right| left.id.cmp(&right.id));
+    Ok(folders)
 }
 
 fn read_loaded_vault(
