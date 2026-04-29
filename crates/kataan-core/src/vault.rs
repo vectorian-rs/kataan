@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     checksum,
-    constants::VAULT_CONFIG_FILE,
+    constants::{is_code_folder, VAULT_CONFIG_FILE},
     document::DocumentMetadata,
     graph::VaultGraph,
     id::CanonicalId,
@@ -112,6 +112,9 @@ impl Vault {
     pub fn load_documents(&self) -> Result<Vec<DocumentRecord>> {
         let mut documents = Vec::new();
         for folder in self.index.type_folders.values() {
+            if is_code_folder(folder) {
+                continue;
+            }
             let folder_path = self.root.join(folder);
             if folder_path.exists() {
                 for entry in walk_type_folder(&self.root, folder)? {

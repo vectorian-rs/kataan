@@ -33,6 +33,7 @@ project = "projects"
 person = "people"
 note = "notes"
 topic = "topics"
+code = "code"
 type-definition = "type"
 "#,
         )

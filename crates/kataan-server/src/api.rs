@@ -168,10 +168,18 @@ pub async fn folder(
     let loaded = read_loaded_vault(&state)?;
     let id = kataan_core::id::CanonicalId::parse(&folder)
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
-    let record = loaded
-        .documents
-        .get(&id)
-        .ok_or_else(|| ApiError(anyhow::anyhow!("folder `{folder}` does not exist")))?;
+    let Some(record) = loaded.documents.get(&id) else {
+        if kataan_core::constants::is_code_folder(id.as_str()) {
+            return Ok(Json(FolderResponse {
+                folder,
+                index: empty_code_folder_index(),
+                documents: Vec::new(),
+            }));
+        }
+        return Err(ApiError(anyhow::anyhow!(
+            "folder `{folder}` does not exist"
+        )));
+    };
     let documents = direct_documents(&loaded, &id);
     let index = kataan_core::index::FolderIndex {
         name: document_name(record).unwrap_or_else(|| title_from_id(&folder)),
@@ -298,11 +306,18 @@ fn canonical_folder_response(
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
     let (record, folders, documents, markdown_path) = {
         let loaded = read_loaded_vault(state)?;
-        let record = loaded
-            .documents
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| ApiError(anyhow::anyhow!("folder `{id}` does not exist")))?;
+        let Some(record) = loaded.documents.get(&id).cloned() else {
+            if kataan_core::constants::is_code_folder(id.as_str()) {
+                return Ok(CanonicalFolderResponse {
+                    id: id.as_str().to_owned(),
+                    metadata: None,
+                    markdown: None,
+                    folders: Vec::new(),
+                    documents: Vec::new(),
+                });
+            }
+            return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
+        };
         if !record.is_folder_index {
             return Err(ApiError(anyhow::anyhow!("document `{id}` is not a folder")));
         }
@@ -319,6 +334,16 @@ fn canonical_folder_response(
         folders,
         documents,
     })
+}
+
+fn empty_code_folder_index() -> kataan_core::index::FolderIndex {
+    kataan_core::index::FolderIndex {
+        name: "Code".to_owned(),
+        description: Some("Agent tools and code assets.".to_owned()),
+        default_type: Some("code".to_owned()),
+        folder_checksum: None,
+        documents: Vec::new(),
+    }
 }
 
 fn read_loaded_vault(

@@ -98,6 +98,7 @@ project = "projects"
 person = "people"
 note = "notes"
 topic = "topics"
+code = "code"
 type-definition = "type"
 ```
 
@@ -647,7 +648,10 @@ notes/      curated notes
 people/     people profiles
 projects/   projects and efforts
 topics/     durable concepts and themes
+code/       agent tools and executable helper code
 ```
+
+The `code/` folder is a special typed folder for agent/tool code such as MCP adapters, TypeScript scripts, Python helpers, schemas, and executable utilities. It is not a Markdown/TOML document folder: Kataan does not require `.md`/`.toml` sidecars, does not require `index.md`/`index.toml`, does not load files in `code/` as documents, and excludes `code/` from folder Merkle checksums.
 
 A raw file may later produce many organized files.
 

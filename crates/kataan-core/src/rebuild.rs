@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use crate::{
     checksum,
-    constants::VAULT_CONFIG_FILE,
+    constants::{is_code_folder, VAULT_CONFIG_FILE},
     index::{FolderDocument, VaultConfig},
     write, Error, Result,
 };
@@ -21,6 +21,9 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
         })?;
 
     for (document_type, folder) in &root_index.type_folders {
+        if is_code_folder(folder) {
+            continue;
+        }
         let folder_path = root.join(folder);
         if !folder_path.exists() {
             continue;
@@ -201,6 +204,7 @@ mod tests {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects")).unwrap();
         write_root_index(&root);
+        fs::create_dir_all(root.join("code")).unwrap();
         for folder in ["raw", "people", "notes", "topics", "type"] {
             fs::create_dir_all(root.join(folder)).unwrap();
             fs::write(root.join(folder).join("index.md"), format!("# {folder}\n")).unwrap();
@@ -279,6 +283,7 @@ project = "projects"
 person = "people"
 note = "notes"
 topic = "topics"
+code = "code"
 type-definition = "type"
 "#,
         )

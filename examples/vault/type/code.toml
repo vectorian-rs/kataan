@@ -1,0 +1,9 @@
+type = "type-definition"
+name = "code"
+folder = "code"
+icon = "code"
+
+markdown = "code.md"
+
+created_by = "system"
+last_updated_by = "system"

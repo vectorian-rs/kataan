@@ -100,8 +100,8 @@ Validation should check:
 
 - Root `kataan.toml` exists and has `schema_version`.
 - Required type folders exist.
-- Every folder has `index.md` and `index.toml`.
-- Every `.md` document has a matching `.toml` sidecar.
+- Every document folder has `index.md` and `index.toml`; the special `code/` folder is exempt because it stores agent/tool code instead of Markdown/TOML document pairs.
+- Every `.md` document has a matching `.toml` sidecar outside the special `code/` folder.
 - Every document TOML has `markdown` pointing to the matching Markdown file.
 - `markdown_checksum` matches exact Markdown bytes.
 - Document `type` is known.
@@ -115,7 +115,7 @@ Validation should check:
 - Every edge target canonical ID resolves to an existing document.
 - Every target document type is allowed by the predicate `to` list, or `to = ["*"]`.
 - `index.toml` document entries and subfolder entries match files in the folder.
-- Folder `markdown_checksum`, `toml_checksum`, subfolder checksums, and recursive `folder_checksum` values are correct.
+- Folder `markdown_checksum`, `toml_checksum`, subfolder checksums, and recursive `folder_checksum` values are correct for document folders; `code/` is excluded from Merkle/index checks.
 
 CLI behavior:
 
@@ -184,7 +184,7 @@ Should create:
 
 - Root `kataan.toml` with `[limits].max_folder_depth = 4`.
 - Default `ontology.toml` with the core edge vocabulary.
-- Core folders: `raw`, `projects`, `people`, `notes`, `topics`, `type`.
+- Core folders: `raw`, `projects`, `people`, `notes`, `topics`, `code`, `type`.
 - Folder `index.md` and `index.toml` files for every core folder.
 - Core type definitions:
   - `raw`
@@ -192,6 +192,7 @@ Should create:
   - `person`
   - `note`
   - `topic`
+  - `code`
   - `type-definition`
 
 Then run `rebuild-indexes`.

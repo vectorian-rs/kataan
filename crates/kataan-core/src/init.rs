@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::{
     checksum,
-    constants::{SCHEMA_VERSION, VAULT_CONFIG_FILE},
+    constants::{CODE_FOLDER, SCHEMA_VERSION, TYPE_CODE, VAULT_CONFIG_FILE},
     rebuild::rebuild_indexes,
     write, Error, Result,
 };
@@ -33,6 +33,7 @@ project = "projects"
 person = "people"
 note = "notes"
 topic = "topics"
+code = "code"
 type-definition = "type"
 "#
         ),
@@ -81,12 +82,19 @@ folder_checksum = "blake3:todo"
         )?;
     }
 
+    let code_path = root.join(CODE_FOLDER);
+    std::fs::create_dir_all(&code_path).map_err(|source| Error::Io {
+        path: code_path.clone(),
+        source,
+    })?;
+
     for ty in [
         "raw",
         "project",
         "person",
         "note",
         "topic",
+        TYPE_CODE,
         "type-definition",
     ] {
         let title = title_case(ty);
@@ -131,6 +139,7 @@ fn type_folder(ty: &str) -> &str {
         "person" => "people",
         "note" => "notes",
         "topic" => "topics",
+        TYPE_CODE => CODE_FOLDER,
         "type-definition" => "type",
         _ => ty,
     }
@@ -169,17 +178,23 @@ mod tests {
                 "missing {folder}/index.toml"
             );
         }
+        assert!(root.join("code").is_dir());
+        assert!(!root.join("code/index.toml").exists());
+
         for ty in [
             "raw",
             "project",
             "person",
             "note",
             "topic",
+            "code",
             "type-definition",
         ] {
             assert!(root.join("type").join(format!("{ty}.md")).exists());
             assert!(root.join("type").join(format!("{ty}.toml")).exists());
         }
+
+        fs::write(root.join("code/tool.py"), "print('hello')\n").unwrap();
 
         let root_index = fs::read_to_string(root.join("kataan.toml")).unwrap();
         assert!(root_index.contains("schema_version = \"0.1.0\""));

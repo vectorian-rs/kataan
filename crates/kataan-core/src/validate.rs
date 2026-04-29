@@ -7,7 +7,8 @@ use std::{
 use crate::{
     checksum,
     constants::{
-        ACTOR_VALUES, CORE_TYPES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES, VAULT_CONFIG_FILE,
+        is_code_folder, ACTOR_VALUES, CORE_TYPES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES,
+        VAULT_CONFIG_FILE,
     },
     diagnostic::{Diagnostic, DiagnosticReport},
     diagnostic_codes as codes,
@@ -95,6 +96,10 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                 )
                 .with_path(folder),
             );
+            continue;
+        }
+
+        if is_code_folder(folder) {
             continue;
         }
 
