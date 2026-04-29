@@ -13,5 +13,6 @@ pub mod rebuild;
 pub mod types;
 pub mod validate;
 pub mod vault;
+pub mod walk;
 
 pub use error::{Error, Result};

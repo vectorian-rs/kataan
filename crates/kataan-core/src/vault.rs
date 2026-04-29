@@ -5,6 +5,7 @@ use crate::{
     graph::VaultGraph,
     id::CanonicalId,
     index::{FolderIndex, VaultIndex},
+    walk::{walk_type_folder, VaultEntry},
     Error, Result,
 };
 
@@ -52,60 +53,13 @@ impl Vault {
         for folder in self.index.type_folders.values() {
             let folder_path = self.root.join(folder);
             if folder_path.exists() {
-                self.load_documents_in_folder(Path::new(folder), &mut documents)?;
+                for entry in walk_type_folder(&self.root, folder)? {
+                    documents.push(self.load_entry(&entry)?);
+                }
             }
         }
         documents.sort_by(|left, right| left.id.cmp(&right.id));
         Ok(documents)
-    }
-
-    fn load_documents_in_folder(
-        &self,
-        relative_folder: &Path,
-        documents: &mut Vec<LoadedDocument>,
-    ) -> Result<()> {
-        let folder_path = self.root.join(relative_folder);
-        let index_toml_path = folder_path.join("index.toml");
-        if index_toml_path.exists() {
-            let id = CanonicalId::from_document_path(relative_folder.join("index.toml"))
-                .map_err(|_| Error::ValidationFailed)?;
-            documents.push(self.load_document(&id)?);
-        }
-
-        for entry in std::fs::read_dir(&folder_path).map_err(|source| Error::Io {
-            path: folder_path.clone(),
-            source,
-        })? {
-            let entry = entry.map_err(|source| Error::Io {
-                path: folder_path.clone(),
-                source,
-            })?;
-            let path = entry.path();
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-
-            if path.is_dir() {
-                self.load_documents_in_folder(
-                    &relative_folder.join(file_name.as_ref()),
-                    documents,
-                )?;
-                continue;
-            }
-
-            if !path.is_file()
-                || path.extension().and_then(|extension| extension.to_str()) != Some("toml")
-                || file_name == "index.toml"
-            {
-                continue;
-            }
-
-            let relative_path = relative_folder.join(file_name.as_ref());
-            let id = CanonicalId::from_document_path(relative_path)
-                .map_err(|_| Error::ValidationFailed)?;
-            documents.push(self.load_document(&id)?);
-        }
-
-        Ok(())
     }
 
     pub fn load_graph(&self) -> Result<VaultGraph> {
@@ -154,6 +108,31 @@ impl Vault {
             markdown,
             ancestors: id.ancestors().into_iter().map(str::to_owned).collect(),
             is_folder_index,
+        })
+    }
+
+    fn load_entry(&self, entry: &VaultEntry) -> Result<LoadedDocument> {
+        let toml_text = std::fs::read_to_string(entry.toml_path()).map_err(|source| Error::Io {
+            path: entry.toml_path().to_path_buf(),
+            source,
+        })?;
+        let metadata: DocumentMetadata =
+            toml::from_str(&toml_text).map_err(|source| Error::TomlParse {
+                path: entry.toml_path().to_path_buf(),
+                source,
+            })?;
+        let markdown =
+            std::fs::read_to_string(entry.markdown_path()).map_err(|source| Error::Io {
+                path: entry.markdown_path().to_path_buf(),
+                source,
+            })?;
+        let id = entry.id().clone();
+        Ok(LoadedDocument {
+            ancestors: id.ancestors().into_iter().map(str::to_owned).collect(),
+            is_folder_index: entry.is_folder_index(),
+            id,
+            metadata,
+            markdown,
         })
     }
 }
