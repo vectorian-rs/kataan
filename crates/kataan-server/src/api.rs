@@ -109,23 +109,33 @@ pub async fn health() -> Json<HealthResponse> {
 pub async fn vault(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_core::index::VaultConfig>, ApiError> {
-    Ok(Json(open_vault(&state)?.index))
+    let loaded = read_loaded_vault(&state)?;
+    Ok(Json(loaded.index.clone()))
 }
 
 pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersResponse>, ApiError> {
-    let vault = open_vault(&state)?;
+    let loaded = read_loaded_vault(&state)?;
     let mut folders = Vec::new();
 
-    for (ty, folder) in &vault.index.type_folders {
-        let index = vault.load_folder_index(folder).ok();
-        let document_count = index
-            .as_ref()
-            .map(|index| index.documents.len())
-            .unwrap_or_default();
+    for (ty, folder) in &loaded.index.type_folders {
+        let id = kataan_core::id::CanonicalId::parse(folder)
+            .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+        let record = loaded.documents.get(&id);
+        let document_count = loaded
+            .documents
+            .values()
+            .filter(|document| {
+                !document.is_folder_index && document.id.containing_folder() == folder
+            })
+            .count();
         folders.push(FolderSummaryResponse {
             r#type: ty.clone(),
             folder: folder.clone(),
-            name: index.map(|index| index.name),
+            name: Some(
+                record
+                    .and_then(document_name)
+                    .unwrap_or_else(|| title_from_id(folder)),
+            ),
             document_count,
         });
     }
@@ -137,18 +147,21 @@ pub async fn folder(
     State(state): State<AppState>,
     Path(folder): Path<String>,
 ) -> Result<Json<FolderResponse>, ApiError> {
-    let vault = open_vault(&state)?;
-    let index = vault.load_folder_index(&folder).map_err(ApiError::from)?;
-    let documents = index
+    let loaded = read_loaded_vault(&state)?;
+    let id = kataan_core::id::CanonicalId::parse(&folder)
+        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    let record = loaded
         .documents
-        .iter()
-        .map(|document| FolderDocumentResponse {
-            id: format!("{folder}/{}", document.slug),
-            slug: document.slug.clone(),
-            markdown: document.markdown.clone(),
-            toml: document.toml.clone(),
-        })
-        .collect();
+        .get(&id)
+        .ok_or_else(|| ApiError(anyhow::anyhow!("folder `{folder}` does not exist")))?;
+    let documents = direct_documents(&loaded, &id);
+    let index = kataan_core::index::FolderIndex {
+        name: document_name(record).unwrap_or_else(|| title_from_id(&folder)),
+        description: None,
+        default_type: Some(record.metadata.r#type.clone()),
+        folder_checksum: None,
+        documents: Vec::new(),
+    };
 
     Ok(Json(FolderResponse {
         folder,
@@ -197,19 +210,35 @@ pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResp
 
 pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
     kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(ApiError::from)?;
+    state.reload().map_err(ApiError::from)?;
     Ok(Json(OkResponse { ok: true }))
 }
 
 fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {
-    let vault = open_vault(state)?;
     let id = kataan_core::id::CanonicalId::parse(id)
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
-    let document = vault.load_document(&id).map_err(ApiError::from)?;
+    let record = {
+        let loaded = read_loaded_vault(state)?;
+        loaded
+            .documents
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ApiError(anyhow::anyhow!("document `{id}` does not exist")))?
+    };
+    let markdown = std::fs::read_to_string(&record.markdown_path).map_err(|source| {
+        ApiError(
+            kataan_core::Error::Io {
+                path: record.markdown_path.clone(),
+                source,
+            }
+            .into(),
+        )
+    })?;
 
     Ok(DocumentResponse {
         id: id.as_str().to_owned(),
-        metadata: document.metadata,
-        markdown: document.markdown,
+        metadata: record.metadata,
+        markdown,
     })
 }
 
@@ -217,76 +246,116 @@ fn canonical_folder_response(
     state: &AppState,
     id: &str,
 ) -> Result<CanonicalFolderResponse, ApiError> {
-    let vault = open_vault(state)?;
     let id = kataan_core::id::CanonicalId::parse(id)
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
-    let folder_path = vault.root.join(id.as_str());
-    if !folder_path.is_dir() {
-        return Err(ApiError(anyhow::anyhow!("folder `{}` does not exist", id)));
-    }
-
-    let folder_document = vault.load_document(&id).ok();
-    let mut folders = Vec::new();
-    let mut documents = Vec::new();
-
-    for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
-        path: folder_path.clone(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| kataan_core::Error::Io {
-            path: folder_path.clone(),
-            source,
-        })?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        if path.is_dir() {
-            let child_id = format!("{}/{}", id.as_str(), name);
-            folders.push(FolderChildResponse {
-                id: child_id,
-                name,
-                has_index: path.join("index.toml").exists() && path.join("index.md").exists(),
-            });
-            continue;
+    let (record, folders, documents, markdown_path) = {
+        let loaded = read_loaded_vault(state)?;
+        let record = loaded
+            .documents
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| ApiError(anyhow::anyhow!("folder `{id}` does not exist")))?;
+        if !record.is_folder_index {
+            return Err(ApiError(anyhow::anyhow!("document `{id}` is not a folder")));
         }
-
-        if !path.is_file()
-            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
-            || name == "index.md"
-        {
-            continue;
-        }
-        let Some(slug) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            continue;
-        };
-        let toml_path = folder_path.join(format!("{slug}.toml"));
-        if !toml_path.exists() {
-            continue;
-        }
-        documents.push(FolderDocumentResponse {
-            id: format!("{}/{}", id.as_str(), slug),
-            slug: slug.to_owned(),
-            markdown: name,
-            toml: format!("{slug}.toml"),
-        });
-    }
-
-    folders.sort_by(|left, right| left.id.cmp(&right.id));
-    documents.sort_by(|left, right| left.id.cmp(&right.id));
+        let folders = direct_folders(&loaded, &id);
+        let documents = direct_documents(&loaded, &id);
+        (record.clone(), folders, documents, record.markdown_path)
+    };
+    let markdown = std::fs::read_to_string(&markdown_path).ok();
 
     Ok(CanonicalFolderResponse {
         id: id.as_str().to_owned(),
-        metadata: folder_document
-            .as_ref()
-            .map(|document| document.metadata.clone()),
-        markdown: folder_document.map(|document| document.markdown),
+        metadata: Some(record.metadata),
+        markdown,
         folders,
         documents,
     })
 }
 
-fn open_vault(state: &AppState) -> Result<kataan_core::vault::Vault, ApiError> {
-    kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)
+fn read_loaded_vault(
+    state: &AppState,
+) -> Result<std::sync::RwLockReadGuard<'_, kataan_core::vault::LoadedVault>, ApiError> {
+    state
+        .vault
+        .read()
+        .map_err(|_| ApiError(anyhow::anyhow!("vault lock poisoned")))
+}
+
+fn direct_folders(
+    loaded: &kataan_core::vault::LoadedVault,
+    id: &kataan_core::id::CanonicalId,
+) -> Vec<FolderChildResponse> {
+    loaded
+        .graph
+        .children_of(id)
+        .into_iter()
+        .filter_map(|child_id| {
+            let child = loaded.documents.get(&child_id)?;
+            child.is_folder_index.then(|| FolderChildResponse {
+                id: child_id.as_str().to_owned(),
+                name: document_name(child).unwrap_or_else(|| title_from_id(child_id.as_str())),
+                has_index: true,
+            })
+        })
+        .collect()
+}
+
+fn direct_documents(
+    loaded: &kataan_core::vault::LoadedVault,
+    id: &kataan_core::id::CanonicalId,
+) -> Vec<FolderDocumentResponse> {
+    loaded
+        .graph
+        .children_of(id)
+        .into_iter()
+        .filter_map(|child_id| {
+            let child = loaded.documents.get(&child_id)?;
+            (!child.is_folder_index).then(|| FolderDocumentResponse {
+                id: child_id.as_str().to_owned(),
+                slug: child_id.slug().to_owned(),
+                markdown: child
+                    .markdown_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                toml: child
+                    .toml_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn document_name(document: &kataan_core::vault::DocumentRecord) -> Option<String> {
+    document
+        .metadata
+        .aliases
+        .first()
+        .cloned()
+        .or_else(|| document.metadata.labels.first().cloned())
+}
+
+fn title_from_id(id: &str) -> String {
+    id.rsplit('/')
+        .next()
+        .unwrap_or(id)
+        .replace('-', " ")
+        .split(' ')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug)]
@@ -481,7 +550,7 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
     }
 
     fn test_app(root: &Path) -> Router {
-        router(AppState::new(root.to_path_buf()))
+        router(AppState::new(root.to_path_buf()).unwrap())
     }
 
     fn test_vault() -> PathBuf {

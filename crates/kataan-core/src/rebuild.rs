@@ -20,7 +20,7 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
             source,
         })?;
 
-    for folder in root_index.type_folders.values() {
+    for (document_type, folder) in &root_index.type_folders {
         let folder_path = root.join(folder);
         if !folder_path.exists() {
             continue;
@@ -78,6 +78,7 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
         let folder_checksum = checksum::folder_checksum(&documents);
         write_folder_index(
             &folder_index_path,
+            document_type,
             &name,
             description.as_deref(),
             default_type.as_deref(),
@@ -141,6 +142,7 @@ fn parse_folder_index_header(text: &str, folder: &str) -> (String, Option<String
 
 fn write_folder_index(
     path: &Path,
+    document_type: &str,
     name: &str,
     description: Option<&str>,
     default_type: Option<&str>,
@@ -148,6 +150,8 @@ fn write_folder_index(
     documents: &[FolderDocument],
 ) -> Result<()> {
     let mut output = String::new();
+    output.push_str(&format!("type = \"{document_type}\"\n"));
+    output.push_str("markdown = \"index.md\"\n");
     output.push_str(&format!("name = \"{name}\"\n"));
     if let Some(description) = description {
         output.push_str(&format!("description = \"{description}\"\n"));

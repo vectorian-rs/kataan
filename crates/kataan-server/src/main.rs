@@ -21,7 +21,7 @@ struct Cli {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let state = AppState::new(cli.vault);
+    let state = AppState::new(cli.vault).expect("load vault");
     let app = api::router(state);
     let listener = tokio::net::TcpListener::bind(&cli.bind)
         .await
