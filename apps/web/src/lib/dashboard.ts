@@ -238,7 +238,7 @@ function renderDocumentButton(vaultDocument: FolderDocument) {
   button.dataset.document = vaultDocument.id;
 
   const title = document.createElement('strong');
-  title.textContent = titleFromSlug(vaultDocument.slug);
+  title.textContent = vaultDocument.slug;
 
   const meta = document.createElement('span');
   meta.className = 'muted';
@@ -341,7 +341,7 @@ async function selectDocument(id: string, options: { updateUrl?: boolean } = {})
 
   const vaultDocument = await getDocument(id);
   breadcrumb.textContent = vaultDocument.id.replaceAll('/', ' › ');
-  documentTitle.textContent = titleFromId(vaultDocument.id);
+  documentTitle.textContent = basenameFromId(vaultDocument.id);
   if (updateUrl) {
     updateRouteUrl(vaultDocument);
   }
@@ -636,7 +636,7 @@ function normalizeFolderIconKey(typeOrFolder: string) {
 
 function folderTitleFromResponse(id: string, metadata?: Record<string, unknown>) {
   const name = metadata?.name;
-  return typeof name === 'string' && name.length > 0 ? name : titleFromId(id);
+  return typeof name === 'string' && name.length > 0 ? name : basenameFromId(id);
 }
 
 function depthFor(id: string) {
@@ -647,15 +647,8 @@ function cssEscape(value: string) {
   return CSS.escape(value);
 }
 
-function titleFromId(id: string) {
-  return titleFromSlug(id.split('/').at(-1) ?? id);
-}
-
-function titleFromSlug(slug: string) {
-  return slug
-    .split('-')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
+function basenameFromId(id: string) {
+  return id.split('/').at(-1) ?? id;
 }
 
 function formatLabel(label: string) {
