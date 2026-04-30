@@ -36,6 +36,8 @@ pub struct FolderIndex {
 
     #[serde(default)]
     pub documents: Vec<FolderDocument>,
+    #[serde(default)]
+    pub subfolders: Vec<FolderSubfolder>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -45,4 +47,10 @@ pub struct FolderDocument {
     pub toml: String,
     pub markdown_checksum: String,
     pub toml_checksum: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FolderSubfolder {
+    pub name: String,
+    pub folder_checksum: String,
 }

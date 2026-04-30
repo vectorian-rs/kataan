@@ -1,9 +1,9 @@
 use std::{fs, path::Path};
 
 use crate::{
-    checksum,
+    checksum::{self, SubfolderChecksum},
     constants::{is_code_folder, VAULT_CONFIG_FILE},
-    index::{FolderDocument, VaultConfig},
+    index::{FolderDocument, FolderSubfolder, VaultConfig},
     write, Error, Result,
 };
 
@@ -16,7 +16,7 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
     })?;
     let root_index: VaultConfig =
         toml::from_str(&root_index_text).map_err(|source| Error::TomlParse {
-            path: root_index_path,
+            path: root_index_path.clone(),
             source,
         })?;
 
@@ -25,72 +25,114 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
             continue;
         }
         let folder_path = root.join(folder);
-        if !folder_path.exists() {
+        if folder_path.exists() {
+            rebuild_folder_recursive(&folder_path, document_type)?;
+        }
+    }
+
+    update_root_updated_at(&root_index_path, &root_index_text)?;
+
+    Ok(())
+}
+
+fn rebuild_folder_recursive(folder_path: &Path, document_type: &str) -> Result<Option<String>> {
+    if !folder_path.join("index.md").exists() || !folder_path.join("index.toml").exists() {
+        return Ok(None);
+    }
+
+    let mut subfolders = Vec::new();
+    for entry in fs::read_dir(folder_path).map_err(|source| Error::Io {
+        path: folder_path.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| Error::Io {
+            path: folder_path.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(folder_checksum) = rebuild_folder_recursive(&path, document_type)? {
+            subfolders.push(FolderSubfolder {
+                name,
+                folder_checksum,
+            });
+        }
+    }
+    subfolders.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let folder_index_path = folder_path.join("index.toml");
+    let existing_folder_index = fs::read_to_string(&folder_index_path).unwrap_or_default();
+    let (name, description, default_type) =
+        parse_folder_index_header(&existing_folder_index, folder_path);
+
+    let mut markdown_paths = Vec::new();
+    for entry in fs::read_dir(folder_path).map_err(|source| Error::Io {
+        path: folder_path.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| Error::Io {
+            path: folder_path.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_file()
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+            || path.file_name().and_then(|name| name.to_str()) == Some("index.md")
+        {
+            continue;
+        }
+        markdown_paths.push(path);
+    }
+    markdown_paths.sort();
+
+    let mut documents = Vec::new();
+    for markdown_path in markdown_paths {
+        let Some(slug) = markdown_path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let toml_path = folder_path.join(format!("{slug}.toml"));
+        if !toml_path.exists() {
             continue;
         }
 
-        let folder_index_path = folder_path.join("index.toml");
-        let existing_folder_index = fs::read_to_string(&folder_index_path).unwrap_or_default();
-        let (name, description, default_type) =
-            parse_folder_index_header(&existing_folder_index, folder);
-
-        let mut documents = Vec::new();
-        let mut markdown_paths = Vec::new();
-        for entry in fs::read_dir(&folder_path).map_err(|source| Error::Io {
-            path: folder_path.clone(),
-            source,
-        })? {
-            let entry = entry.map_err(|source| Error::Io {
-                path: folder_path.clone(),
-                source,
-            })?;
-            let path = entry.path();
-            if !path.is_file()
-                || path.extension().and_then(|extension| extension.to_str()) != Some("md")
-                || path.file_name().and_then(|name| name.to_str()) == Some("index.md")
-            {
-                continue;
-            }
-            markdown_paths.push(path);
-        }
-        markdown_paths.sort();
-
-        for markdown_path in markdown_paths {
-            let Some(slug) = markdown_path.file_stem().and_then(|stem| stem.to_str()) else {
-                continue;
-            };
-            let toml_path = folder_path.join(format!("{slug}.toml"));
-            if !toml_path.exists() {
-                continue;
-            }
-
-            let markdown_file_name = format!("{slug}.md");
-            let toml_file_name = format!("{slug}.toml");
-            let markdown_checksum = checksum::blake3_file(&markdown_path)?;
-            update_document_markdown_checksum(&toml_path, &markdown_file_name, &markdown_checksum)?;
-            let toml_checksum = checksum::blake3_file(&toml_path)?;
-            documents.push(FolderDocument {
-                slug: slug.to_owned(),
-                markdown: markdown_file_name,
-                toml: toml_file_name,
-                markdown_checksum,
-                toml_checksum,
-            });
-        }
-
-        let folder_checksum = checksum::folder_checksum(&documents);
-        write_folder_index(
-            &folder_index_path,
-            document_type,
-            &name,
-            description.as_deref(),
-            default_type.as_deref(),
-            &folder_checksum,
-            &documents,
-        )?;
+        let markdown_file_name = format!("{slug}.md");
+        let toml_file_name = format!("{slug}.toml");
+        let markdown_checksum = checksum::blake3_file(&markdown_path)?;
+        update_document_markdown_checksum(&toml_path, &markdown_file_name, &markdown_checksum)?;
+        let toml_checksum = checksum::blake3_file(&toml_path)?;
+        documents.push(FolderDocument {
+            slug: slug.to_owned(),
+            markdown: markdown_file_name,
+            toml: toml_file_name,
+            markdown_checksum,
+            toml_checksum,
+        });
     }
+    documents.sort_by(|left, right| left.slug.cmp(&right.slug));
 
-    Ok(())
+    let checksum_subfolders = subfolders
+        .iter()
+        .map(|subfolder| SubfolderChecksum {
+            name: subfolder.name.clone(),
+            folder_checksum: subfolder.folder_checksum.clone(),
+        })
+        .collect::<Vec<_>>();
+    let folder_checksum = checksum::folder_checksum_recursive(&documents, &checksum_subfolders);
+    write_folder_index(
+        &folder_index_path,
+        document_type,
+        &name,
+        description.as_deref(),
+        default_type.as_deref(),
+        &folder_checksum,
+        &documents,
+        &subfolders,
+    )?;
+
+    Ok(Some(folder_checksum))
 }
 
 fn update_document_markdown_checksum(
@@ -123,15 +165,39 @@ fn update_document_markdown_checksum(
     write::atomic_write_string(toml_path, &updated)
 }
 
-fn parse_folder_index_header(text: &str, folder: &str) -> (String, Option<String>, Option<String>) {
+fn update_root_updated_at(path: &Path, text: &str) -> Result<()> {
+    let mut value: toml::Value = toml::from_str(text).map_err(|source| Error::TomlParse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let table = value.as_table_mut().expect("vault TOML root must be table");
+    table.insert(
+        "updated_at".to_owned(),
+        toml::Value::String(unix_timestamp_string()),
+    );
+    let updated = toml::to_string_pretty(&value).expect("serialize vault TOML");
+    write::atomic_write_string(path, &updated)
+}
+
+fn unix_timestamp_string() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_owned())
+}
+
+fn parse_folder_index_header(
+    text: &str,
+    folder_path: &Path,
+) -> (String, Option<String>, Option<String>) {
     let Ok(value) = toml::from_str::<toml::Value>(text) else {
-        return (title_case(folder), None, None);
+        return (title_case(folder_path), None, None);
     };
     let name = value
         .get("name")
         .and_then(toml::Value::as_str)
         .map(str::to_owned)
-        .unwrap_or_else(|| title_case(folder));
+        .unwrap_or_else(|| title_case(folder_path));
     let description = value
         .get("description")
         .and_then(toml::Value::as_str)
@@ -143,6 +209,7 @@ fn parse_folder_index_header(text: &str, folder: &str) -> (String, Option<String
     (name, description, default_type)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_folder_index(
     path: &Path,
     document_type: &str,
@@ -151,6 +218,7 @@ fn write_folder_index(
     default_type: Option<&str>,
     folder_checksum: &str,
     documents: &[FolderDocument],
+    subfolders: &[FolderSubfolder],
 ) -> Result<()> {
     let mut output = String::new();
     output.push_str(&format!("type = \"{document_type}\"\n"));
@@ -176,10 +244,23 @@ fn write_folder_index(
         output.push_str(&format!("toml_checksum = \"{}\"\n", document.toml_checksum));
     }
 
+    for subfolder in subfolders {
+        output.push_str("\n[[subfolders]]\n");
+        output.push_str(&format!("name = \"{}\"\n", subfolder.name));
+        output.push_str(&format!(
+            "folder_checksum = \"{}\"\n",
+            subfolder.folder_checksum
+        ));
+    }
+
     write::atomic_write_string(path, &output)
 }
 
-fn title_case(value: &str) -> String {
+fn title_case(path: &Path) -> String {
+    let value = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("folder");
     let spaced = value.replace('-', " ");
     let mut chars = spaced.chars();
     match chars.next() {
@@ -284,6 +365,49 @@ last_updated_by = "human"
         assert!(folder_index.contains("markdown = \"kataan-redesign.md\""));
         assert!(folder_index.contains("toml = \"kataan-redesign.toml\""));
         assert!(folder_index.contains("folder_checksum = \"blake3:"));
+
+        let report = validate(&root).unwrap();
+        assert!(report.is_ok(), "{:#?}", report.diagnostics);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rebuilds_nested_subfolders_post_order() {
+        let root = unique_temp_dir();
+        crate::init::init_vault(&root, "Nested Vault").unwrap();
+        fs::create_dir_all(root.join("projects/snappy/sows")).unwrap();
+        fs::write(root.join("projects/snappy/index.md"), "# Snappy\n").unwrap();
+        fs::write(
+            root.join("projects/snappy/index.toml"),
+            "type = \"project\"\nname = \"Snappy\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("projects/snappy/sows/index.md"), "# SOWs\n").unwrap();
+        fs::write(
+            root.join("projects/snappy/sows/index.toml"),
+            "type = \"project\"\nname = \"SOWs\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("projects/snappy/sows/demo.md"), "# Demo\n").unwrap();
+        fs::write(
+            root.join("projects/snappy/sows/demo.toml"),
+            "type = \"project\"\nmarkdown = \"demo.md\"\n",
+        )
+        .unwrap();
+
+        rebuild_indexes(&root).unwrap();
+
+        let projects_index = fs::read_to_string(root.join("projects/index.toml")).unwrap();
+        let snappy_index = fs::read_to_string(root.join("projects/snappy/index.toml")).unwrap();
+        let sows_index = fs::read_to_string(root.join("projects/snappy/sows/index.toml")).unwrap();
+
+        assert!(projects_index.contains("[[subfolders]]"));
+        assert!(projects_index.contains("name = \"snappy\""));
+        assert!(snappy_index.contains("[[subfolders]]"));
+        assert!(snappy_index.contains("name = \"sows\""));
+        assert!(sows_index.contains("[[documents]]"));
+        assert!(sows_index.contains("slug = \"demo\""));
 
         let report = validate(&root).unwrap();
         assert!(report.is_ok(), "{:#?}", report.diagnostics);

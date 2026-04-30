@@ -281,6 +281,7 @@ pub async fn folder(
         default_type: Some(record.metadata.r#type.clone()),
         folder_checksum: None,
         documents: Vec::new(),
+        subfolders: Vec::new(),
     };
 
     Ok(Json(FolderResponse {
@@ -638,6 +639,7 @@ fn filesystem_folder_response(state: &AppState, folder: &str) -> Result<FolderRe
             default_type: response.metadata.map(|metadata| metadata.r#type),
             folder_checksum: None,
             documents: Vec::new(),
+            subfolders: Vec::new(),
         },
         documents: response.documents,
     })
@@ -797,6 +799,7 @@ fn empty_code_folder_index(id: &str) -> kataan_core::index::FolderIndex {
         default_type: Some("code".to_owned()),
         folder_checksum: None,
         documents: Vec::new(),
+        subfolders: Vec::new(),
     }
 }
 

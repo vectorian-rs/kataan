@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    checksum,
+    checksum::{self, SubfolderChecksum},
     constants::{
         is_code_folder, ACTOR_VALUES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES, TYPE_DEFINITION,
         VAULT_CONFIG_FILE,
@@ -14,7 +14,7 @@ use crate::{
     diagnostic_codes as codes,
     document::DocumentMetadata,
     id::CanonicalId,
-    index::{FolderDocument, FolderIndex},
+    index::{FolderDocument, FolderIndex, FolderSubfolder},
     ontology::{type_allowed, Ontology},
     types::TypeRegistry,
     vault::Vault,
@@ -556,6 +556,17 @@ fn validate_nested_folder_recursive(
             .is_some_and(|stem| markdown_slugs.contains(stem))
     });
 
+    if let Some(folder_index) = read_folder_index_if_present(folder_path)? {
+        validate_folder_index(
+            issues,
+            &relative,
+            folder_path,
+            &folder_index,
+            &markdown_slugs,
+            &toml_slugs,
+        )?;
+    }
+
     for (toml_path, relative_toml_path) in document_toml_files {
         validate_document_metadata(
             issues,
@@ -736,6 +747,20 @@ fn validate_document_metadata(
     Ok(())
 }
 
+fn read_folder_index_if_present(folder_path: &Path) -> Result<Option<FolderIndex>> {
+    let path = folder_path.join("index.toml");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path).map_err(|source| crate::Error::Io {
+        path: path.clone(),
+        source,
+    })?;
+    toml::from_str::<FolderIndex>(&text)
+        .map(Some)
+        .map_err(|source| crate::Error::TomlParse { path, source })
+}
+
 fn validate_folder_index(
     issues: &mut Vec<Diagnostic>,
     folder: &str,
@@ -766,6 +791,34 @@ fn validate_folder_index(
             Diagnostic::warning(
                 codes::INDEX_DRIFT,
                 "Folder index contains a stale document entry",
+            )
+            .with_path(format!("{folder}/index.toml")),
+        );
+    }
+
+    let actual_subfolders = actual_subfolders(folder_path)?;
+    let indexed_subfolders = folder_index
+        .subfolders
+        .iter()
+        .map(|subfolder| subfolder.name.clone())
+        .collect::<BTreeSet<_>>();
+    let actual_subfolder_names = actual_subfolders
+        .iter()
+        .map(|subfolder| subfolder.name.clone())
+        .collect::<BTreeSet<_>>();
+
+    for name in actual_subfolder_names.difference(&indexed_subfolders) {
+        issues.push(
+            Diagnostic::warning(codes::INDEX_DRIFT, "Subfolder is missing from folder index")
+                .with_path(format!("{folder}/{name}/index.toml")),
+        );
+    }
+
+    for name in indexed_subfolders.difference(&actual_subfolder_names) {
+        issues.push(
+            Diagnostic::warning(
+                codes::INDEX_DRIFT,
+                format!("Folder index contains stale subfolder entry `{name}`"),
             )
             .with_path(format!("{folder}/index.toml")),
         );
@@ -811,7 +864,15 @@ fn validate_folder_index(
     }
 
     if let Some(expected_folder_checksum) = &folder_index.folder_checksum {
-        let actual_folder_checksum = checksum::folder_checksum(&actual_documents);
+        let checksum_subfolders = actual_subfolders
+            .iter()
+            .map(|subfolder| SubfolderChecksum {
+                name: subfolder.name.clone(),
+                folder_checksum: subfolder.folder_checksum.clone(),
+            })
+            .collect::<Vec<_>>();
+        let actual_folder_checksum =
+            checksum::folder_checksum_recursive(&actual_documents, &checksum_subfolders);
         if &actual_folder_checksum != expected_folder_checksum {
             issues.push(
                 Diagnostic::error(
@@ -824,6 +885,33 @@ fn validate_folder_index(
     }
 
     Ok(())
+}
+
+fn actual_subfolders(folder_path: &Path) -> Result<Vec<FolderSubfolder>> {
+    let mut subfolders = Vec::new();
+    for entry in fs::read_dir(folder_path).map_err(|source| crate::Error::Io {
+        path: folder_path.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| crate::Error::Io {
+            path: folder_path.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_dir() || !path.join("index.md").exists() || !path.join("index.toml").exists() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let index = read_folder_index_if_present(&path)?;
+        if let Some(folder_checksum) = index.and_then(|index| index.folder_checksum) {
+            subfolders.push(FolderSubfolder {
+                name,
+                folder_checksum,
+            });
+        }
+    }
+    subfolders.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(subfolders)
 }
 
 #[cfg(test)]
