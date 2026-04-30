@@ -25,6 +25,7 @@ const { title = 'Kataan' } = Astro.props;
         const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
         document.documentElement.dataset.theme = next;
         localStorage.setItem('theme', next);
+        window.dispatchEvent(new CustomEvent('kataan:theme-change', { detail: { theme: next } }));
       });
     </script>
   </body>

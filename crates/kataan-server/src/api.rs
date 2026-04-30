@@ -123,6 +123,7 @@ pub struct IdQuery {
 #[derive(Debug, Deserialize)]
 pub struct FileQuery {
     pub path: String,
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -314,7 +315,7 @@ pub async fn highlight_file_by_path(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<HighlightResponse>, ApiError> {
-    highlight_response(&state, &query.path).map(Json)
+    highlight_response(&state, &query.path, query.theme.as_deref()).map(Json)
 }
 
 pub async fn resolve_route(
@@ -413,12 +414,16 @@ fn file_response(state: &AppState, path: &str) -> Result<FileResponse, ApiError>
     })
 }
 
-fn highlight_response(state: &AppState, path: &str) -> Result<HighlightResponse, ApiError> {
+fn highlight_response(
+    state: &AppState,
+    path: &str,
+    theme_preference: Option<&str>,
+) -> Result<HighlightResponse, ApiError> {
     let file = resolve_vault_file(state, path)?;
     let (language_name, language) = highlight_language(file.extension.as_deref())
         .ok_or_else(|| ApiError(anyhow::anyhow!("file `{path}` cannot be highlighted")))?;
     let content = read_text_file(&file.full_path)?;
-    let theme = lumis::themes::get("catppuccin_mocha")
+    let theme = lumis::themes::get(highlight_theme(theme_preference))
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
     let formatter = lumis::HtmlInlineBuilder::new()
         .language(language)
@@ -492,6 +497,13 @@ fn file_kind(extension: Option<&str>) -> &'static str {
             "md" | "txt" | "toml" | "rs" | "ts" | "js" | "sh" | "bash" | "yaml" | "yml" | "py",
         ) => "text",
         _ => "unsupported",
+    }
+}
+
+fn highlight_theme(theme_preference: Option<&str>) -> &'static str {
+    match theme_preference {
+        Some("light") => "github_light",
+        _ => "catppuccin_mocha",
     }
 }
 

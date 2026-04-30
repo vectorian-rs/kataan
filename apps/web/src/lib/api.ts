@@ -132,8 +132,10 @@ export async function getFile(path: string) {
   return getJson<FileResponse>(`/api/file?path=${encodeURIComponent(path)}`);
 }
 
-export async function getHighlightedFile(path: string) {
-  return getJson<HighlightResponse>(`/api/file/highlight?path=${encodeURIComponent(path)}`);
+export async function getHighlightedFile(path: string, theme?: string) {
+  const params = new URLSearchParams({ path });
+  if (theme) params.set('theme', theme);
+  return getJson<HighlightResponse>(`/api/file/highlight?${params.toString()}`);
 }
 
 export async function resolveRoute(type: string, token: string) {

@@ -56,6 +56,7 @@ const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
 
 let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
+let selectedFile: FolderFile | null = null;
 const loadedFolderIds = new Set<string>();
 
 validateButton.addEventListener('click', async () => {
@@ -70,6 +71,12 @@ rebuildButton.addEventListener('click', async () => {
     await loadFolders();
     renderDiagnostics(await validateVault());
   });
+});
+
+window.addEventListener('kataan:theme-change', () => {
+  if (selectedFile) {
+    void runAction(() => selectFile(selectedFile as FolderFile));
+  }
 });
 
 await runAction(async () => {
@@ -267,9 +274,10 @@ function renderFileRow(file: FolderFile) {
 
 async function selectFile(file: FolderFile) {
   selectedDocument = null;
+  selectedFile = file;
   updateActiveRows();
   try {
-    const highlighted = await getHighlightedFile(file.path);
+    const highlighted = await getHighlightedFile(file.path, currentTheme());
     breadcrumb.textContent = highlighted.path.replaceAll('/', ' › ');
     documentTitle.textContent = highlighted.name;
     renderHighlightedFile(highlighted.html);
@@ -279,6 +287,10 @@ async function selectFile(file: FolderFile) {
     documentTitle.textContent = vaultFile.name;
     renderFileBody(vaultFile);
   }
+}
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 }
 
 function renderHighlightedFile(html: string) {
@@ -324,6 +336,7 @@ function renderFileBody(file: FileResponse) {
 async function selectDocument(id: string, options: { updateUrl?: boolean } = {}) {
   const updateUrl = options.updateUrl ?? true;
   selectedDocument = id;
+  selectedFile = null;
   updateActiveRows();
 
   const vaultDocument = await getDocument(id);
