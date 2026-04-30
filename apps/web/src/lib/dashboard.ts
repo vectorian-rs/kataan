@@ -3,6 +3,7 @@ import {
   Boxes,
   Circle,
   Code,
+  File,
   FileText,
   FolderKanban,
   Lightbulb,
@@ -25,6 +26,7 @@ import {
   type DocumentResponse,
   type FolderChild,
   type FolderDocument,
+  type FolderFile,
   type FolderSummary,
   type TomlSchemaResponse,
   type ValidateResponse,
@@ -131,16 +133,12 @@ async function selectFolder(folder: string, options: { selectFirst?: boolean } =
   folderTitle.textContent = folderTitleFromResponse(response.id, response.metadata);
   renderChildFolders(folder, response.folders);
 
+  renderFolderContents(response.documents, response.files, response.folders.length > 0);
   if (response.documents.length === 0) {
-    documentsEl.className = 'list muted section';
-    documentsEl.textContent = response.folders.length === 0 ? 'No documents.' : 'Select a nested folder.';
     selectedDocument = null;
     updateActiveRows();
     return;
   }
-
-  documentsEl.className = 'list';
-  documentsEl.replaceChildren(...response.documents.map(renderDocumentButton));
   if (selectFirst) {
     await selectDocument(response.documents[0].id);
   }
@@ -182,6 +180,39 @@ function renderChildFolderButton(folder: FolderChild, depth: number) {
   return button;
 }
 
+function renderFolderContents(documents: FolderDocument[], files: FolderFile[], hasChildFolders: boolean) {
+  const children: HTMLElement[] = [];
+
+  children.push(listSection('Documents', documents.length > 0 ? documents.map(renderDocumentButton) : [emptyListNote(hasChildFolders ? 'Select a nested folder or open a file.' : 'No documents.')]));
+  children.push(listSection('Files', files.length > 0 ? files.map(renderFileRow) : [emptyListNote('No files.')]));
+
+  documentsEl.className = 'folder-contents';
+  documentsEl.replaceChildren(...children);
+}
+
+function listSection(title: string, rows: HTMLElement[]) {
+  const section = document.createElement('section');
+  section.className = 'content-list-section';
+
+  const heading = document.createElement('h3');
+  heading.className = 'section-heading';
+  heading.textContent = title;
+
+  const list = document.createElement('div');
+  list.className = 'list';
+  list.replaceChildren(...rows);
+
+  section.append(heading, list);
+  return section;
+}
+
+function emptyListNote(text: string) {
+  const note = document.createElement('div');
+  note.className = 'muted empty-list-note';
+  note.textContent = text;
+  return note;
+}
+
 function renderDocumentButton(vaultDocument: FolderDocument) {
   const button = clickableRow('document-row');
   button.dataset.document = vaultDocument.id;
@@ -196,6 +227,47 @@ function renderDocumentButton(vaultDocument: FolderDocument) {
   button.append(title, meta);
   button.addEventListener('click', () => runAction(() => selectDocument(vaultDocument.id)));
   return button;
+}
+
+function renderFileRow(file: FolderFile) {
+  const row = clickableRow('file-row');
+
+  const title = document.createElement('strong');
+  title.textContent = file.name;
+
+  const meta = document.createElement('span');
+  meta.className = 'muted';
+  meta.textContent = file.extension ? `${file.extension.toUpperCase()} · ${file.path}` : file.path;
+
+  const icon = document.createElement('span');
+  icon.className = 'file-icon';
+  icon.append(createElement(File, { width: 16, height: 16, 'stroke-width': 2 }));
+
+  const text = document.createElement('span');
+  text.className = 'file-text';
+  text.append(title, meta);
+
+  row.append(icon, text);
+  row.addEventListener('click', () => showFilePlaceholder(file));
+  return row;
+}
+
+function showFilePlaceholder(file: FolderFile) {
+  selectedDocument = null;
+  updateActiveRows();
+  breadcrumb.textContent = file.path.replaceAll('/', ' › ');
+  documentTitle.textContent = file.name;
+  documentBody.className = 'reader-body empty-state';
+  documentBody.innerHTML = '';
+
+  const card = document.createElement('div');
+  card.className = 'empty-card';
+  const title = document.createElement('strong');
+  title.textContent = 'File preview not available yet';
+  const detail = document.createElement('span');
+  detail.textContent = file.path;
+  card.append(title, detail);
+  documentBody.append(card);
 }
 
 async function selectDocument(id: string, options: { updateUrl?: boolean } = {}) {

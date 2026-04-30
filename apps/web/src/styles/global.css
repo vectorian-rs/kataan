@@ -308,7 +308,26 @@ button:focus-visible,
   filter: brightness(1.04);
 }
 
-.document-row {
+.folder-contents {
+  display: grid;
+}
+
+.content-list-section {
+  padding-block: var(--size-3);
+  border-block-end: 1px solid var(--border);
+}
+
+.content-list-section:last-child {
+  border-block-end: 0;
+}
+
+.empty-list-note {
+  padding: var(--size-2) var(--size-4);
+  font-size: var(--font-size-0);
+}
+
+.document-row,
+.file-row {
   display: grid;
   gap: var(--size-1);
   padding: var(--size-3) var(--size-4);
@@ -316,31 +335,57 @@ button:focus-visible,
   border-block-end: 1px solid var(--border);
 }
 
+.file-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.file-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-2);
+}
+
+.file-text {
+  display: grid;
+  gap: var(--size-1);
+  min-inline-size: 0;
+}
+
 .document-row strong,
-.document-row span {
+.document-row span,
+.file-row strong,
+.file-row span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: transform 0.15s ease;
 }
 
-.document-row strong {
+.document-row strong,
+.file-row strong {
   color: var(--text-1);
   font-size: 13px;
   font-weight: var(--font-weight-7);
 }
 
-.document-row span {
+.document-row span,
+.file-row span {
   color: var(--text-2);
   font-size: var(--font-size-0);
 }
 
-.document-row:hover strong {
+.document-row:hover strong,
+.file-row:hover strong {
   transform: translateX(2px);
 }
 
 .document-row.active {
   border-inline-start-color: var(--accent);
+}
+
+.file-row:hover {
+  color: var(--accent);
 }
 
 .content-shell {

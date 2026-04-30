@@ -28,6 +28,12 @@ export type FolderDocument = {
   toml: string;
 };
 
+export type FolderFile = {
+  name: string;
+  path: string;
+  extension?: string;
+};
+
 export type FolderResponse = {
   folder: string;
   index: {
@@ -45,6 +51,7 @@ export type CanonicalFolderResponse = {
   markdown?: string;
   folders: FolderChild[];
   documents: FolderDocument[];
+  files: FolderFile[];
 };
 
 export type DocumentResponse = {

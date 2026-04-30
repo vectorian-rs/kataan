@@ -47,6 +47,7 @@ pub struct CanonicalFolderResponse {
     pub markdown: Option<String>,
     pub folders: Vec<FolderChildResponse>,
     pub documents: Vec<FolderDocumentResponse>,
+    pub files: Vec<FolderFileResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +63,13 @@ pub struct FolderDocumentResponse {
     pub slug: String,
     pub markdown: String,
     pub toml: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FolderFileResponse {
+    pub name: String,
+    pub path: String,
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -369,6 +377,7 @@ fn canonical_folder_response(
                     markdown: None,
                     folders: direct_code_folders(state, id.as_str())?,
                     documents: Vec::new(),
+                    files: folder_files(state, &id, &[])?,
                 });
             }
             return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
@@ -381,6 +390,7 @@ fn canonical_folder_response(
         (record.clone(), folders, documents, record.markdown_path)
     };
     let markdown = std::fs::read_to_string(&markdown_path).ok();
+    let files = folder_files(state, &id, &documents)?;
 
     Ok(CanonicalFolderResponse {
         id: id.as_str().to_owned(),
@@ -388,6 +398,7 @@ fn canonical_folder_response(
         markdown,
         folders,
         documents,
+        files,
     })
 }
 
@@ -461,6 +472,7 @@ fn filesystem_canonical_folder_response(
             markdown: None,
             folders: direct_code_folders(state, id.as_str())?,
             documents: Vec::new(),
+            files: folder_files(state, id, &[])?,
         });
     }
 
@@ -514,6 +526,7 @@ fn filesystem_canonical_folder_response(
 
     folders.sort_by(|left, right| left.id.cmp(&right.id));
     documents.sort_by(|left, right| left.id.cmp(&right.id));
+    let files = folder_files(state, id, &documents)?;
 
     Ok(CanonicalFolderResponse {
         id: id.as_str().to_owned(),
@@ -521,7 +534,50 @@ fn filesystem_canonical_folder_response(
         markdown,
         folders,
         documents,
+        files,
     })
+}
+
+fn folder_files(
+    state: &AppState,
+    id: &kataan_core::id::CanonicalId,
+    documents: &[FolderDocumentResponse],
+) -> Result<Vec<FolderFileResponse>, ApiError> {
+    let folder_path = state.vault_path.join(id.as_str());
+    let document_sidecars = documents
+        .iter()
+        .flat_map(|document| [document.markdown.as_str(), document.toml.as_str()])
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut files = Vec::new();
+
+    for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
+        path: folder_path.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| kataan_core::Error::Io {
+            path: folder_path.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "index.md" || name == "index.toml" || document_sidecars.contains(name.as_str()) {
+            continue;
+        }
+        files.push(FolderFileResponse {
+            extension: path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::to_owned),
+            path: format!("{}/{}", id.as_str(), name),
+            name,
+        });
+    }
+
+    files.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(files)
 }
 
 fn read_document_metadata_if_valid(
