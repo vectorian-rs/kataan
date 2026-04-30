@@ -115,12 +115,14 @@ type-definition = "type"
 
 ## File model
 
-Each content item usually has two files:
+A first-class Kataan document exists only when a Markdown file and a matching TOML sidecar exist in the same folder with the exact same basename:
 
 ```txt
 my-amazing-project.md
 my-amazing-project.toml
 ```
+
+This pair forms one vault node with canonical ID `.../my-amazing-project`. The TOML file is metadata and is not shown as a separate file in the UI.
 
 The Markdown file contains the human-readable content:
 
@@ -150,15 +152,36 @@ created_by = "human"
 last_updated_by = "agent"
 ```
 
-Attachments live next to the Markdown and TOML files when practical:
+Anything that is not a valid Markdown+TOML pair is a regular file/artifact, not a vault document. This includes JSON, spreadsheets, images, PDFs, text files, standalone TOML files, and standalone Markdown files without a sidecar.
+
+Artifacts live next to documents when practical:
 
 ```txt
 projects/
 ├── kataan-redesign.md
 ├── kataan-redesign.toml
 ├── kataan-redesign-sketch.png
-└── kataan-redesign-brief.pdf
+├── kataan-redesign-brief.pdf
+├── scoping-structured.json
+└── allocation-matrix.xlsx
 ```
+
+In folder views, documents and files are displayed separately:
+
+```txt
+Documents
+---------
+Kataan Redesign
+Scoping Call
+
+Files
+-----
+scoping-structured.json
+allocation-matrix.xlsx
+kataan-redesign-sketch.png
+```
+
+Matching TOML sidecars are hidden from the Files section. A standalone TOML file without a matching Markdown file is shown as a regular file/artifact.
 
 ## Folder and type mapping
 
@@ -261,7 +284,7 @@ Folder index subfolder fields:
 
 Each document has a canonical ID based on its vault-relative Unix path without extension. IDs never have a leading slash, always use `/` separators even on Windows, and are normalized at load time.
 
-Folder index documents use the folder path directly. Regular documents use `folder/slug`.
+Folder index documents use the folder path directly. Regular documents use `folder/slug`. Standalone files/artifacts are addressable by path for preview/download purposes, but they are not canonical document IDs and are not graph nodes.
 
 ```txt
 projects
@@ -279,7 +302,7 @@ related_to = ["topics/knowledge-bases"]
 derived_from = ["raw/pasted-chat-about-ai-kbs"]
 ```
 
-Filenames are preserved exactly as authored. Canonical IDs allow mixed-case URL-safe path segments, so externally meaningful names such as `projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429` are valid and map to files such as `HU-otp-travel-POC-SOW1-260429.md`. Kataan must not silently lowercase or rename user files. The Markdown file, TOML sidecar, and index entry all share the same slug and case.
+Filenames are preserved exactly as authored. Canonical IDs allow mixed-case URL-safe path segments, so externally meaningful names such as `projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429` are valid and map to files such as `HU-otp-travel-POC-SOW1-260429.md`. Kataan must not silently lowercase or rename user files. For documents, the Markdown file, TOML sidecar, and index entry all share the same slug and case.
 
 Because canonical IDs are path-based and case-sensitive, rename and move operations must update the Markdown file, TOML sidecar, containing folder indexes, checksums, and references to the old canonical ID. Validation should detect case-insensitive collisions for cross-platform safety.
 
@@ -741,9 +764,9 @@ Example diagnostic:
 
 ```toml
 severity = "error"
-code = "missing-toml-sidecar"
-path = "projects/kataan-redesign.md"
-message = "Markdown file is missing a matching TOML sidecar."
+code = "invalid-toml"
+path = "projects/kataan-redesign.toml"
+message = "TOML metadata is invalid for a Markdown+TOML document pair."
 ```
 
 Diagnostic codes use lowercase kebab-case and should be stable enough for tools and UI filters.

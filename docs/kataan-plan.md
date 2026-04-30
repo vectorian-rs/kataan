@@ -28,7 +28,7 @@ Implement in `crates/kataan-core`.
 
 - Load root `kataan.toml`.
 - Load every document folder's `index.md` and `index.toml` files, including intermediate document folders; skip the special `code/` tool folder.
-- Load document TOML sidecars.
+- Load first-class documents only from Markdown files that have exact matching TOML sidecars in the same folder.
 - Build metadata-only `DocumentRecord` values containing paths, metadata, ancestors, facets, checksums, and folder-document marker.
 - Do not load full Markdown bodies into `LoadedVault`; read Markdown on demand from `markdown_path`.
 - Preserve unknown TOML fields where practical or avoid rewriting document TOML until needed.
@@ -101,8 +101,8 @@ Validation should check:
 - Root `kataan.toml` exists and has `schema_version`.
 - Required type folders exist.
 - Every document folder has `index.md` and `index.toml`; the special `code/` folder is exempt because it stores agent/tool code instead of Markdown/TOML document pairs.
-- Every `.md` document has a matching `.toml` sidecar outside the special `code/` folder.
-- Every document TOML has `markdown` pointing to the matching Markdown file.
+- Every Markdown+TOML document pair has TOML metadata with `markdown` pointing to the matching Markdown file.
+- Standalone Markdown files and standalone TOML files are regular files/artifacts, not document nodes. They should be visible in file listings but not loaded into the graph.
 - `markdown_checksum` matches exact Markdown bytes.
 - Document `type` is known.
 - Document top-level folder matches the type-folder mapping.
@@ -114,7 +114,7 @@ Validation should check:
 - The source document type is allowed by the predicate `from` list, or `from = ["*"]`.
 - Every edge target canonical ID resolves to an existing document.
 - Every target document type is allowed by the predicate `to` list, or `to = ["*"]`.
-- `index.toml` document entries and document-subfolder entries match files in the folder.
+- `index.toml` document entries include only valid Markdown+TOML document pairs and document-subfolder entries match child document folders.
 - Folder `markdown_checksum`, `toml_checksum`, document-subfolder checksums, and recursive `folder_checksum` values are correct for document folders; `code/` is excluded from Merkle/index checks.
 
 CLI behavior:
@@ -139,7 +139,7 @@ Example diagnostic codes:
 
 - `missing-root-index`
 - `missing-folder-index`
-- `missing-toml-sidecar`
+- `incomplete-document-pair`
 - `missing-markdown-file`
 - `invalid-type`
 - `type-folder-mismatch`
@@ -164,8 +164,8 @@ kataan rebuild-indexes <vault>
 
 Should:
 
-- Recompute document `markdown_checksum` fields.
-- Rebuild every document folder's direct `[[documents]]` and `[[subfolders]]` entries.
+- Recompute document `markdown_checksum` fields for valid Markdown+TOML document pairs.
+- Rebuild every document folder's direct `[[documents]]` entries from valid pairs only and `[[subfolders]]` entries from document subfolders.
 - Recompute folder `markdown_checksum`, `toml_checksum`, document-subfolder checksums, and recursive `folder_checksum` values.
 - Exclude the special `code/` folder from document-pair checks, folder indexes, and Merkle checksums.
 - Update `updated_at` in root `kataan.toml`.
@@ -279,8 +279,11 @@ Initial UI:
 
 - Vault overview.
 - Folder list.
-- Document list per folder.
-- Markdown viewer.
+- Split second column per folder into `Documents` and `Files`.
+- Documents list shows Markdown+TOML pairs as first-class nodes and hides matching TOML sidecars.
+- Files list shows artifacts such as JSON, PDFs, spreadsheets, images, text files, standalone TOML, standalone Markdown, and any other non-document files.
+- Markdown viewer for documents.
+- File preview where practical: formatted JSON, Markdown preview for standalone Markdown, image preview, and fallback metadata/download/open externally for unknown or binary files.
 - Metadata panel.
 - Validation panel.
 - Button to run validation.
