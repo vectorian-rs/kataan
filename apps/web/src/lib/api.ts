@@ -62,6 +62,14 @@ export type DocumentResponse = {
   markdown: string;
 };
 
+export type FileResponse = {
+  path: string;
+  name: string;
+  extension?: string;
+  kind: 'json' | 'text' | 'unsupported';
+  content: string;
+};
+
 export type ResolveResponse = {
   id: string;
   folder: string;
@@ -109,6 +117,10 @@ export async function getFolder(id: string) {
 
 export async function getDocument(id: string) {
   return getJson<DocumentResponse>(`/api/document?id=${encodeURIComponent(id)}`);
+}
+
+export async function getFile(path: string) {
+  return getJson<FileResponse>(`/api/file?path=${encodeURIComponent(path)}`);
 }
 
 export async function resolveRoute(type: string, token: string) {

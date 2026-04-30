@@ -15,6 +15,7 @@ import { marked } from 'marked';
 
 import {
   getDocument,
+  getFile,
   getFolder,
   getFolders,
   getSchema,
@@ -26,6 +27,7 @@ import {
   type DocumentResponse,
   type FolderChild,
   type FolderDocument,
+  type FileResponse,
   type FolderFile,
   type FolderSummary,
   type TomlSchemaResponse,
@@ -248,22 +250,47 @@ function renderFileRow(file: FolderFile) {
   text.append(title, meta);
 
   row.append(icon, text);
-  row.addEventListener('click', () => showFilePlaceholder(file));
+  row.addEventListener('click', () => runAction(() => selectFile(file)));
   return row;
 }
 
-function showFilePlaceholder(file: FolderFile) {
+async function selectFile(file: FolderFile) {
   selectedDocument = null;
   updateActiveRows();
-  breadcrumb.textContent = file.path.replaceAll('/', ' › ');
-  documentTitle.textContent = file.name;
-  documentBody.className = 'reader-body empty-state';
+  const vaultFile = await getFile(file.path);
+  breadcrumb.textContent = vaultFile.path.replaceAll('/', ' › ');
+  documentTitle.textContent = vaultFile.name;
+  renderFileBody(vaultFile);
+}
+
+function renderFileBody(file: FileResponse) {
+  documentBody.className = 'reader-body';
   documentBody.innerHTML = '';
 
+  if (file.kind === 'json') {
+    const pre = document.createElement('pre');
+    pre.className = 'json-preview';
+    try {
+      pre.textContent = JSON.stringify(JSON.parse(file.content), null, 2);
+    } catch {
+      pre.textContent = file.content;
+    }
+    documentBody.append(pre);
+    return;
+  }
+
+  if (file.kind === 'text') {
+    const pre = document.createElement('pre');
+    pre.textContent = file.content;
+    documentBody.append(pre);
+    return;
+  }
+
+  documentBody.className = 'reader-body empty-state';
   const card = document.createElement('div');
   card.className = 'empty-card';
   const title = document.createElement('strong');
-  title.textContent = 'File preview not available yet';
+  title.textContent = 'Preview not available';
   const detail = document.createElement('span');
   detail.textContent = file.path;
   card.append(title, detail);
@@ -396,14 +423,20 @@ function metadataSection(title: string, children: HTMLElement[]) {
   const body = document.createElement('div');
   body.className = 'metadata-grid';
   if (children.length === 0) {
-    body.classList.add('muted');
-    body.textContent = 'None.';
+    body.replaceChildren(emptySectionNote('None.'));
   } else {
     body.replaceChildren(...children);
   }
 
   section.append(heading, body);
   return section;
+}
+
+function emptySectionNote(text: string) {
+  const note = document.createElement('div');
+  note.className = 'empty-section-note muted';
+  note.textContent = text;
+  return note;
 }
 
 function renderEdges(edges: unknown) {

@@ -82,6 +82,15 @@ pub struct DocumentResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct FileResponse {
+    pub path: String,
+    pub name: String,
+    pub extension: Option<String>,
+    pub kind: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ResolveResponse {
     pub id: String,
     pub folder: String,
@@ -99,6 +108,11 @@ pub struct ValidateResponse {
 #[derive(Debug, Deserialize)]
 pub struct IdQuery {
     pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileQuery {
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +136,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/folders", get(folders))
         .route("/api/folder", get(folder_by_id))
         .route("/api/document", get(document_by_id))
+        .route("/api/file", get(file_by_path))
         .route("/api/resolve", get(resolve_route))
         .route("/api/schema/:kind", get(schema))
         .route("/api/folders/:folder", get(folder))
@@ -264,6 +279,13 @@ pub async fn document_by_id(
     document_response(&state, &query.id).map(Json)
 }
 
+pub async fn file_by_path(
+    State(state): State<AppState>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<FileResponse>, ApiError> {
+    file_response(&state, &query.path).map(Json)
+}
+
 pub async fn resolve_route(
     State(state): State<AppState>,
     Query(query): Query<ResolveQuery>,
@@ -341,6 +363,52 @@ pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkRes
     state.reload().map_err(ApiError::from)?;
     info!(vault = %state.vault_path.display(), "reloaded vault after rebuild");
     Ok(Json(OkResponse { ok: true }))
+}
+
+fn file_response(state: &AppState, path: &str) -> Result<FileResponse, ApiError> {
+    let relative = std::path::Path::new(path);
+    if relative.is_absolute() || path.contains("..") {
+        return Err(ApiError(anyhow::anyhow!("invalid file path `{path}`")));
+    }
+    let full_path = state.vault_path.join(relative);
+    if !full_path.is_file() {
+        return Err(ApiError(anyhow::anyhow!("file `{path}` does not exist")));
+    }
+    let extension = full_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_owned);
+    let name = full_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path)
+        .to_owned();
+    let kind = match extension.as_deref() {
+        Some("json") => "json",
+        Some("md") | Some("txt") | Some("toml") => "text",
+        _ => "unsupported",
+    }
+    .to_owned();
+    let content = match kind.as_str() {
+        "json" | "text" => std::fs::read_to_string(&full_path).map_err(|source| {
+            ApiError(
+                kataan_core::Error::Io {
+                    path: full_path.clone(),
+                    source,
+                }
+                .into(),
+            )
+        })?,
+        _ => String::new(),
+    };
+
+    Ok(FileResponse {
+        path: path.to_owned(),
+        name,
+        extension,
+        kind,
+        content,
+    })
 }
 
 fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {

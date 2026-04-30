@@ -321,9 +321,14 @@ button:focus-visible,
   border-block-end: 0;
 }
 
-.empty-list-note {
+.empty-list-note,
+.empty-section-note {
   padding: var(--size-2) var(--size-4);
   font-size: var(--font-size-0);
+}
+
+.empty-section-note {
+  color: var(--text-2);
 }
 
 .document-row,
@@ -461,6 +466,12 @@ button:focus-visible,
   padding: var(--size-4);
   background: var(--surface-1);
   font-size: var(--font-size-1);
+}
+
+.json-preview {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  white-space: pre-wrap;
 }
 
 .reader-body table {
