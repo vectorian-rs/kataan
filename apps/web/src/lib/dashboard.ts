@@ -82,19 +82,23 @@ async function loadVault() {
   const vault = await getVault();
   vaultSummary.replaceChildren();
 
+  const product = document.createElement('span');
+  product.className = 'vault-product';
+  product.textContent = 'kataan:';
+
   const name = document.createElement('span');
   name.className = 'vault-name';
   name.textContent = vault.name;
 
-  const separator = document.createElement('span');
-  separator.className = 'vault-separator';
-  separator.textContent = '·';
+  const titleLine = document.createElement('span');
+  titleLine.className = 'vault-title-line';
+  titleLine.append(product, name);
 
   const schema = document.createElement('span');
   schema.className = 'vault-schema';
   schema.textContent = `schema ${vault.schema_version}`;
 
-  vaultSummary.append(name, separator, schema);
+  vaultSummary.append(titleLine, schema);
 }
 
 async function loadFolders() {

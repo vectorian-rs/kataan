@@ -107,6 +107,7 @@ button:focus-visible,
   min-block-size: 56px;
   padding-inline: var(--size-4);
   border-block-end: 1px solid var(--border);
+  min-inline-size: 0;
 }
 
 .panel-title {
@@ -120,33 +121,48 @@ button:focus-visible,
 
 .app-header {
   align-items: flex-start;
+  gap: var(--size-2);
   min-block-size: auto;
-  padding: var(--size-6) var(--size-4) var(--size-4);
+  padding: var(--size-4) var(--size-3);
+}
+
+.app-header > div {
+  min-inline-size: 0;
 }
 
 .app-header .icon-button {
-  margin-block-start: var(--size-2);
+  flex: 0 0 auto;
+  margin-block-start: 1px;
 }
 
 .app-title {
-  margin: 0 0 var(--size-3);
+  margin: 0 0 var(--size-2);
   color: var(--text-1);
   font-family: "DM Mono", var(--font-mono);
-  font-size: clamp(2.25rem, 4vw, 3.2rem);
+  font-size: clamp(1.35rem, 2.4vw, 1.75rem);
   font-weight: var(--font-weight-8);
-  letter-spacing: -0.08em;
-  line-height: 0.95;
+  letter-spacing: -0.06em;
+  line-height: 1;
 }
 
 .app-subtitle {
-  display: flex;
-  align-items: baseline;
-  gap: var(--size-2);
+  display: grid;
+  gap: 1px;
   min-inline-size: 0;
   color: var(--text-1);
-  font-size: var(--font-size-2);
-  line-height: var(--font-lineheight-2);
+  font-size: var(--font-size-0);
+  line-height: var(--font-lineheight-1);
+}
+
+.vault-title-line {
+  display: flex;
+  min-inline-size: 0;
   white-space: nowrap;
+}
+
+.vault-product {
+  flex: 0 0 auto;
+  color: var(--text-2);
 }
 
 .vault-name {
@@ -154,14 +170,10 @@ button:focus-visible,
   text-overflow: ellipsis;
 }
 
-.vault-separator,
 .vault-schema {
-  flex: 0 0 auto;
   color: var(--text-2);
-}
-
-.vault-schema {
-  font-size: var(--font-size-0);
+  font-size: var(--font-size-00);
+  text-transform: lowercase;
 }
 
 .muted {
