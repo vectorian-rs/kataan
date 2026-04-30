@@ -304,7 +304,7 @@ function renderMetadata(vaultDocument: DocumentResponse) {
       property('ID', vaultDocument.id),
       ...Object.entries(properties).map(([key, value]) => property(formatLabel(key), value)),
     ]),
-    metadataSection('Connected', renderEdges(edges)),
+    metadataSection('Edges', renderEdges(edges)),
     metadataSection('Internal', [
       property('Markdown', markdown),
       property('Markdown checksum', markdownChecksum),
