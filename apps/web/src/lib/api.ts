@@ -70,6 +70,14 @@ export type FileResponse = {
   content: string;
 };
 
+export type HighlightResponse = {
+  path: string;
+  name: string;
+  extension?: string;
+  language: string;
+  html: string;
+};
+
 export type ResolveResponse = {
   id: string;
   folder: string;
@@ -121,6 +129,10 @@ export async function getDocument(id: string) {
 
 export async function getFile(path: string) {
   return getJson<FileResponse>(`/api/file?path=${encodeURIComponent(path)}`);
+}
+
+export async function getHighlightedFile(path: string) {
+  return getJson<HighlightResponse>(`/api/file/highlight?path=${encodeURIComponent(path)}`);
 }
 
 export async function resolveRoute(type: string, token: string) {

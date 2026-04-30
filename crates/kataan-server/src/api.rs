@@ -91,6 +91,15 @@ pub struct FileResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct HighlightResponse {
+    pub path: String,
+    pub name: String,
+    pub extension: Option<String>,
+    pub language: String,
+    pub html: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ResolveResponse {
     pub id: String,
     pub folder: String,
@@ -137,6 +146,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/folder", get(folder_by_id))
         .route("/api/document", get(document_by_id))
         .route("/api/file", get(file_by_path))
+        .route("/api/file/highlight", get(highlight_file_by_path))
         .route("/api/resolve", get(resolve_route))
         .route("/api/schema/:kind", get(schema))
         .route("/api/folders/:folder", get(folder))
@@ -286,6 +296,13 @@ pub async fn file_by_path(
     file_response(&state, &query.path).map(Json)
 }
 
+pub async fn highlight_file_by_path(
+    State(state): State<AppState>,
+    Query(query): Query<FileQuery>,
+) -> Result<Json<HighlightResponse>, ApiError> {
+    highlight_response(&state, &query.path).map(Json)
+}
+
 pub async fn resolve_route(
     State(state): State<AppState>,
     Query(query): Query<ResolveQuery>,
@@ -366,8 +383,59 @@ pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkRes
 }
 
 fn file_response(state: &AppState, path: &str) -> Result<FileResponse, ApiError> {
+    let file = resolve_vault_file(state, path)?;
+    let kind = file_kind(file.extension.as_deref()).to_owned();
+    let content = match kind.as_str() {
+        "json" | "text" => read_text_file(&file.full_path)?,
+        _ => String::new(),
+    };
+
+    Ok(FileResponse {
+        path: path.to_owned(),
+        name: file.name,
+        extension: file.extension,
+        kind,
+        content,
+    })
+}
+
+fn highlight_response(state: &AppState, path: &str) -> Result<HighlightResponse, ApiError> {
+    let file = resolve_vault_file(state, path)?;
+    let (language_name, language) = highlight_language(file.extension.as_deref())
+        .ok_or_else(|| ApiError(anyhow::anyhow!("file `{path}` cannot be highlighted")))?;
+    let content = read_text_file(&file.full_path)?;
+    let theme = lumis::themes::get("catppuccin_mocha")
+        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    let formatter = lumis::HtmlInlineBuilder::new()
+        .language(language)
+        .theme(Some(theme))
+        .pre_class(Some("highlight-preview".to_owned()))
+        .build()
+        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    let html = lumis::highlight(&content, formatter);
+
+    Ok(HighlightResponse {
+        path: path.to_owned(),
+        name: file.name,
+        extension: file.extension,
+        language: language_name.to_owned(),
+        html,
+    })
+}
+
+struct ResolvedVaultFile {
+    full_path: std::path::PathBuf,
+    name: String,
+    extension: Option<String>,
+}
+
+fn resolve_vault_file(state: &AppState, path: &str) -> Result<ResolvedVaultFile, ApiError> {
     let relative = std::path::Path::new(path);
-    if relative.is_absolute() || path.contains("..") {
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
         return Err(ApiError(anyhow::anyhow!("invalid file path `{path}`")));
     }
     let full_path = state.vault_path.join(relative);
@@ -383,32 +451,51 @@ fn file_response(state: &AppState, path: &str) -> Result<FileResponse, ApiError>
         .and_then(|name| name.to_str())
         .unwrap_or(path)
         .to_owned();
-    let kind = match extension.as_deref() {
-        Some("json") => "json",
-        Some("md") | Some("txt") | Some("toml") => "text",
-        _ => "unsupported",
-    }
-    .to_owned();
-    let content = match kind.as_str() {
-        "json" | "text" => std::fs::read_to_string(&full_path).map_err(|source| {
-            ApiError(
-                kataan_core::Error::Io {
-                    path: full_path.clone(),
-                    source,
-                }
-                .into(),
-            )
-        })?,
-        _ => String::new(),
-    };
 
-    Ok(FileResponse {
-        path: path.to_owned(),
+    Ok(ResolvedVaultFile {
+        full_path,
         name,
         extension,
-        kind,
-        content,
     })
+}
+
+fn read_text_file(path: &std::path::Path) -> Result<String, ApiError> {
+    std::fs::read_to_string(path).map_err(|source| {
+        ApiError(
+            kataan_core::Error::Io {
+                path: path.to_path_buf(),
+                source,
+            }
+            .into(),
+        )
+    })
+}
+
+fn file_kind(extension: Option<&str>) -> &'static str {
+    match extension {
+        Some("json") => "json",
+        Some(
+            "md" | "txt" | "toml" | "rs" | "ts" | "js" | "sh" | "bash" | "yaml" | "yml" | "py",
+        ) => "text",
+        _ => "unsupported",
+    }
+}
+
+fn highlight_language(
+    extension: Option<&str>,
+) -> Option<(&'static str, lumis::languages::Language)> {
+    match extension {
+        Some("json") => Some(("json", lumis::languages::Language::JSON)),
+        Some("toml") => Some(("toml", lumis::languages::Language::Toml)),
+        Some("md") => Some(("markdown", lumis::languages::Language::Markdown)),
+        Some("rs") => Some(("rust", lumis::languages::Language::Rust)),
+        Some("ts") => Some(("typescript", lumis::languages::Language::TypeScript)),
+        Some("js") => Some(("javascript", lumis::languages::Language::JavaScript)),
+        Some("sh" | "bash") => Some(("bash", lumis::languages::Language::Bash)),
+        Some("yaml" | "yml") => Some(("yaml", lumis::languages::Language::YAML)),
+        Some("py") => Some(("python", lumis::languages::Language::Python)),
+        _ => None,
+    }
 }
 
 fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {
@@ -949,6 +1036,32 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
         let app = test_app(&root);
 
         let response = request(app, "GET", "/api/documents/type/project").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn file_endpoint_returns_json_file() {
+        let root = test_vault();
+        fs::write(root.join("projects/data.json"), r#"{"name":"demo"}"#).unwrap();
+        let app = test_app(&root);
+
+        let response = request(app, "GET", "/api/file?path=projects%2Fdata.json").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn highlight_endpoint_returns_html() {
+        let root = test_vault();
+        fs::write(root.join("projects/data.json"), r#"{"name":"demo"}"#).unwrap();
+        let app = test_app(&root);
+
+        let response = request(app, "GET", "/api/file/highlight?path=projects%2Fdata.json").await;
 
         assert_eq!(response.status(), StatusCode::OK);
 

@@ -468,10 +468,20 @@ button:focus-visible,
   font-size: var(--font-size-1);
 }
 
-.json-preview {
+.file-preview,
+.highlight-preview {
   inline-size: 100%;
   max-inline-size: 100%;
   white-space: pre-wrap;
+}
+
+.highlight-preview {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  padding: var(--size-4);
+  background: var(--surface-1);
+  font-size: var(--font-size-1);
 }
 
 .reader-body table {

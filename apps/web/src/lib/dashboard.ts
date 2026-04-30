@@ -17,6 +17,7 @@ import {
   getDocument,
   getFile,
   getFolder,
+  getHighlightedFile,
   getFolders,
   getSchema,
   getVault,
@@ -257,10 +258,22 @@ function renderFileRow(file: FolderFile) {
 async function selectFile(file: FolderFile) {
   selectedDocument = null;
   updateActiveRows();
-  const vaultFile = await getFile(file.path);
-  breadcrumb.textContent = vaultFile.path.replaceAll('/', ' › ');
-  documentTitle.textContent = vaultFile.name;
-  renderFileBody(vaultFile);
+  try {
+    const highlighted = await getHighlightedFile(file.path);
+    breadcrumb.textContent = highlighted.path.replaceAll('/', ' › ');
+    documentTitle.textContent = highlighted.name;
+    renderHighlightedFile(highlighted.html);
+  } catch {
+    const vaultFile = await getFile(file.path);
+    breadcrumb.textContent = vaultFile.path.replaceAll('/', ' › ');
+    documentTitle.textContent = vaultFile.name;
+    renderFileBody(vaultFile);
+  }
+}
+
+function renderHighlightedFile(html: string) {
+  documentBody.className = 'reader-body file-reader-body';
+  documentBody.innerHTML = html;
 }
 
 function renderFileBody(file: FileResponse) {
@@ -269,7 +282,7 @@ function renderFileBody(file: FileResponse) {
 
   if (file.kind === 'json') {
     const pre = document.createElement('pre');
-    pre.className = 'json-preview';
+    pre.className = 'file-preview json-preview';
     try {
       pre.textContent = JSON.stringify(JSON.parse(file.content), null, 2);
     } catch {
@@ -281,6 +294,7 @@ function renderFileBody(file: FileResponse) {
 
   if (file.kind === 'text') {
     const pre = document.createElement('pre');
+    pre.className = 'file-preview';
     pre.textContent = file.content;
     documentBody.append(pre);
     return;
