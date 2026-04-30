@@ -433,7 +433,7 @@ fn highlight_response(
         .build()
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
     let highlighted_content = content.trim_end_matches(['\r', '\n']);
-    let html = lumis::highlight(highlighted_content, formatter);
+    let html = normalize_lumis_line_html(&lumis::highlight(highlighted_content, formatter));
 
     Ok(HighlightResponse {
         path: path.to_owned(),
@@ -500,6 +500,11 @@ fn file_kind(extension: Option<&str>) -> &'static str {
         ) => "text",
         _ => "unsupported",
     }
+}
+
+fn normalize_lumis_line_html(html: &str) -> String {
+    html.replace("\r\n</div>", "</div>")
+        .replace("\n</div>", "</div>")
 }
 
 fn highlight_theme(theme_preference: Option<&str>) -> &'static str {
@@ -1097,6 +1102,16 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
         assert_eq!(response.status(), StatusCode::OK);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn normalizes_lumis_line_html_without_extra_blank_lines() {
+        let html = "<div class=\"line\">{\n</div><div class=\"line\">}\r\n</div>";
+
+        assert_eq!(
+            normalize_lumis_line_html(html),
+            "<div class=\"line\">{</div><div class=\"line\">}</div>"
+        );
     }
 
     #[tokio::test]
