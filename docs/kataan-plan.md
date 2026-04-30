@@ -283,7 +283,12 @@ Initial UI:
 - Documents list shows Markdown+TOML pairs as first-class nodes and hides matching TOML sidecars.
 - Files list shows artifacts such as JSON, PDFs, spreadsheets, images, text files, standalone TOML, standalone Markdown, and any other non-document files.
 - Markdown viewer for documents.
-- File preview where practical: formatted JSON, Markdown preview for standalone Markdown, image preview, and fallback metadata/download/open externally for unknown or binary files.
+- File preview where practical.
+- Keep raw file content and syntax-highlighted presentation separate:
+  - `GET /api/file?path=...` returns source content/metadata.
+  - `GET /api/file/highlight?path=...` returns sanitized highlighted HTML for UI preview.
+- Prefer highlighted HTML for supported text-like artifacts such as JSON, TOML, Markdown, Rust, TypeScript, JavaScript, Bash, YAML, and Python.
+- Fall back to raw text, image preview, or metadata/download/open externally for unknown or binary files.
 - Metadata panel.
 - Validation panel.
 - Button to run validation.

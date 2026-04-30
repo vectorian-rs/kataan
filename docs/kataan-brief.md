@@ -183,6 +183,15 @@ kataan-redesign-sketch.png
 
 Matching TOML sidecars are hidden from the Files section. A standalone TOML file without a matching Markdown file is shown as a regular file/artifact.
 
+Clicking a document opens the Markdown document with TOML metadata/properties. Clicking a file opens a file preview when supported. Raw file access and highlighted preview are separate API concerns:
+
+```txt
+GET /api/file?path=...
+GET /api/file/highlight?path=...
+```
+
+`/api/file` returns source content and metadata. `/api/file/highlight` returns sanitized syntax-highlighted HTML for UI rendering when the file type is supported. The UI should prefer highlighted HTML for text-like artifacts such as JSON, TOML, Markdown, Rust, TypeScript, JavaScript, Bash, YAML, and Python, and fall back to raw text, image preview, or file metadata plus external open/download for unsupported or binary formats.
+
 ## Folder and type mapping
 
 Kataan uses a 1:1 mapping between types and top-level folders. A document with `type = "project"` lives somewhere under `projects/`, a document with `type = "person"` lives somewhere under `people/`, and so on. Intermediate path segments are containment/search structure only; they do not change the document type. Validation reports any file whose top-level folder does not match its `type`.
