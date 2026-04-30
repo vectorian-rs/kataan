@@ -495,9 +495,13 @@ button:focus-visible,
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-3);
-  padding: var(--size-4);
+  padding: var(--size-3) var(--size-4);
   background: var(--surface-1);
   font-size: var(--font-size-1);
+}
+
+.highlight-preview code {
+  display: block;
 }
 
 .reader-body table {
