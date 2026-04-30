@@ -297,11 +297,76 @@ function requiredFields(schema: TomlSchemaResponse) {
 }
 
 function renderMetadata(vaultDocument: DocumentResponse) {
-  metadataPanel.className = 'metadata-grid';
+  const { edges, markdown, markdown_checksum: markdownChecksum, ...properties } = vaultDocument.metadata;
+  metadataPanel.className = 'metadata-sections';
   metadataPanel.replaceChildren(
-    property('ID', vaultDocument.id),
-    ...Object.entries(vaultDocument.metadata).map(([key, value]) => property(formatLabel(key), value)),
+    metadataSection('Properties', [
+      property('ID', vaultDocument.id),
+      ...Object.entries(properties).map(([key, value]) => property(formatLabel(key), value)),
+    ]),
+    metadataSection('Connected', renderEdges(edges)),
+    metadataSection('Internal', [
+      property('Markdown', markdown),
+      property('Markdown checksum', markdownChecksum),
+      property('Route token', vaultDocument.route_token),
+    ]),
   );
+}
+
+function metadataSection(title: string, children: HTMLElement[]) {
+  const section = document.createElement('section');
+  section.className = 'metadata-section';
+
+  const heading = document.createElement('h3');
+  heading.className = 'section-heading';
+  heading.textContent = title;
+
+  const body = document.createElement('div');
+  body.className = 'metadata-grid';
+  if (children.length === 0) {
+    body.classList.add('muted');
+    body.textContent = 'None.';
+  } else {
+    body.replaceChildren(...children);
+  }
+
+  section.append(heading, body);
+  return section;
+}
+
+function renderEdges(edges: unknown) {
+  if (!edges || typeof edges !== 'object' || Array.isArray(edges)) {
+    return [];
+  }
+
+  return Object.entries(edges as Record<string, unknown>)
+    .filter(([, targets]) => Array.isArray(targets) && targets.length > 0)
+    .map(([predicate, targets]) => edgeGroup(predicate, targets as unknown[]));
+}
+
+function edgeGroup(predicate: string, targets: unknown[]) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'edge-group';
+
+  const label = document.createElement('div');
+  label.className = 'property-label';
+  label.textContent = formatLabel(predicate);
+
+  const list = document.createElement('div');
+  list.className = 'edge-list';
+  list.replaceChildren(...targets.map(edgeTarget));
+
+  wrapper.append(label, list);
+  return wrapper;
+}
+
+function edgeTarget(target: unknown) {
+  const item = document.createElement('button');
+  item.className = 'edge-target';
+  item.type = 'button';
+  item.textContent = String(target);
+  item.addEventListener('click', () => runAction(() => selectDocument(String(target))));
+  return item;
 }
 
 function property(label: string, value: unknown) {
