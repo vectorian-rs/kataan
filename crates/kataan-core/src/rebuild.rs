@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use crate::{
     checksum::{self, SubfolderChecksum},
-    constants::{is_code_folder, VAULT_CONFIG_FILE},
+    constants::VAULT_CONFIG_FILE,
     index::{FolderDocument, FolderSubfolder, VaultConfig},
     write, Error, Result,
 };
@@ -21,9 +21,6 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
         })?;
 
     for (document_type, folder) in &root_index.type_folders {
-        if is_code_folder(folder) {
-            continue;
-        }
         let folder_path = root.join(folder);
         if folder_path.exists() {
             rebuild_folder_recursive(&folder_path, document_type)?;
@@ -36,10 +33,6 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
 }
 
 fn rebuild_folder_recursive(folder_path: &Path, document_type: &str) -> Result<Option<String>> {
-    if !folder_path.join("index.md").exists() || !folder_path.join("index.toml").exists() {
-        return Ok(None);
-    }
-
     let mut subfolders = Vec::new();
     for entry in fs::read_dir(folder_path).map_err(|source| Error::Io {
         path: folder_path.to_path_buf(),
@@ -64,6 +57,8 @@ fn rebuild_folder_recursive(folder_path: &Path, document_type: &str) -> Result<O
     subfolders.sort_by(|left, right| left.name.cmp(&right.name));
 
     let folder_index_path = folder_path.join("index.toml");
+    let folder_markdown_path = folder_path.join("index.md");
+    let has_index_pair = folder_index_path.exists() && folder_markdown_path.exists();
     let existing_folder_index = fs::read_to_string(&folder_index_path).unwrap_or_default();
     let (name, description, default_type) =
         parse_folder_index_header(&existing_folder_index, folder_path);
@@ -113,6 +108,17 @@ fn rebuild_folder_recursive(folder_path: &Path, document_type: &str) -> Result<O
     }
     documents.sort_by(|left, right| left.slug.cmp(&right.slug));
 
+    if !has_index_pair && documents.is_empty() && subfolders.is_empty() {
+        return Ok(None);
+    }
+    ensure_folder_index_pair(
+        &folder_markdown_path,
+        &folder_index_path,
+        document_type,
+        &name,
+        default_type.as_deref(),
+    )?;
+
     let checksum_subfolders = subfolders
         .iter()
         .map(|subfolder| SubfolderChecksum {
@@ -133,6 +139,28 @@ fn rebuild_folder_recursive(folder_path: &Path, document_type: &str) -> Result<O
     )?;
 
     Ok(Some(folder_checksum))
+}
+
+fn ensure_folder_index_pair(
+    markdown_path: &Path,
+    toml_path: &Path,
+    document_type: &str,
+    name: &str,
+    default_type: Option<&str>,
+) -> Result<()> {
+    if !markdown_path.exists() {
+        write::atomic_write_string(markdown_path, &format!("# {name}\n"))?;
+    }
+    if !toml_path.exists() {
+        let default_type = default_type.unwrap_or(document_type);
+        write::atomic_write_string(
+            toml_path,
+            &format!(
+                "type = \"{document_type}\"\nmarkdown = \"index.md\"\nname = \"{name}\"\ndefault_type = \"{default_type}\"\n"
+            ),
+        )?;
+    }
+    Ok(())
 }
 
 fn update_document_markdown_checksum(

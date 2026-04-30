@@ -27,7 +27,7 @@ Implement in `crates/kataan-core`.
 ### 2. TOML and Markdown loading
 
 - Load root `kataan.toml`.
-- Load every document folder's `index.md` and `index.toml` files, including intermediate document folders; skip the special `code/` tool folder.
+- Load folder index documents only where both `index.md` and `index.toml` exist; folders without an index pair are structural/artifact folders.
 - Load first-class documents only from Markdown files that have exact matching TOML sidecars in the same folder.
 - Build metadata-only `DocumentRecord` values containing paths, metadata, ancestors, facets, checksums, and folder-document marker.
 - Do not load full Markdown bodies into `LoadedVault`; read Markdown on demand from `markdown_path`.
@@ -38,7 +38,7 @@ Implement in `crates/kataan-core`.
 - Compute BLAKE3 over exact raw file bytes.
 - Validate `markdown_checksum` in document TOML.
 - Compute `toml_checksum` for folder index entries.
-- Compute recursive post-order `folder_checksum` values from sorted direct documents and sorted direct document-subfolder checksums; exclude `code/`.
+- Compute recursive post-order `folder_checksum` values from sorted direct documents and sorted direct indexed-subfolder checksums; artifact-only folders do not participate.
 - Ensure every write path uses atomic write semantics: tempfile in the same directory, fsync, then rename/persist.
 
 ### 4. Type registry
@@ -54,8 +54,7 @@ Implement in `crates/kataan-core`.
   - `folder`
   - optional Lucide icon ID such as `Newspaper`, `Presentation`, `BookOpen`, `ReceiptText`, `ListTodo`, or `Inbox`
 - Validate root `[type_folders]` matches type definitions.
-- Treat every mapped type folder except `code` as a document tree with the same validation, rebuild-indexes, and Merkle behavior as starter document folders.
-- Keep `code` as the only non-document type folder exception.
+- Treat Markdown/TOML pairs as the knowledgebase boundary. A mapped folder, including `code`, is an artifact tree until files opt into the document model with `.md` + `.toml` pairs or an `index.md` + `index.toml` pair.
 
 ### 5. Ontology
 
@@ -105,8 +104,8 @@ Validation should check:
 
 - Root `kataan.toml` exists and has `schema_version`.
 - Required type folders from `[type_folders]` exist.
-- Every mapped type folder except `code` has a matching type definition in `type/`, and every type definition has a matching `[type_folders]` entry.
-- Every document folder under any mapped document type has `index.md` and `index.toml`; the special `code/` folder is exempt because it stores agent/tool code instead of Markdown/TOML document pairs.
+- Every mapped type folder has a matching type definition in `type/`, and every type definition has a matching `[type_folders]` entry.
+- A folder with both `index.md` and `index.toml` is a folder node. A folder with only one of them reports an incomplete folder index pair. Folders with neither are structural/artifact folders unless rebuild promotes them because they contain document pairs or indexed child folders.
 - Every Markdown+TOML document pair has TOML metadata with `markdown` pointing to the matching Markdown file.
 - Standalone Markdown files and standalone TOML files are regular files/artifacts, not document nodes. They should be visible in file listings but not loaded into the graph.
 - `markdown_checksum` matches exact Markdown bytes.
@@ -121,7 +120,7 @@ Validation should check:
 - Every edge target canonical ID resolves to an existing document.
 - Every target document type is allowed by the predicate `to` list, or `to = ["*"]`.
 - `index.toml` document entries include only valid Markdown+TOML document pairs and document-subfolder entries match child document folders.
-- Folder `markdown_checksum`, `toml_checksum`, document-subfolder checksums, and recursive `folder_checksum` values are correct for document folders; `code/` is excluded from Merkle/index checks.
+- Folder `markdown_checksum`, `toml_checksum`, document-subfolder checksums, and recursive `folder_checksum` values are correct for indexed folder nodes.
 
 CLI behavior:
 
@@ -171,9 +170,10 @@ kataan rebuild-indexes <vault>
 Should:
 
 - Recompute document `markdown_checksum` fields for valid Markdown+TOML document pairs.
-- Rebuild every document folder's direct `[[documents]]` entries from valid pairs only and `[[subfolders]]` entries from document subfolders.
+- Rebuild every knowledgebase folder node's direct `[[documents]]` entries from valid pairs only and `[[subfolders]]` entries from indexed child folders.
+- Create `index.md` and/or `index.toml` for folders that contain document pairs or indexed child folders and are therefore part of the knowledgebase tree.
 - Recompute folder `markdown_checksum`, `toml_checksum`, document-subfolder checksums, and recursive `folder_checksum` values.
-- Exclude the special `code/` folder from document-pair checks, folder indexes, and Merkle checksums.
+- Leave purely artifact-only folders untouched, including artifact-only folders under `code/`.
 - Update `updated_at` in root `kataan.toml`.
 - Preserve human-authored metadata where possible.
 
@@ -192,7 +192,7 @@ Should create:
 - Root `kataan.toml` with `[limits].max_folder_depth = 4`.
 - Default `ontology.toml` with the core edge vocabulary.
 - Starter folders: `intake`, `projects`, `people`, `notes`, `topics`, `code`, `type`.
-- Folder `index.md` and `index.toml` files for every starter document folder; do not create them for `code/`.
+- Folder `index.md` and `index.toml` files for starter knowledgebase folders. `code/` may be created as an artifact folder without an index pair.
 - Starter type definitions:
   - `intake`
   - `project`
@@ -275,7 +275,7 @@ Each response should include:
 
 - JSON Schema for structural fields.
 - A minimal TOML template.
-- Vault-aware constraints such as allowed document types for a folder, valid statuses, valid actors, ontology predicates, and `code/` folder exemption.
+- Vault-aware constraints such as allowed document types for a folder, valid statuses, valid actors, ontology predicates, and pair-based folder/document detection.
 
 Schema responses are guidance, not a replacement for validation. Repair UI and agents should use them to propose fixes, then validation remains authoritative.
 

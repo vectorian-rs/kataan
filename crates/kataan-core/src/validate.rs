@@ -7,8 +7,7 @@ use std::{
 use crate::{
     checksum::{self, SubfolderChecksum},
     constants::{
-        is_code_folder, ACTOR_VALUES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES, TYPE_DEFINITION,
-        VAULT_CONFIG_FILE,
+        ACTOR_VALUES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES, TYPE_DEFINITION, VAULT_CONFIG_FILE,
     },
     diagnostic::{Diagnostic, DiagnosticReport},
     diagnostic_codes as codes,
@@ -168,39 +167,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
             continue;
         }
 
-        if is_code_folder(folder) {
-            continue;
-        }
-
-        let folder_index_path = folder_path.join("index.toml");
-        let folder_markdown_path = folder_path.join("index.md");
-        if !folder_markdown_path.exists() {
-            issues.push(
-                Diagnostic::error(codes::MISSING_MARKDOWN_FILE, "Folder is missing index.md")
-                    .with_path(format!("{folder}/index.md")),
-            );
-        }
-        let folder_index = if !folder_index_path.exists() {
-            issues.push(
-                Diagnostic::error(codes::MISSING_FOLDER_INDEX, "Folder is missing index.toml")
-                    .with_path(format!("{folder}/index.toml")),
-            );
-            None
-        } else {
-            let index_text =
-                fs::read_to_string(&folder_index_path).map_err(|source| crate::Error::Io {
-                    path: folder_index_path.clone(),
-                    source,
-                })?;
-            Some(
-                toml::from_str::<FolderIndex>(&index_text).map_err(|source| {
-                    crate::Error::TomlParse {
-                        path: folder_index_path.clone(),
-                        source,
-                    }
-                })?,
-            )
-        };
+        let folder_index = validate_optional_folder_index_pair(&mut issues, &folder_path, folder)?;
 
         let mut markdown_slugs = BTreeSet::new();
         let mut toml_slugs = BTreeSet::new();
@@ -593,22 +560,40 @@ fn validate_folder_pair(
     folder_path: &Path,
 ) -> Result<()> {
     let relative = relative_folder_path(root_folder, root_folder_path, folder_path);
+    validate_optional_folder_index_pair(issues, folder_path, &relative).map(|_| ())
+}
 
-    if !folder_path.join("index.md").exists() {
-        issues.push(
-            Diagnostic::error(codes::MISSING_MARKDOWN_FILE, "Folder is missing index.md")
-                .with_path(format!("{relative}/index.md")),
-        );
-    }
-
-    if !folder_path.join("index.toml").exists() {
-        issues.push(
-            Diagnostic::error(codes::MISSING_FOLDER_INDEX, "Folder is missing index.toml")
+fn validate_optional_folder_index_pair(
+    issues: &mut Vec<Diagnostic>,
+    folder_path: &Path,
+    relative: &str,
+) -> Result<Option<FolderIndex>> {
+    let folder_index_path = folder_path.join("index.toml");
+    let folder_markdown_path = folder_path.join("index.md");
+    match (folder_markdown_path.exists(), folder_index_path.exists()) {
+        (true, true) => read_folder_index_if_present(folder_path),
+        (true, false) => {
+            issues.push(
+                Diagnostic::error(
+                    codes::MISSING_FOLDER_INDEX,
+                    "Folder has index.md but is missing index.toml",
+                )
                 .with_path(format!("{relative}/index.toml")),
-        );
+            );
+            Ok(None)
+        }
+        (false, true) => {
+            issues.push(
+                Diagnostic::error(
+                    codes::MISSING_MARKDOWN_FILE,
+                    "Folder has index.toml but is missing index.md",
+                )
+                .with_path(format!("{relative}/index.md")),
+            );
+            read_folder_index_if_present(folder_path)
+        }
+        (false, false) => Ok(None),
     }
-
-    Ok(())
 }
 
 fn relative_folder_path(root_folder: &str, root_folder_path: &Path, folder_path: &Path) -> String {
@@ -1026,7 +1011,7 @@ markdown = "project.md"
     }
 
     #[test]
-    fn reports_missing_required_folder_and_folder_index() {
+    fn reports_missing_required_folder_but_allows_structural_type_folder() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects")).unwrap();
         write_root_index(&root);
@@ -1040,19 +1025,17 @@ markdown = "project.md"
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == codes::MISSING_FOLDER_INDEX
-                && diagnostic.path.as_deref() == Some("projects/index.toml")));
+            .all(|diagnostic| diagnostic.path.as_deref() != Some("projects/index.toml")));
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == codes::MISSING_MARKDOWN_FILE
-                && diagnostic.path.as_deref() == Some("projects/index.md")));
+            .all(|diagnostic| diagnostic.path.as_deref() != Some("projects/index.md")));
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn reports_missing_nested_folder_index_pair() {
+    fn reports_incomplete_nested_folder_index_pair() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects/company-x/internal")).unwrap();
         write_root_index(&root);
@@ -1068,16 +1051,11 @@ markdown = "project.md"
             .iter()
             .any(|diagnostic| diagnostic.code == codes::MISSING_FOLDER_INDEX
                 && diagnostic.path.as_deref() == Some("projects/company-x/index.toml")));
-        assert!(report
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == codes::MISSING_MARKDOWN_FILE
-                && diagnostic.path.as_deref() == Some("projects/company-x/internal/index.md")));
-        assert!(report
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == codes::MISSING_FOLDER_INDEX
-                && diagnostic.path.as_deref() == Some("projects/company-x/internal/index.toml")));
+        assert!(report.diagnostics.iter().all(|diagnostic| !matches!(
+            diagnostic.path.as_deref(),
+            Some("projects/company-x/internal/index.md")
+                | Some("projects/company-x/internal/index.toml")
+        )));
 
         fs::remove_dir_all(root).unwrap();
     }

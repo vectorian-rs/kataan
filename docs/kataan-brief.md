@@ -84,7 +84,7 @@ vault/
     └── type-definition.toml
 ```
 
-All folders except `code/` are document folders. Document folders use Markdown/TOML sidecars and folder index documents. `code/` is a tool/code asset tree and is intentionally exempt from document sidecar, folder index, loader, and Merkle rules.
+Kataan knowledgebase elements are detected by Markdown/TOML pairs, not by folder name alone. A regular document is `name.md` + `name.toml`. A folder knowledgebase node is `index.md` + `index.toml`. Folders without an index pair are structural artifact folders unless they contain document pairs or indexed child folders, in which case `rebuild-indexes` may create the missing folder index pair. `code/` is therefore usually just an artifact tree, but it no longer needs a separate document-model exception.
 
 ## Vault index
 
@@ -118,7 +118,7 @@ finance = "finances"
 task = "tasks"
 ```
 
-`schema_version` is required and identifies the vault format version. The `type_folders` table defines the authoritative type-to-folder mapping for the vault. Kataan must not hard-code the document type universe: every entry except `code` is a document type folder, including user-defined types. `[limits].max_folder_depth` defaults to `4` and counts segments after the type folder, so `projects/a/b/c/foo` has depth `4`.
+`schema_version` is required and identifies the vault format version. The `type_folders` table defines the authoritative type-to-folder mapping for the vault. Kataan must not hard-code the document type universe. `[limits].max_folder_depth` defaults to `4` and counts segments after the type folder, so `projects/a/b/c/foo` has depth `4`.
 
 ## File model
 
@@ -227,7 +227,9 @@ Example user-defined mappings:
 
 ## Folder indexes
 
-Every document folder, including intermediate document folders, has `index.md` and `index.toml`. The index pair is the document for that folder node; there are no untyped scaffolding folders in document trees. The special `code/` folder is not a document tree and does not require folder indexes.
+A folder becomes a knowledgebase folder node when it has both `index.md` and `index.toml`. The index pair is the document for that folder node. Folders without an index pair are structural folders or artifact folders. If only one of `index.md` or `index.toml` exists, validation reports an incomplete folder index pair.
+
+`rebuild-indexes` may create `index.md` and `index.toml` for folders that contain document pairs or indexed child folders, because those folders have become part of the knowledgebase tree. It should not create indexes for purely artifact-only folders.
 
 Each document-folder index describes that folder and lists direct child documents and direct child document subfolders. This lets Kataan assemble and render folder views quickly from stored metadata. Implementations may still walk the filesystem for validation and repair, but normal read paths should prefer loaded metadata.
 
@@ -287,7 +289,7 @@ folder_checksum = blake3(
 
 The folder's own `index.md` and `index.toml` hash into the folder's checksum, not the parent's document list.
 
-Kataan should include a `rebuild-indexes` command from the start. Rebuild fixes drift by recalculating document entries, subfolder entries, Markdown checksums, TOML sidecar checksums, and recursive folder checksums from the filesystem. Rebuild excludes `code/`. Rebuild does not auto-fix structural violations such as missing sidecars, unresolved refs, unknown types, or depth violations; validation reports those.
+Kataan should include a `rebuild-indexes` command from the start. Rebuild fixes drift by recalculating document entries, subfolder entries, Markdown checksums, TOML sidecar checksums, and recursive folder checksums from the filesystem. Rebuild touches knowledgebase folders discovered from Markdown/TOML pairs and indexed child folders; purely artifact-only folders are left untouched. Rebuild does not auto-fix structural violations such as unresolved refs, unknown types, or depth violations; validation reports those.
 
 Folder index document fields:
 
@@ -474,7 +476,7 @@ The default initializer may create starter types:
 - `type-definition`
 - `code`
 
-Users may define additional types such as `article`, `presentation`, `reference`, `finance`, and `task`. Every valid `type` value, starter or custom, must have a corresponding type definition in `type/` and a matching entry in root `[type_folders]`. Custom document types behave identically to starter document types at runtime: path-as-containment, ancestors-as-keywords, depth limits, sidecar TOML, validation, rebuild-indexes, and checksums all apply. `code` is the only non-document type folder and is exempt from document sidecar/index/Merkle rules.
+Users may define additional types such as `article`, `presentation`, `reference`, `finance`, and `task`. Every valid `type` value, starter or custom, must have a corresponding type definition in `type/` and a matching entry in root `[type_folders]`. Custom document types behave identically to starter document types at runtime: path-as-containment, ancestors-as-keywords, depth limits, sidecar TOML, validation, rebuild-indexes, and checksums all apply. `code` can be configured as a normal type, but folders/files under `code/` remain artifacts unless they opt into the knowledgebase model with Markdown/TOML pairs.
 
 Type definitions live in `type/`.
 
@@ -729,7 +731,7 @@ topics/     durable concepts and themes
 code/       agent tools and executable helper code
 ```
 
-The `code/` folder is a special typed folder for agent/tool code such as MCP adapters, TypeScript scripts, Python helpers, schemas, and executable utilities. It is not a Markdown/TOML document folder: Kataan does not require `.md`/`.toml` sidecars, does not require `index.md`/`index.toml`, does not load files in `code/` as documents, and excludes `code/` from folder Merkle checksums.
+The `code/` folder is intended for agent/tool code such as MCP adapters, TypeScript scripts, Python helpers, schemas, and executable utilities. Kataan treats it like any other folder under the pair-based model: files are artifacts by default, and only Markdown/TOML pairs become knowledgebase elements.
 
 An intake document may later produce many organized files.
 
@@ -776,7 +778,7 @@ Example response shape:
 }
 ```
 
-JSON Schema describes the structural data model: required fields, optional fields, arrays, maps, and nested tables. Kataan-specific rules that depend on the current vault are returned as separate constraints, such as allowed types, allowed ontology predicates, folder/type mapping, valid status values, actor values, and the `code/` exemption.
+JSON Schema describes the structural data model: required fields, optional fields, arrays, maps, and nested tables. Kataan-specific rules that depend on the current vault are returned as separate constraints, such as allowed types, allowed ontology predicates, folder/type mapping, valid status values, actor values, and pair-based folder/document detection.
 
 Repair UI should use this endpoint to show the minimum valid TOML shape for a broken file and to constrain LLM repair proposals. The LLM may suggest a patch, but human review and base-content-hash checks are required before applying it.
 
