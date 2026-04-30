@@ -137,10 +137,10 @@ button:focus-visible,
 
 .app-subtitle {
   display: grid;
-  gap: 1px;
+  gap: var(--size-1);
   min-inline-size: 0;
   color: var(--text-1);
-  font-size: var(--font-size-0);
+  font-size: var(--font-size-1);
   line-height: var(--font-lineheight-1);
 }
 
@@ -162,7 +162,7 @@ button:focus-visible,
 
 .vault-schema {
   color: var(--text-2);
-  font-size: var(--font-size-00);
+  font-size: var(--font-size-0);
   text-transform: lowercase;
 }
 
