@@ -9,10 +9,10 @@ description = "Generic lateral relationship; use a more specific edge if one fit
 
 [edges.derived_from]
 from = ["*"]
-to = ["raw", "note"]
+to = ["intake", "note"]
 inverse = "derived"
 cardinality = "many-to-many"
-description = "Document was derived from a raw or note source."
+description = "Document was derived from an intake or note source."
 
 [edges.mentions]
 from = ["*"]

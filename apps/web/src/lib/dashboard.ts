@@ -6,7 +6,13 @@ import {
   File,
   FileText,
   FolderKanban,
+  Inbox,
   Lightbulb,
+  ListTodo,
+  Newspaper,
+  Presentation,
+  ReceiptText,
+  BookOpen,
   User,
   createElement,
   type IconNode,
@@ -110,7 +116,7 @@ function renderFolderButton(folder: FolderSummary) {
 
   const icon = document.createElement('span');
   icon.className = `folder-icon ${folder.type}`;
-  icon.append(createElement(folderIcon(folder.type), { width: 18, height: 18, 'stroke-width': 2 }));
+  icon.append(createElement(folderIcon(folder.icon ?? folder.type), { width: 18, height: 18, 'stroke-width': 2 }));
 
   const name = document.createElement('span');
   name.textContent = folder.name ?? folder.folder;
@@ -573,19 +579,39 @@ function folderIcon(typeOrFolder: string): IconNode {
     note: FileText,
     person: User,
     project: FolderKanban,
+    intake: Inbox,
     raw: Archive,
     topic: Lightbulb,
     'type-definition': Boxes,
+    Inbox,
+    Rocket: FolderKanban,
+    Newspaper,
+    Presentation,
+    BookOpen,
+    ReceiptText,
+    ListTodo,
+    FolderKanban,
+    FileText,
+    User,
+    Code,
+    Boxes,
+    Lightbulb,
   };
   return icons[key] ?? Circle;
 }
 
 function normalizeFolderIconKey(typeOrFolder: string) {
   const aliases: Record<string, string> = {
+    intake: 'intake',
     notes: 'note',
     people: 'person',
     projects: 'project',
     topics: 'topic',
+    articles: 'Newspaper',
+    presentations: 'Presentation',
+    references: 'BookOpen',
+    finances: 'ReceiptText',
+    tasks: 'ListTodo',
     type: 'type-definition',
   };
   return aliases[typeOrFolder] ?? typeOrFolder;

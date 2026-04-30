@@ -28,7 +28,7 @@ updated_at = "{now}"
 max_folder_depth = 4
 
 [type_folders]
-raw = "raw"
+intake = "intake"
 project = "projects"
 person = "people"
 note = "notes"
@@ -43,10 +43,10 @@ type-definition = "type"
 
     for (folder, title, description, default_type) in [
         (
-            "raw",
-            "Raw",
+            "intake",
+            "Intake",
             "Original source material before transformation.",
-            "raw",
+            "intake",
         ),
         (
             "projects",
@@ -89,7 +89,7 @@ folder_checksum = "blake3:todo"
     })?;
 
     for ty in [
-        "raw",
+        "intake",
         "project",
         "person",
         "note",
@@ -110,7 +110,7 @@ folder_checksum = "blake3:todo"
                 r#"type = "type-definition"
 name = "{ty}"
 folder = "{}"
-icon = "circle"
+icon = "{}"
 
 markdown = "{ty}.md"
 markdown_checksum = "{markdown_checksum}"
@@ -118,7 +118,8 @@ markdown_checksum = "{markdown_checksum}"
 created_by = "system"
 last_updated_by = "system"
 "#,
-                type_folder(ty)
+                type_folder(ty),
+                type_icon(ty)
             ),
         )?;
     }
@@ -134,7 +135,7 @@ fn write_file(path: &Path, content: &str) -> Result<()> {
 
 fn type_folder(ty: &str) -> &str {
     match ty {
-        "raw" => "raw",
+        "intake" => "intake",
         "project" => "projects",
         "person" => "people",
         "note" => "notes",
@@ -142,6 +143,19 @@ fn type_folder(ty: &str) -> &str {
         TYPE_CODE => CODE_FOLDER,
         "type-definition" => "type",
         _ => ty,
+    }
+}
+
+fn type_icon(ty: &str) -> &str {
+    match ty {
+        "intake" => "Inbox",
+        "project" => "FolderKanban",
+        "person" => "User",
+        "note" => "FileText",
+        "topic" => "Lightbulb",
+        TYPE_CODE => "Code",
+        "type-definition" => "Boxes",
+        _ => "Circle",
     }
 }
 
@@ -172,7 +186,7 @@ mod tests {
         init_vault(&root, "My Knowledgebase").unwrap();
 
         assert!(root.join("kataan.toml").exists());
-        for folder in ["raw", "projects", "people", "notes", "topics", "type"] {
+        for folder in ["intake", "projects", "people", "notes", "topics", "type"] {
             assert!(
                 root.join(folder).join("index.toml").exists(),
                 "missing {folder}/index.toml"
@@ -182,7 +196,7 @@ mod tests {
         assert!(!root.join("code/index.toml").exists());
 
         for ty in [
-            "raw",
+            "intake",
             "project",
             "person",
             "note",
@@ -200,7 +214,7 @@ mod tests {
         assert!(root_index.contains("schema_version = \"0.1.0\""));
         assert!(root_index.contains("name = \"My Knowledgebase\""));
 
-        for folder in ["raw", "projects", "people", "notes", "topics", "type"] {
+        for folder in ["intake", "projects", "people", "notes", "topics", "type"] {
             let folder_index = fs::read_to_string(root.join(folder).join("index.toml")).unwrap();
             assert!(!folder_index.contains("blake3:todo"));
         }

@@ -7,7 +7,7 @@ use std::{
 use crate::{
     checksum,
     constants::{
-        is_code_folder, ACTOR_VALUES, CORE_TYPES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES,
+        is_code_folder, ACTOR_VALUES, DEFAULT_MAX_FOLDER_DEPTH, STATUS_VALUES, TYPE_DEFINITION,
         VAULT_CONFIG_FILE,
     },
     diagnostic::{Diagnostic, DiagnosticReport},
@@ -40,6 +40,80 @@ impl Validator {
     }
 }
 
+fn validate_type_registry(issues: &mut Vec<Diagnostic>, vault: &Vault, registry: &TypeRegistry) {
+    for (ty, folder) in &vault.index.type_folders {
+        let Some(definition) = registry.definitions.get(ty) else {
+            issues.push(
+                Diagnostic::error(
+                    codes::MISSING_TYPE_FOLDER,
+                    format!("type `{ty}` is mapped to `{folder}` but has no type definition"),
+                )
+                .with_path(VAULT_CONFIG_FILE),
+            );
+            continue;
+        };
+
+        let definition_md_path = vault.root.join("type").join(format!("{ty}.md"));
+        if !definition_md_path.exists() {
+            issues.push(
+                Diagnostic::error(
+                    codes::MISSING_MARKDOWN_FILE,
+                    format!("type definition `{ty}` is missing Markdown file"),
+                )
+                .with_path(format!("type/{ty}.toml")),
+            );
+        }
+
+        if definition.r#type != TYPE_DEFINITION {
+            issues.push(
+                Diagnostic::error(
+                    codes::INVALID_TYPE,
+                    format!("type definition `{ty}` must have type = \"{TYPE_DEFINITION}\""),
+                )
+                .with_path(format!("type/{ty}.toml")),
+            );
+        }
+
+        if definition.name != *ty {
+            issues.push(
+                Diagnostic::error(
+                    codes::INVALID_TYPE,
+                    format!(
+                        "type definition name `{}` does not match `{ty}`",
+                        definition.name
+                    ),
+                )
+                .with_path(format!("type/{ty}.toml")),
+            );
+        }
+
+        if definition.folder != *folder {
+            issues.push(
+                Diagnostic::error(
+                    codes::TYPE_FOLDER_MISMATCH,
+                    format!(
+                        "type definition `{ty}` maps to `{}`, but kataan.toml maps it to `{folder}`",
+                        definition.folder
+                    ),
+                )
+                .with_path(format!("type/{ty}.toml")),
+            );
+        }
+    }
+
+    for ty in registry.definitions.keys() {
+        if !vault.index.type_folders.contains_key(ty) {
+            issues.push(
+                Diagnostic::error(
+                    codes::MISSING_TYPE_FOLDER,
+                    format!("type definition `{ty}` has no matching type_folders entry"),
+                )
+                .with_path(format!("type/{ty}.toml")),
+            );
+        }
+    }
+}
+
 fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
     let mut issues = Vec::new();
     let mut known_document_ids = BTreeSet::new();
@@ -65,7 +139,10 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         Err(error) => return Err(error),
     };
 
-    let type_registry = TypeRegistry::load(vault).ok();
+    let type_registry = match TypeRegistry::load(vault) {
+        Ok(registry) => Some(registry),
+        Err(error) => return Err(error),
+    };
     let mut known_document_types = BTreeMap::new();
     if let Ok(documents) = vault.load_documents() {
         for document in documents {
@@ -74,16 +151,8 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         }
     }
 
-    for required_type in CORE_TYPES {
-        if !vault.index.type_folders.contains_key(*required_type) {
-            issues.push(
-                Diagnostic::error(
-                    codes::MISSING_TYPE_FOLDER,
-                    format!("missing type_folders entry for `{required_type}`"),
-                )
-                .with_path(VAULT_CONFIG_FILE),
-            );
-        }
+    if let Some(type_registry) = &type_registry {
+        validate_type_registry(&mut issues, vault, type_registry);
     }
 
     for folder in vault.index.type_folders.values() {
@@ -198,25 +267,11 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
             }
         }
 
-        for slug in markdown_slugs.difference(&toml_slugs) {
-            issues.push(
-                Diagnostic::error(
-                    codes::MISSING_TOML_SIDECAR,
-                    "Markdown file is missing a matching TOML sidecar",
-                )
-                .with_path(format!("{folder}/{slug}.md")),
-            );
-        }
-
-        for slug in toml_slugs.difference(&markdown_slugs) {
-            issues.push(
-                Diagnostic::error(
-                    codes::MISSING_MARKDOWN_FILE,
-                    "TOML sidecar is missing its Markdown file",
-                )
-                .with_path(format!("{folder}/{slug}.toml")),
-            );
-        }
+        document_toml_files.retain(|(path, _)| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| markdown_slugs.contains(stem))
+        });
 
         if let Some(folder_index) = &folder_index {
             validate_folder_index(
@@ -495,25 +550,11 @@ fn validate_nested_folder_recursive(
         }
     }
 
-    for slug in markdown_slugs.difference(&toml_slugs) {
-        issues.push(
-            Diagnostic::error(
-                codes::MISSING_TOML_SIDECAR,
-                "Markdown file is missing a matching TOML sidecar",
-            )
-            .with_path(format!("{relative}/{slug}.md")),
-        );
-    }
-
-    for slug in toml_slugs.difference(&markdown_slugs) {
-        issues.push(
-            Diagnostic::error(
-                codes::MISSING_MARKDOWN_FILE,
-                "TOML sidecar is missing its Markdown file",
-            )
-            .with_path(format!("{relative}/{slug}.toml")),
-        );
-    }
+    document_toml_files.retain(|(path, _)| {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .is_some_and(|stem| markdown_slugs.contains(stem))
+    });
 
     for (toml_path, relative_toml_path) in document_toml_files {
         validate_document_metadata(
@@ -873,6 +914,7 @@ markdown = "kataan-redesign.md"
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("type")).unwrap();
         write_root_index(&root);
+        fs::remove_file(root.join("type/project.md")).unwrap();
         fs::write(
             root.join("type/project.toml"),
             r#"type = "type-definition"
@@ -906,7 +948,7 @@ markdown = "project.md"
         assert!(!report.is_ok());
         assert!(report.diagnostics.iter().any(|diagnostic| diagnostic.code
             == codes::MISSING_REQUIRED_FOLDER
-            && diagnostic.path.as_deref() == Some("raw")));
+            && diagnostic.path.as_deref() == Some("intake")));
         assert!(report
             .diagnostics
             .iter()
@@ -970,7 +1012,7 @@ markdown = "project.md"
         fs::write(
             root.join("projects/company-x/bad-status.toml"),
             r#"type = "project"
-status = "raw"
+status = "weird"
 markdown = "bad-status.md"
 "#,
         )
@@ -979,7 +1021,7 @@ markdown = "bad-status.md"
         let report = validate(&root).unwrap();
 
         assert!(!report.is_ok());
-        assert!(report
+        assert!(!report
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == codes::MISSING_TOML_SIDECAR
@@ -1106,18 +1148,16 @@ markdown_checksum = "blake3:not-the-real-hash"
 
         let report = validate(&root).unwrap();
 
-        assert!(!report.is_ok());
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == codes::MISSING_TOML_SIDECAR
-                && diagnostic.path.as_deref() == Some("projects/kataan-redesign.md")));
+            .all(|diagnostic| diagnostic.path.as_deref() != Some("projects/kataan-redesign.md")));
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn reports_missing_markdown_file() {
+    fn treats_standalone_toml_as_file() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects")).unwrap();
         write_root_index(&root);
@@ -1132,12 +1172,10 @@ markdown = "kataan-redesign.md"
 
         let report = validate(&root).unwrap();
 
-        assert!(!report.is_ok());
         assert!(report
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == codes::MISSING_MARKDOWN_FILE
-                && diagnostic.path.as_deref() == Some("projects/kataan-redesign.toml")));
+            .all(|diagnostic| diagnostic.path.as_deref() != Some("projects/kataan-redesign.toml")));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1192,7 +1230,42 @@ markdown = "summary.md"
     }
 
     #[test]
-    fn reports_missing_required_type_folder_entries() {
+    fn validates_custom_type_folders() {
+        let root = unique_temp_dir();
+        crate::init::init_vault(&root, "Test Vault").unwrap();
+        fs::create_dir_all(root.join("articles")).unwrap();
+        let mut config = fs::read_to_string(root.join(VAULT_CONFIG_FILE)).unwrap();
+        config.push_str("article = \"articles\"\n");
+        fs::write(root.join(VAULT_CONFIG_FILE), config).unwrap();
+        fs::write(root.join("articles/index.md"), "# Articles\n").unwrap();
+        fs::write(
+            root.join("articles/index.toml"),
+            "type = \"article\"\nname = \"Articles\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("articles/essay.md"), "# Essay\n").unwrap();
+        fs::write(
+            root.join("articles/essay.toml"),
+            "type = \"article\"\nmarkdown = \"essay.md\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("type/article.md"), "# Article\n").unwrap();
+        fs::write(
+            root.join("type/article.toml"),
+            "type = \"type-definition\"\nname = \"article\"\nfolder = \"articles\"\nicon = \"Newspaper\"\nmarkdown = \"article.md\"\n",
+        )
+        .unwrap();
+
+        crate::rebuild::rebuild_indexes(&root).unwrap();
+        let report = validate(&root).unwrap();
+
+        assert!(report.is_ok(), "{:#?}", report.diagnostics);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reports_missing_type_definition_for_mapped_type() {
         let root = unique_temp_dir();
         fs::create_dir_all(&root).unwrap();
         fs::write(
@@ -1202,7 +1275,7 @@ schema_version = "0.1.0"
 name = "Test Vault"
 
 [type_folders]
-raw = "raw"
+intake = "intake"
 "#,
         )
         .unwrap();
@@ -1214,7 +1287,7 @@ raw = "raw"
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.code == codes::MISSING_TYPE_FOLDER
-                && diagnostic.message.contains("project")));
+                && diagnostic.message.contains("intake")));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1232,7 +1305,7 @@ cardinality = "many-to-many"
 
 [edges.derived_from]
 from = ["*"]
-to = ["raw", "note"]
+to = ["intake", "note"]
 inverse = "derived"
 cardinality = "many-to-many"
 "#,
@@ -1245,7 +1318,7 @@ schema_version = "0.1.0"
 name = "Test Vault"
 
 [type_folders]
-raw = "raw"
+intake = "intake"
 project = "projects"
 person = "people"
 note = "notes"
@@ -1254,6 +1327,34 @@ type-definition = "type"
 "#,
         )
         .unwrap();
+        fs::create_dir_all(root.join("type")).unwrap();
+        fs::write(root.join("type/index.md"), "# Types\n").unwrap();
+        fs::write(
+            root.join("type/index.toml"),
+            "type = \"type-definition\"\nname = \"Types\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        for (ty, folder) in [
+            ("intake", "intake"),
+            ("project", "projects"),
+            ("person", "people"),
+            ("note", "notes"),
+            ("topic", "topics"),
+            ("type-definition", "type"),
+        ] {
+            fs::write(
+                root.join("type").join(format!("{ty}.md")),
+                format!("# {ty}\n"),
+            )
+            .unwrap();
+            fs::write(
+                root.join("type").join(format!("{ty}.toml")),
+                format!(
+                    "type = \"type-definition\"\nname = \"{ty}\"\nfolder = \"{folder}\"\nmarkdown = \"{ty}.md\"\n"
+                ),
+            )
+            .unwrap();
+        }
     }
 
     fn unique_temp_dir() -> PathBuf {

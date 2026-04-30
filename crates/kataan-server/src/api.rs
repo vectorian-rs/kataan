@@ -30,6 +30,7 @@ pub struct FolderSummaryResponse {
     pub r#type: String,
     pub folder: String,
     pub name: Option<String>,
+    pub icon: Option<String>,
     pub document_count: usize,
 }
 
@@ -196,6 +197,11 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
                         .and_then(document_name)
                         .unwrap_or_else(|| title_from_id(folder)),
                 ),
+                icon: loaded
+                    .type_registry
+                    .definitions
+                    .get(ty)
+                    .and_then(|definition| definition.icon.clone()),
                 document_count,
             });
         }
@@ -222,6 +228,14 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
                 .as_ref()
                 .map(|index| index.name.clone())
                 .or_else(|| Some(title_from_id(folder))),
+            icon: kataan_core::types::TypeRegistry::load(&vault)
+                .ok()
+                .and_then(|registry| {
+                    registry
+                        .definitions
+                        .get(ty)
+                        .and_then(|definition| definition.icon.clone())
+                }),
             document_count: index.map(|index| index.documents.len()).unwrap_or_default(),
         });
     }
@@ -757,6 +771,7 @@ fn push_code_folder_if_needed(
             r#type: kataan_core::constants::TYPE_CODE.to_owned(),
             folder: kataan_core::constants::CODE_FOLDER.to_owned(),
             name: Some("Code".to_owned()),
+            icon: Some("Code".to_owned()),
             document_count: 0,
         });
     }

@@ -205,7 +205,7 @@ mod tests {
         fs::create_dir_all(root.join("projects")).unwrap();
         write_root_index(&root);
         fs::create_dir_all(root.join("code")).unwrap();
-        for folder in ["raw", "people", "notes", "topics", "type"] {
+        for folder in ["intake", "people", "notes", "topics", "type"] {
             fs::create_dir_all(root.join(folder)).unwrap();
             fs::write(root.join(folder).join("index.md"), format!("# {folder}\n")).unwrap();
             fs::write(
@@ -213,7 +213,7 @@ mod tests {
                 format!(
                     "type = \"{}\"\nname = \"{folder}\"\nmarkdown = \"index.md\"\n",
                     match folder {
-                        "raw" => "raw",
+                        "intake" => "intake",
                         "people" => "person",
                         "notes" => "note",
                         "topics" => "topic",
@@ -224,6 +224,29 @@ mod tests {
             )
             .unwrap();
         }
+        for (ty, folder) in [
+            ("intake", "intake"),
+            ("project", "projects"),
+            ("person", "people"),
+            ("note", "notes"),
+            ("topic", "topics"),
+            ("code", "code"),
+            ("type-definition", "type"),
+        ] {
+            fs::write(
+                root.join("type").join(format!("{ty}.md")),
+                format!("# {ty}\n"),
+            )
+            .unwrap();
+            fs::write(
+                root.join("type").join(format!("{ty}.toml")),
+                format!(
+                    "type = \"type-definition\"\nname = \"{ty}\"\nfolder = \"{folder}\"\nmarkdown = \"{ty}.md\"\n"
+                ),
+            )
+            .unwrap();
+        }
+
         fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
         fs::write(
             root.join("projects/index.toml"),
@@ -278,7 +301,7 @@ created_at = "2026-04-28T12:00:00Z"
 updated_at = "2026-04-28T12:00:00Z"
 
 [type_folders]
-raw = "raw"
+intake = "intake"
 project = "projects"
 person = "people"
 note = "notes"

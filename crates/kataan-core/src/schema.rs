@@ -46,12 +46,12 @@ pub fn schema_response(kind: &str, vault: Option<&LoadedVault>) -> Option<TomlSc
         "vault" => Some(response::<VaultConfig>(
             kind,
             constraints,
-            "schema_version = \"0.1.0\"\nname = \"My Vault\"\n\n[type_folders]\nproject = \"projects\"\n",
+            "schema_version = \"0.1.0\"\nname = \"My Vault\"\n\n[type_folders]\nintake = \"intake\"\nproject = \"projects\"\ntype-definition = \"type\"\ncode = \"code\"\n",
         )),
         "type-definition" => Some(response::<TypeDefinition>(
             kind,
             constraints,
-            "type = \"type-definition\"\nname = \"project\"\nfolder = \"projects\"\nmarkdown = \"project.md\"\n",
+            "type = \"type-definition\"\nname = \"article\"\nfolder = \"articles\"\nicon = \"Newspaper\"\nmarkdown = \"article.md\"\n",
         )),
         "ontology" => Some(response::<Ontology>(
             kind,
@@ -85,7 +85,13 @@ fn constraints(vault: Option<&LoadedVault>) -> SchemaConstraints {
     let mut allowed_edge_predicates = Vec::new();
 
     if let Some(vault) = vault {
-        allowed_types = vault.index.type_folders.keys().cloned().collect::<Vec<_>>();
+        allowed_types = vault
+            .index
+            .type_folders
+            .keys()
+            .filter(|ty| ty.as_str() != crate::constants::TYPE_CODE)
+            .cloned()
+            .collect::<Vec<_>>();
         allowed_edge_predicates = vault.ontology.edges.keys().cloned().collect::<Vec<_>>();
     }
 

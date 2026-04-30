@@ -20,7 +20,7 @@ pub const STATUS_VALUES: &[&str] = &[
     STATUS_ARCHIVED,
 ];
 
-pub const TYPE_RAW: &str = "raw";
+pub const TYPE_INTAKE: &str = "intake";
 pub const TYPE_PROJECT: &str = "project";
 pub const TYPE_PERSON: &str = "person";
 pub const TYPE_NOTE: &str = "note";
@@ -29,7 +29,7 @@ pub const TYPE_CODE: &str = "code";
 pub const TYPE_DEFINITION: &str = "type-definition";
 pub const CODE_FOLDER: &str = "code";
 pub const CORE_TYPES: &[&str] = &[
-    TYPE_RAW,
+    TYPE_INTAKE,
     TYPE_PROJECT,
     TYPE_PERSON,
     TYPE_NOTE,

@@ -10,6 +10,7 @@ pub struct TypeDefinition {
     pub r#type: String,
     pub name: String,
     pub folder: String,
+    pub icon: Option<String>,
     pub markdown: String,
     pub markdown_checksum: Option<String>,
 }
@@ -39,6 +40,9 @@ impl TypeRegistry {
             .unwrap_or("type");
         let type_path = vault.root.join(type_folder);
         let mut definitions = BTreeMap::new();
+        if !type_path.exists() {
+            return Ok(Self { definitions });
+        }
 
         for entry in std::fs::read_dir(&type_path).map_err(|source| Error::Io {
             path: type_path.clone(),

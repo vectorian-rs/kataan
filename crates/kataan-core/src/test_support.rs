@@ -28,7 +28,7 @@ name = "Test Vault"
 max_folder_depth = 4
 
 [type_folders]
-raw = "raw"
+intake = "intake"
 project = "projects"
 person = "people"
 note = "notes"

@@ -12,6 +12,7 @@ export type FolderSummary = {
   type: string;
   folder: string;
   name?: string;
+  icon?: string;
   document_count: number;
 };
 
