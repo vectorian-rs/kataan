@@ -68,6 +68,18 @@ button:focus-visible,
   outline-offset: 2px;
 }
 
+.visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  border: 0;
+  padding: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 220px 320px minmax(0, 1fr) 260px;
