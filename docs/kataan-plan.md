@@ -43,14 +43,19 @@ Implement in `crates/kataan-core`.
 
 ### 4. Type registry
 
+- Load all type-to-folder mappings from root `kataan.toml` `[type_folders]`.
 - Load type definitions from `type/`.
-- Validate every type has:
+- Do not hard-code valid document types to starter folders only; the vault registry defines the type universe.
+- Validate every type definition has:
   - `.md`
   - `.toml`
   - `type = "type-definition"`
   - `name`
   - `folder`
+  - optional Lucide icon ID such as `Newspaper`, `Presentation`, `BookOpen`, `ReceiptText`, `ListTodo`, or `Inbox`
 - Validate root `[type_folders]` matches type definitions.
+- Treat every mapped type folder except `code` as a document tree with the same validation, rebuild-indexes, and Merkle behavior as starter document folders.
+- Keep `code` as the only non-document type folder exception.
 
 ### 5. Ontology
 
@@ -99,8 +104,9 @@ Expand `crates/kataan-cli` and `crates/kataan-core::validate`.
 Validation should check:
 
 - Root `kataan.toml` exists and has `schema_version`.
-- Required type folders exist.
-- Every document folder has `index.md` and `index.toml`; the special `code/` folder is exempt because it stores agent/tool code instead of Markdown/TOML document pairs.
+- Required type folders from `[type_folders]` exist.
+- Every mapped type folder except `code` has a matching type definition in `type/`, and every type definition has a matching `[type_folders]` entry.
+- Every document folder under any mapped document type has `index.md` and `index.toml`; the special `code/` folder is exempt because it stores agent/tool code instead of Markdown/TOML document pairs.
 - Every Markdown+TOML document pair has TOML metadata with `markdown` pointing to the matching Markdown file.
 - Standalone Markdown files and standalone TOML files are regular files/artifacts, not document nodes. They should be visible in file listings but not loaded into the graph.
 - `markdown_checksum` matches exact Markdown bytes.
@@ -109,7 +115,7 @@ Validation should check:
 - Filenames and every canonical ID segment are preserved exactly as authored; mixed-case IDs such as `projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429` are valid.
 - Canonical ID depth does not exceed `[limits].max_folder_depth`; report `folder-depth-exceeded`.
 - `created_by` and `last_updated_by` are one of `human`, `agent`, `system` when present.
-- `status` is one of the normal lifecycle values when present; `raw` is not a valid status.
+- `status` is one of the normal lifecycle values when present; `intake` is not a valid status.
 - Every predicate in a document `[edges]` table exists in `vault/ontology.toml`.
 - The source document type is allowed by the predicate `from` list, or `from = ["*"]`.
 - Every edge target canonical ID resolves to an existing document.
@@ -185,10 +191,10 @@ Should create:
 
 - Root `kataan.toml` with `[limits].max_folder_depth = 4`.
 - Default `ontology.toml` with the core edge vocabulary.
-- Core folders: `raw`, `projects`, `people`, `notes`, `topics`, `code`, `type`.
-- Folder `index.md` and `index.toml` files for every core document folder; do not create them for `code/`.
-- Core type definitions:
-  - `raw`
+- Starter folders: `intake`, `projects`, `people`, `notes`, `topics`, `code`, `type`.
+- Folder `index.md` and `index.toml` files for every starter document folder; do not create them for `code/`.
+- Starter type definitions:
+  - `intake`
   - `project`
   - `person`
   - `note`
@@ -197,6 +203,8 @@ Should create:
   - `type-definition`
 
 Then run `rebuild-indexes`.
+
+Do not add personal/workflow-specific custom types such as `article`, `presentation`, `reference`, `finance`, or `task` to every default init. They are supported through manual `kataan.toml` `[type_folders]` entries and `type/{name}.md` + `type/{name}.toml` definitions, and may later be offered through richer presets.
 
 ## Phase 5: Read API and server
 
@@ -284,7 +292,7 @@ Initial UI:
 - Files list shows artifacts such as JSON, PDFs, spreadsheets, images, text files, standalone TOML, standalone Markdown, and any other non-document files.
 - Markdown viewer for documents.
 - File preview where practical.
-- Keep raw file content and syntax-highlighted presentation separate:
+- Keep source file content and syntax-highlighted presentation separate:
   - `GET /api/file?path=...` returns source content/metadata.
   - `GET /api/file/highlight?path=...` returns sanitized highlighted HTML for UI preview.
 - Prefer highlighted HTML for supported text-like artifacts such as JSON, TOML, Markdown, Rust, TypeScript, JavaScript, Bash, YAML, and Python.
@@ -298,10 +306,10 @@ Keep editing out of scope initially. Read-only UI first.
 
 ## Phase 8: Basic intake without agents
 
-Before adding agent proposals, support manual raw intake.
+Before adding agent proposals, support manual intake.
 
 ```txt
-paste text → save raw Markdown + TOML → rebuild indexes
+paste text → save intake Markdown + TOML → rebuild indexes
 ```
 
 Add endpoint/UI for:
@@ -310,11 +318,11 @@ Add endpoint/UI for:
 - Source kind.
 - Source label.
 
-This creates a `raw` document with provenance metadata.
+This creates an `intake` document with provenance metadata.
 
 ## Phase 9: Agent crate and proposal flow
 
-Only start UI-driven proposal application after validation, rebuild, and raw intake work reliably. The crate structure can exist earlier so the data model, prompt, and provider boundary are explicit.
+Only start UI-driven proposal application after validation, rebuild, and intake work reliably. The crate structure can exist earlier so the data model, prompt, and provider boundary are explicit.
 
 Implement in `crates/kataan-agent`.
 
@@ -341,7 +349,7 @@ Provider strategy:
 
 Initial proposal support:
 
-- Analyze raw document.
+- Analyze intake document.
 - Analyze current selected document.
 - Suggest create/update/link/archive actions.
 - Show proposal to human.
@@ -381,7 +389,7 @@ Out of scope for v1:
 17. UI route locators: derive a 32-hex token from `blake3(canonical_id)`, index `(type-folder, token) -> canonical ID` in `LoadedVault`, expose `/api/resolve?type=...&token=...`, and use `/<type-folder>/<token>` for reloadable document URLs.
 18. TOML schema API and repair guidance templates.
 19. Read-only Astro UI.
-20. Manual raw intake.
+20. Manual intake.
 21. Edge mutation API.
 22. `kataan-agent` crate skeleton and API-key provider boundary.
 23. OpenAI/Anthropic ask commands.
