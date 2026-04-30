@@ -401,7 +401,7 @@ button:focus-visible,
 }
 
 .content-header {
-  padding: var(--size-5) var(--size-8) 0;
+  padding: var(--size-5) var(--size-8) var(--size-2);
 }
 
 .content-header-main {
@@ -410,8 +410,9 @@ button:focus-visible,
 }
 
 .breadcrumb {
+  margin-block-end: var(--size-2);
   color: var(--text-2);
-  font-size: var(--font-size-0);
+  font-size: var(--font-size-1);
   line-height: var(--font-lineheight-2);
   overflow-wrap: anywhere;
 }
