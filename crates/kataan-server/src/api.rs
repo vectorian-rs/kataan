@@ -431,7 +431,8 @@ fn highlight_response(
         .pre_class(Some("highlight-preview".to_owned()))
         .build()
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
-    let html = lumis::highlight(&content, formatter);
+    let highlighted_content = content.trim_end_matches(['\r', '\n']);
+    let html = lumis::highlight(highlighted_content, formatter);
 
     Ok(HighlightResponse {
         path: path.to_owned(),
@@ -502,7 +503,7 @@ fn file_kind(extension: Option<&str>) -> &'static str {
 
 fn highlight_theme(theme_preference: Option<&str>) -> &'static str {
     match theme_preference {
-        Some("light") => "github_light",
+        Some("light") => "github_light_high_contrast",
         _ => "catppuccin_mocha",
     }
 }
