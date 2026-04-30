@@ -509,7 +509,7 @@ fn normalize_lumis_line_html(html: &str) -> String {
 
 fn highlight_theme(theme_preference: Option<&str>) -> &'static str {
     match theme_preference {
-        Some("light") => "github_light_high_contrast",
+        Some("light") => "everforest_light",
         _ => "catppuccin_mocha",
     }
 }

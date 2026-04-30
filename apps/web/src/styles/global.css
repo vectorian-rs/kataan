@@ -496,7 +496,7 @@ button:focus-visible,
   border: 1px solid var(--border);
   border-radius: var(--radius-3);
   padding: var(--size-3) var(--size-4);
-  background: var(--surface-1);
+  background: var(--surface-1) !important;
   font-size: var(--font-size-1);
 }
 
