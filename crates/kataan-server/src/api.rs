@@ -1,13 +1,14 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{header, HeaderValue, StatusCode},
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
-use crate::state::AppState;
+use crate::{state::AppState, watch::WatchStatus};
 
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
@@ -80,6 +81,7 @@ pub struct DocumentResponse {
     pub route_token: String,
     pub metadata: kataan_core::document::DocumentMetadata,
     pub markdown: String,
+    pub html: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -143,11 +145,13 @@ pub struct DiagnosticResponse {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/watch", get(watch_status))
         .route("/api/vault", get(vault))
         .route("/api/folders", get(folders))
         .route("/api/folder", get(folder_by_id))
         .route("/api/document", get(document_by_id))
         .route("/api/file", get(file_by_path))
+        .route("/api/file/raw", get(raw_file_by_path))
         .route("/api/file/highlight", get(highlight_file_by_path))
         .route("/api/resolve", get(resolve_route))
         .route("/api/schema/:kind", get(schema))
@@ -161,6 +165,15 @@ pub fn router(state: AppState) -> Router {
 pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let loaded = state.vault.read().is_ok();
     Json(HealthResponse { ok: true, loaded })
+}
+
+pub async fn watch_status(State(state): State<AppState>) -> Json<WatchStatus> {
+    let status = state
+        .watch
+        .read()
+        .map(|status| status.clone())
+        .unwrap_or_default();
+    Json(status)
 }
 
 pub async fn vault(
@@ -183,13 +196,7 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
             let id = kataan_core::id::CanonicalId::parse(folder)
                 .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
             let record = loaded.documents.get(&id);
-            let document_count = loaded
-                .documents
-                .values()
-                .filter(|document| {
-                    !document.is_folder_index && document.id.containing_folder() == folder
-                })
-                .count();
+            let document_count = recursive_document_count(&loaded, folder);
             folders.push(FolderSummaryResponse {
                 r#type: ty.clone(),
                 folder: folder.clone(),
@@ -237,7 +244,7 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
                         .get(ty)
                         .and_then(|definition| definition.icon.clone())
                 }),
-            document_count: index.map(|index| index.documents.len()).unwrap_or_default(),
+            document_count: recursive_filesystem_document_count(&state.vault_path.join(folder)),
         });
     }
     push_code_folder_if_needed(
@@ -317,6 +324,13 @@ pub async fn highlight_file_by_path(
     Query(query): Query<FileQuery>,
 ) -> Result<Json<HighlightResponse>, ApiError> {
     highlight_response(&state, &query.path, query.theme.as_deref()).map(Json)
+}
+
+pub async fn raw_file_by_path(
+    State(state): State<AppState>,
+    Query(query): Query<FileQuery>,
+) -> Result<axum::response::Response, ApiError> {
+    raw_file_response(&state, &query.path)
 }
 
 pub async fn resolve_route(
@@ -415,6 +429,35 @@ fn file_response(state: &AppState, path: &str) -> Result<FileResponse, ApiError>
     })
 }
 
+fn raw_file_response(state: &AppState, path: &str) -> Result<axum::response::Response, ApiError> {
+    let file = resolve_vault_file(state, path)?;
+    let content_type = match file.extension.as_deref() {
+        Some("svg") => "image/svg+xml",
+        _ => {
+            return Err(ApiError(anyhow::anyhow!(
+                "file `{path}` cannot be previewed as an image"
+            )))
+        }
+    };
+    let bytes = std::fs::read(&file.full_path).map_err(|source| {
+        ApiError(
+            kataan_core::Error::Io {
+                path: file.full_path.clone(),
+                source,
+            }
+            .into(),
+        )
+    })?;
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+
+    Ok((headers, bytes).into_response())
+}
+
 fn highlight_response(
     state: &AppState,
     path: &str,
@@ -495,6 +538,7 @@ fn read_text_file(path: &std::path::Path) -> Result<String, ApiError> {
 fn file_kind(extension: Option<&str>) -> &'static str {
     match extension {
         Some("json") => "json",
+        Some("svg") => "image",
         Some(
             "md" | "txt" | "toml" | "rs" | "ts" | "js" | "sh" | "bash" | "yaml" | "yml" | "py",
         ) => "text",
@@ -507,9 +551,96 @@ fn normalize_lumis_line_html(html: &str) -> String {
         .replace("\n</div>", "</div>")
 }
 
+fn render_markdown_html(
+    markdown: &str,
+    theme_preference: Option<&str>,
+) -> Result<String, ApiError> {
+    use pulldown_cmark::{CodeBlockKind, CowStr, Event, Options, Parser, Tag, TagEnd};
+
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_FOOTNOTES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+
+    let mut events = Vec::new();
+    let mut parser = Parser::new_ext(markdown, options);
+
+    while let Some(event) = parser.next() {
+        match event {
+            Event::Start(Tag::CodeBlock(kind)) => {
+                let language_hint = match kind {
+                    CodeBlockKind::Fenced(language) => Some(language.to_string()),
+                    CodeBlockKind::Indented => None,
+                };
+                let mut code = String::new();
+                for code_event in parser.by_ref() {
+                    match code_event {
+                        Event::End(TagEnd::CodeBlock) => break,
+                        Event::Text(text) => code.push_str(&text),
+                        Event::Code(text) => code.push_str(&text),
+                        Event::SoftBreak | Event::HardBreak => code.push('\n'),
+                        _ => {}
+                    }
+                }
+                events.push(Event::Html(CowStr::Boxed(
+                    render_code_block_html(&code, language_hint.as_deref(), theme_preference)?
+                        .into_boxed_str(),
+                )));
+            }
+            other => events.push(other),
+        }
+    }
+
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(&mut html, events.into_iter());
+    Ok(html)
+}
+
+fn render_code_block_html(
+    code: &str,
+    language_hint: Option<&str>,
+    theme_preference: Option<&str>,
+) -> Result<String, ApiError> {
+    let Some((_, language)) = highlight_language_hint(language_hint) else {
+        let class = language_hint
+            .filter(|language| !language.trim().is_empty())
+            .map(|language| format!(" class=\"language-{}\"", escape_html_attr(language.trim())))
+            .unwrap_or_default();
+        return Ok(format!(
+            "<pre class=\"highlight-preview\"><code{class}>{}</code></pre>",
+            escape_html(code)
+        ));
+    };
+
+    let theme = lumis::themes::get(highlight_theme(theme_preference))
+        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    let formatter = lumis::HtmlInlineBuilder::new()
+        .language(language)
+        .theme(Some(theme))
+        .pre_class(Some("highlight-preview".to_owned()))
+        .build()
+        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+    Ok(normalize_lumis_line_html(&lumis::highlight(
+        code.trim_end_matches(['\r', '\n']),
+        formatter,
+    )))
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn escape_html_attr(value: &str) -> String {
+    escape_html(value).replace('"', "&quot;")
+}
+
 fn highlight_theme(theme_preference: Option<&str>) -> &'static str {
     match theme_preference {
-        Some("light") => "everforest_light",
+        Some("light") => "catppuccin_latte",
         _ => "catppuccin_mocha",
     }
 }
@@ -517,16 +648,38 @@ fn highlight_theme(theme_preference: Option<&str>) -> &'static str {
 fn highlight_language(
     extension: Option<&str>,
 ) -> Option<(&'static str, lumis::languages::Language)> {
-    match extension {
+    highlight_language_name(extension)
+}
+
+fn highlight_language_hint(
+    language_hint: Option<&str>,
+) -> Option<(&'static str, lumis::languages::Language)> {
+    let language = language_hint?.split_whitespace().next()?.trim();
+    highlight_language_name(Some(language))
+}
+
+fn highlight_language_name(
+    name: Option<&str>,
+) -> Option<(&'static str, lumis::languages::Language)> {
+    match name.map(str::to_ascii_lowercase).as_deref() {
+        Some("c") | Some("h") => Some(("c", lumis::languages::Language::C)),
+        Some("cc") | Some("cpp") | Some("cxx") | Some("c++") | Some("hpp") | Some("hxx") => {
+            Some(("cpp", lumis::languages::Language::CPlusPlus))
+        }
+        Some("hs") | Some("haskell") => Some(("haskell", lumis::languages::Language::Haskell)),
         Some("json") => Some(("json", lumis::languages::Language::JSON)),
         Some("toml") => Some(("toml", lumis::languages::Language::Toml)),
-        Some("md") => Some(("markdown", lumis::languages::Language::Markdown)),
-        Some("rs") => Some(("rust", lumis::languages::Language::Rust)),
-        Some("ts") => Some(("typescript", lumis::languages::Language::TypeScript)),
-        Some("js") => Some(("javascript", lumis::languages::Language::JavaScript)),
-        Some("sh" | "bash") => Some(("bash", lumis::languages::Language::Bash)),
-        Some("yaml" | "yml") => Some(("yaml", lumis::languages::Language::YAML)),
-        Some("py") => Some(("python", lumis::languages::Language::Python)),
+        Some("md") | Some("markdown") => Some(("markdown", lumis::languages::Language::Markdown)),
+        Some("rs") | Some("rust") => Some(("rust", lumis::languages::Language::Rust)),
+        Some("ts") | Some("typescript") => {
+            Some(("typescript", lumis::languages::Language::TypeScript))
+        }
+        Some("js") | Some("javascript") => {
+            Some(("javascript", lumis::languages::Language::JavaScript))
+        }
+        Some("sh") | Some("bash") => Some(("bash", lumis::languages::Language::Bash)),
+        Some("yaml") | Some("yml") => Some(("yaml", lumis::languages::Language::YAML)),
+        Some("py") | Some("python") => Some(("python", lumis::languages::Language::Python)),
         _ => None,
     }
 }
@@ -619,12 +772,15 @@ fn document_response_from_parts(
         )
     })?;
 
+    let html = render_markdown_html(&markdown, None)?;
+
     Ok(DocumentResponse {
         id: id.as_str().to_owned(),
         type_folder: id.top_level_folder().to_owned(),
         route_token: kataan_core::vault::route_token_for_id(id),
         metadata,
         markdown,
+        html,
     })
 }
 
@@ -846,6 +1002,48 @@ fn read_loaded_vault(state: &AppState) -> Result<kataan_core::vault::LoadedVault
         .map(|vault| vault.clone())
 }
 
+fn recursive_document_count(loaded: &kataan_core::vault::LoadedVault, folder: &str) -> usize {
+    let descendant_prefix = format!("{folder}/");
+    loaded
+        .documents
+        .values()
+        .filter(|document| {
+            !document.is_folder_index
+                && (document.id.containing_folder() == folder
+                    || document
+                        .id
+                        .containing_folder()
+                        .starts_with(&descendant_prefix))
+        })
+        .count()
+}
+
+fn recursive_filesystem_document_count(folder_path: &std::path::Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(folder_path) else {
+        return 0;
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                return recursive_filesystem_document_count(&path);
+            }
+            if !path.is_file()
+                || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+                || path.file_name().and_then(|name| name.to_str()) == Some("index.md")
+            {
+                return 0;
+            }
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                return 0;
+            };
+            path.with_file_name(format!("{stem}.toml")).exists() as usize
+        })
+        .sum()
+}
+
 fn direct_folders(
     loaded: &kataan_core::vault::LoadedVault,
     id: &kataan_core::id::CanonicalId,
@@ -960,6 +1158,18 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
+
+    #[tokio::test]
+    async fn watch_endpoint_returns_status() {
+        let root = test_vault();
+        let app = test_app(&root);
+
+        let response = request(app, "GET", "/api/watch").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn vault_endpoint_returns_root_index() {

@@ -10,6 +10,8 @@ import {
   Lightbulb,
   ListTodo,
   Newspaper,
+  PanelRightClose,
+  PanelRightOpen,
   Presentation,
   ReceiptText,
   BookOpen,
@@ -17,7 +19,6 @@ import {
   createElement,
   type IconNode,
 } from 'lucide';
-import { marked } from 'marked';
 
 import {
   getDocument,
@@ -25,6 +26,7 @@ import {
   getFolder,
   getHighlightedFile,
   getFolders,
+  getRawFileUrl,
   getSchema,
   getVault,
   rebuildIndexes,
@@ -41,6 +43,8 @@ import {
   type ValidateResponse,
 } from './api';
 
+const appShell = requireElement<HTMLElement>('app-shell');
+const propertiesToggle = requireElement<HTMLButtonElement>('properties-toggle');
 const vaultSummary = requireElement<HTMLElement>('vault-summary');
 const foldersEl = requireElement<HTMLElement>('folders');
 const documentsEl = requireElement<HTMLElement>('documents');
@@ -57,7 +61,14 @@ const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
 let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
 let selectedFile: FolderFile | null = null;
+let propertiesVisible = localStorage.getItem('kataan:properties-visible') === 'true';
 const loadedFolderIds = new Set<string>();
+
+setPropertiesVisible(propertiesVisible, { persist: false });
+
+propertiesToggle.addEventListener('click', () => {
+  setPropertiesVisible(!propertiesVisible, { persist: true });
+});
 
 validateButton.addEventListener('click', async () => {
   await runAction(async () => {
@@ -293,6 +304,29 @@ function currentTheme() {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
 }
 
+function setPropertiesVisible(visible: boolean, options: { persist?: boolean } = {}) {
+  propertiesVisible = visible;
+  appShell.classList.toggle('properties-hidden', !visible);
+  propertiesToggle.setAttribute('aria-pressed', String(visible));
+  propertiesToggle.setAttribute(
+    'aria-label',
+    visible ? 'Hide properties sidebar' : 'Open properties sidebar',
+  );
+  propertiesToggle.classList.toggle('button-primary', !visible);
+  propertiesToggle.classList.toggle('button-secondary', visible);
+  const icon = createElement(visible ? PanelRightClose : PanelRightOpen, {
+    width: 16,
+    height: 16,
+    'stroke-width': 2,
+  });
+  const label = document.createElement('span');
+  label.textContent = 'Sidebar';
+  propertiesToggle.replaceChildren(icon, label);
+  if (options.persist ?? true) {
+    localStorage.setItem('kataan:properties-visible', String(visible));
+  }
+}
+
 function renderHighlightedFile(html: string) {
   documentBody.className = 'reader-body file-reader-body';
   documentBody.innerHTML = html;
@@ -319,6 +353,16 @@ function renderFileBody(file: FileResponse) {
     pre.className = 'file-preview';
     pre.textContent = file.content;
     documentBody.append(pre);
+    return;
+  }
+
+  if (file.kind === 'image') {
+    documentBody.className = 'reader-body file-reader-body image-reader-body';
+    const preview = document.createElement('img');
+    preview.className = 'image-preview';
+    preview.src = getRawFileUrl(file.path);
+    preview.alt = file.name;
+    documentBody.append(preview);
     return;
   }
 
@@ -387,9 +431,7 @@ function folderChain(folder: string) {
 
 function renderDocumentBody(vaultDocument: DocumentResponse) {
   documentBody.className = 'reader-body';
-  documentBody.innerHTML = '';
-
-  documentBody.innerHTML = marked.parse(vaultDocument.markdown, { async: false });
+  documentBody.innerHTML = vaultDocument.html;
 }
 
 function renderSchema(schema: TomlSchemaResponse) {

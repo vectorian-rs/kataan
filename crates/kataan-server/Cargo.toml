@@ -10,7 +10,9 @@ anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
 kataan-core = { path = "../kataan-core" }
-lumis = { version = "0.9.0", default-features = false, features = ["lang-bash", "lang-javascript", "lang-json", "lang-markdown", "lang-python", "lang-rust", "lang-toml", "lang-typescript", "lang-yaml"] }
+lumis = { version = "0.9.0", default-features = false, features = ["lang-bash", "lang-c", "lang-cpp", "lang-haskell", "lang-javascript", "lang-json", "lang-markdown", "lang-python", "lang-rust", "lang-toml", "lang-typescript", "lang-yaml"] }
+notify = "6"
+pulldown-cmark = { version = "0.13" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

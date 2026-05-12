@@ -5,10 +5,13 @@ use std::{
 
 use kataan_core::vault::LoadedVault;
 
+use crate::watch::{SharedWatchStatus, WatchStatus};
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub vault_path: Arc<PathBuf>,
     pub vault: Arc<RwLock<LoadedVault>>,
+    pub watch: SharedWatchStatus,
 }
 
 impl AppState {
@@ -17,6 +20,7 @@ impl AppState {
         Ok(Self {
             vault_path: Arc::new(vault_path),
             vault: Arc::new(RwLock::new(loaded)),
+            watch: Arc::new(RwLock::new(WatchStatus::default())),
         })
     }
 

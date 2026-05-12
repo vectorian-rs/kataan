@@ -11,7 +11,7 @@ const { title = 'Kataan' } = Astro.props;
     <title>{title}</title>
   </head>
   <body>
-    <div class="app-shell">
+    <div id="app-shell" class="app-shell properties-hidden">
       <slot name="sidebar" />
       <slot name="list" />
       <slot name="content" />

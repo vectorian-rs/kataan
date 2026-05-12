@@ -61,13 +61,14 @@ export type DocumentResponse = {
   route_token: string;
   metadata: Record<string, unknown>;
   markdown: string;
+  html: string;
 };
 
 export type FileResponse = {
   path: string;
   name: string;
   extension?: string;
-  kind: 'json' | 'text' | 'unsupported';
+  kind: 'json' | 'text' | 'image' | 'unsupported';
   content: string;
 };
 
@@ -136,6 +137,10 @@ export async function getHighlightedFile(path: string, theme?: string) {
   const params = new URLSearchParams({ path });
   if (theme) params.set('theme', theme);
   return getJson<HighlightResponse>(`/api/file/highlight?${params.toString()}`);
+}
+
+export function getRawFileUrl(path: string) {
+  return `${API_BASE}/api/file/raw?path=${encodeURIComponent(path)}`;
 }
 
 export async function resolveRoute(type: string, token: string) {

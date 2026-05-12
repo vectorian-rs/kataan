@@ -6,6 +6,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 mod api;
 mod state;
+mod watch;
 
 use state::AppState;
 
@@ -33,6 +34,7 @@ async fn main() {
         }
     };
     info!("loaded vault successfully");
+    watch::spawn_watcher(state.clone());
 
     let app = api::router(state);
     let listener = tokio::net::TcpListener::bind(&cli.bind)

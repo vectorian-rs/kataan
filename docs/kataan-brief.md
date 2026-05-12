@@ -1,8 +1,10 @@
 # Kataan
 
-Kataan is a simple, filesystem-native knowledge workspace where humans and agents collaborate to turn intake information into organized Markdown knowledge.
+Kataan is a simple, filesystem-native knowledge workspace where humans and agents collaborate to turn intake information into organized markdown knowledge.
 
 It is inspired by AI-compiled knowledge bases, but it is not AI-only. Humans can create, edit, and organize content directly. Agents help with intake, classification, restructuring, summarization, and maintenance.
+
+Documents are connected with edges defined in the relationship ontology (`ontology.toml`).
 
 ## Core idea
 
@@ -254,7 +256,6 @@ name = "company-x"
 folder_checksum = "blake3:..."
 ```
 
-
 Each `documents` entry identifies one direct non-index document in the folder. `slug` is the filename without `.md` or `.toml`, relative to the folder that owns the index. Each `subfolders` entry identifies one direct child document folder by name and records that child's recursive `folder_checksum`. A folder's own `index.md` and `index.toml` hash into that folder's checksum, not the parent's document list.
 
 `index.toml` is system-managed. Humans may read it, but normal editing should happen through the application or agent tools so the index does not drift from the actual files. Validation should report any mismatch between `documents` and the files in the folder.
@@ -398,17 +399,17 @@ Path structure remains the primary containment model. Ontology predicates such a
 
 ## Core metadata fields
 
-| Field               | Meaning                                                                                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `type`              | What kind of thing this file is: `intake`, `project`, `person`, `topic`, `note`, `code`, `type-definition`, etc.                                    |
+| Field               | Meaning                                                                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`              | What kind of thing this file is: `intake`, `project`, `person`, `topic`, `note`, `code`, `type-definition`, etc.                                          |
 | `status`            | Optional lifecycle state, such as draft, active, paused, done, or archived. Intake documents use `type = "intake"`; they do not need `status = "intake"`. |
-| `markdown`          | Markdown file associated with this TOML sidecar.                                                                                                 |
-| `markdown_checksum` | BLAKE3 checksum of the associated Markdown file.                                                                                                 |
-| `aliases`           | Alternative names the human or agent can use to recognize this thing.                                                                            |
-| `labels`            | Lightweight tags for filtering and grouping, such as `aws`, `arm64`, `rust`, or `local-first`.                                                   |
-| `edges`             | Relationship table keyed by ontology predicate name.                                                                                             |
-| `created_by`        | Who created the file: human or agent.                                                                                                            |
-| `last_updated_by`   | Who last changed the file: human or agent.                                                                                                       |
+| `markdown`          | Markdown file associated with this TOML sidecar.                                                                                                          |
+| `markdown_checksum` | BLAKE3 checksum of the associated Markdown file.                                                                                                          |
+| `aliases`           | Alternative names the human or agent can use to recognize this thing.                                                                                     |
+| `labels`            | Lightweight tags for filtering and grouping, such as `aws`, `arm64`, `rust`, or `local-first`.                                                            |
+| `edges`             | Relationship table keyed by ontology predicate name.                                                                                                      |
+| `created_by`        | Who created the file: human or agent.                                                                                                                     |
+| `last_updated_by`   | Who last changed the file: human or agent.                                                                                                                |
 
 ## Enums and lifecycle
 
