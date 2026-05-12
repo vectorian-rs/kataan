@@ -62,7 +62,7 @@ let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
 let selectedFile: FolderFile | null = null;
 let propertiesVisible = localStorage.getItem('kataan:properties-visible') === 'true';
-const loadedFolderIds = new Set<string>();
+const expandedFolderIds = new Set<string>();
 
 setPropertiesVisible(propertiesVisible, { persist: false });
 
@@ -150,8 +150,16 @@ function renderFolderButton(folder: FolderSummary) {
   badge.textContent = String(folder.document_count);
 
   button.append(label, badge);
-  button.addEventListener('click', () => runAction(() => selectFolder(folder.folder)));
+  button.addEventListener('click', () => runAction(() => handleFolderClick(folder.folder)));
   return button;
+}
+
+async function handleFolderClick(folder: string) {
+  if (selectedFolder === folder && expandedFolderIds.has(folder)) {
+    collapseFolder(folder);
+    return;
+  }
+  await selectFolder(folder);
 }
 
 async function selectFolder(folder: string, options: { selectFirst?: boolean } = {}) {
@@ -160,7 +168,6 @@ async function selectFolder(folder: string, options: { selectFirst?: boolean } =
   updateActiveRows();
 
   const response = await getFolder(folder);
-  loadedFolderIds.add(folder);
   folderTitle.textContent = folderTitleFromResponse(response.id, response.metadata);
   renderChildFolders(folder, response.folders);
 
@@ -178,6 +185,13 @@ async function selectFolder(folder: string, options: { selectFirst?: boolean } =
 function renderChildFolders(parentId: string, folders: FolderChild[]) {
   const parentRow = foldersEl.querySelector<HTMLElement>(`[data-folder="${cssEscape(parentId)}"]`);
   if (!parentRow) return;
+
+  collapseFolder(parentId);
+  if (folders.length > 0) {
+    parentRow.classList.add('expanded');
+    parentRow.setAttribute('aria-expanded', 'true');
+    expandedFolderIds.add(parentId);
+  }
 
   let insertAfter = parentRow;
   for (const folder of folders) {
@@ -207,8 +221,28 @@ function renderChildFolderButton(folder: FolderChild, depth: number) {
 
   label.append(icon, name);
   button.append(label);
-  button.addEventListener('click', () => runAction(() => selectFolder(folder.id)));
+  button.addEventListener('click', () => runAction(() => handleFolderClick(folder.id)));
   return button;
+}
+
+function collapseFolder(folder: string) {
+  const row = foldersEl.querySelector<HTMLElement>(`[data-folder="${cssEscape(folder)}"]`);
+  row?.classList.remove('expanded');
+  row?.setAttribute('aria-expanded', 'false');
+
+  const descendantPrefix = `${folder}/`;
+  foldersEl.querySelectorAll<HTMLElement>('[data-folder]').forEach((candidate) => {
+    const candidateFolder = candidate.dataset.folder;
+    if (candidateFolder?.startsWith(descendantPrefix)) {
+      candidate.remove();
+    }
+  });
+
+  for (const expandedFolder of [...expandedFolderIds]) {
+    if (expandedFolder === folder || expandedFolder.startsWith(descendantPrefix)) {
+      expandedFolderIds.delete(expandedFolder);
+    }
+  }
 }
 
 function renderFolderContents(documents: FolderDocument[], files: FolderFile[], hasChildFolders: boolean) {
