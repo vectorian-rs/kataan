@@ -10,7 +10,7 @@ use notify::{RecursiveMode, Watcher};
 use serde::Serialize;
 use tracing::{debug, error, info};
 
-use crate::state::AppState;
+use crate::{ignore::VaultIgnore, state::AppState};
 
 const DEBOUNCE: Duration = Duration::from_millis(900);
 const WATCH_CHANNEL_TIMEOUT: Duration = Duration::from_millis(200);
@@ -59,6 +59,7 @@ pub fn spawn_watcher(state: AppState) {
 }
 
 fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
+    let mut ignore = VaultIgnore::load(&vault_path)?;
     let initial_fingerprint = vault_fingerprint(&vault_path)?;
     set_status(&state.watch, |status| {
         status.last_fingerprint = Some(initial_fingerprint);
@@ -82,7 +83,7 @@ fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
                 if event
                     .paths
                     .iter()
-                    .all(|path| should_ignore_path(&vault_path, path))
+                    .all(|path| ignore.should_ignore_path(path))
                 {
                     continue;
                 }
@@ -104,6 +105,7 @@ fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
                 if pending && last_event.elapsed().unwrap_or_default() >= DEBOUNCE {
                     pending = false;
                     process_change(&state);
+                    ignore = VaultIgnore::load(&vault_path)?;
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -207,14 +209,24 @@ fn collect_fingerprint_entries(
     directory: &Path,
     entries: &mut Vec<(String, String)>,
 ) -> anyhow::Result<()> {
+    let ignore = VaultIgnore::load(root)?;
+    collect_fingerprint_entries_with_ignore(root, directory, &ignore, entries)
+}
+
+fn collect_fingerprint_entries_with_ignore(
+    root: &Path,
+    directory: &Path,
+    ignore: &VaultIgnore,
+    entries: &mut Vec<(String, String)>,
+) -> anyhow::Result<()> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let path = entry.path();
-        if should_ignore_path(root, &path) {
+        if ignore.should_ignore_path(&path) {
             continue;
         }
         if path.is_dir() {
-            collect_fingerprint_entries(root, &path, entries)?;
+            collect_fingerprint_entries_with_ignore(root, &path, ignore, entries)?;
         } else if path.is_file() {
             let relative = path
                 .strip_prefix(root)
@@ -226,18 +238,6 @@ fn collect_fingerprint_entries(
         }
     }
     Ok(())
-}
-
-fn should_ignore_path(root: &Path, path: &Path) -> bool {
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    relative.components().any(|component| {
-        let name = component.as_os_str().to_string_lossy();
-        matches!(
-            name.as_ref(),
-            ".git" | "target" | "node_modules" | "dist" | ".astro"
-        ) || name.starts_with(".swp")
-            || name.ends_with('~')
-    })
 }
 
 fn current_fingerprint(status: &SharedWatchStatus) -> Option<String> {
@@ -268,5 +268,24 @@ mod tests {
         assert!(is_rebuild_repairable("index-drift"));
         assert!(!is_rebuild_repairable("invalid-toml"));
         assert!(!is_rebuild_repairable("missing-folder-index"));
+    }
+
+    #[test]
+    fn vault_fingerprint_respects_gitignore() {
+        let root =
+            std::env::temp_dir().join(format!("kataan-server-watch-ignore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("ignored")).unwrap();
+        std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::write(root.join("kept.md"), "one").unwrap();
+        std::fs::write(root.join("ignored/file.md"), "one").unwrap();
+
+        let initial = vault_fingerprint(&root).unwrap();
+        std::fs::write(root.join("ignored/file.md"), "two").unwrap();
+        assert_eq!(initial, vault_fingerprint(&root).unwrap());
+        std::fs::write(root.join("kept.md"), "two").unwrap();
+        assert_ne!(initial, vault_fingerprint(&root).unwrap());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

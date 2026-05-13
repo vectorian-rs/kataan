@@ -5,6 +5,7 @@ use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod api;
+mod ignore;
 mod state;
 mod watch;
 

@@ -506,6 +506,9 @@ fn resolve_vault_file(state: &AppState, path: &str) -> Result<ResolvedVaultFile,
     if !full_path.is_file() {
         return Err(ApiError(anyhow::anyhow!("file `{path}` does not exist")));
     }
+    if crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?.should_ignore_path(&full_path) {
+        return Err(ApiError(anyhow::anyhow!("file `{path}` is ignored")));
+    }
     let extension = full_path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -830,6 +833,7 @@ fn filesystem_canonical_folder_response(
     let markdown = std::fs::read_to_string(folder_path.join("index.md")).ok();
     let mut folders = Vec::new();
     let mut documents = Vec::new();
+    let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
 
     for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
         path: folder_path.clone(),
@@ -840,6 +844,9 @@ fn filesystem_canonical_folder_response(
             source,
         })?;
         let path = entry.path();
+        if ignore.should_ignore_path(&path) {
+            continue;
+        }
         let name = entry.file_name().to_string_lossy().to_string();
         if path.is_dir() {
             folders.push(FolderChildResponse {
@@ -894,6 +901,7 @@ fn folder_files(
         .flat_map(|document| [document.markdown.as_str(), document.toml.as_str()])
         .collect::<std::collections::BTreeSet<_>>();
     let mut files = Vec::new();
+    let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
 
     for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
         path: folder_path.clone(),
@@ -904,7 +912,7 @@ fn folder_files(
             source,
         })?;
         let path = entry.path();
-        if !path.is_file() {
+        if ignore.should_ignore_path(&path) || !path.is_file() {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -970,6 +978,7 @@ fn direct_code_folders(state: &AppState, id: &str) -> Result<Vec<FolderChildResp
         return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
     }
 
+    let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
     let mut folders = Vec::new();
     for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
         path: folder_path.clone(),
@@ -980,7 +989,7 @@ fn direct_code_folders(state: &AppState, id: &str) -> Result<Vec<FolderChildResp
             source,
         })?;
         let path = entry.path();
-        if !path.is_dir() {
+        if ignore.should_ignore_path(&path) || !path.is_dir() {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
