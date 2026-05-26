@@ -17,6 +17,15 @@
   --info: #3469a6;
   --top-bar-height: 64px;
   --top-bar-padding-block: 14px;
+  --sidebar-width: 220px;
+  --sidebar-min-width: 160px;
+  --sidebar-max-width: 420px;
+  --list-width: 320px;
+  --list-min-width: 220px;
+  --list-max-width: 560px;
+  --properties-width: 260px;
+  --properties-min-width: 220px;
+  --properties-max-width: 420px;
 }
 
 [data-theme="dark"] {
@@ -84,14 +93,21 @@ button:focus-visible,
 
 .app-shell {
   display: grid;
-  grid-template-columns: 220px 320px minmax(0, 1fr) 260px;
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+    clamp(var(--list-min-width), var(--list-width), var(--list-max-width))
+    minmax(0, 1fr)
+    clamp(var(--properties-min-width), var(--properties-width), var(--properties-max-width));
   block-size: 100vh;
   overflow: hidden;
   background: var(--surface-1);
 }
 
 .app-shell.properties-hidden {
-  grid-template-columns: 220px 320px minmax(0, 1fr);
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+    clamp(var(--list-min-width), var(--list-width), var(--list-max-width))
+    minmax(0, 1fr);
 }
 
 .app-shell.properties-hidden .properties-panel {
@@ -116,6 +132,59 @@ button:focus-visible,
 .list-panel,
 .properties-panel {
   background: var(--surface-1);
+}
+
+.sidebar,
+.list-panel,
+.properties-panel {
+  position: relative;
+}
+
+.column-resize-handle {
+  position: absolute;
+  inset-block: 0;
+  z-index: 2;
+  inline-size: 8px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.column-resize-handle.resize-inline-end {
+  inset-inline-end: 0;
+}
+
+.column-resize-handle.resize-inline-start {
+  inset-inline-start: 0;
+}
+
+.column-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inline-size: 2px;
+  background: transparent;
+}
+
+.column-resize-handle.resize-inline-end::after {
+  inset-inline-end: 0;
+}
+
+.column-resize-handle.resize-inline-start::after {
+  inset-inline-start: 0;
+}
+
+.column-resize-handle:hover::after,
+.column-resize-handle:focus-visible::after,
+.column-resize-handle.is-resizing::after {
+  background: var(--accent);
+}
+
+body.column-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .content-pane {
@@ -816,7 +885,7 @@ button:focus-visible,
 
 @media (width < 1100px) {
   .app-shell {
-    grid-template-columns: 220px 1fr;
+    grid-template-columns: clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width)) minmax(0, 1fr);
   }
 
   .list-panel,
