@@ -416,7 +416,7 @@ fn file_response(state: &AppState, path: &str) -> Result<FileResponse, ApiError>
     let file = resolve_vault_file(state, path)?;
     let kind = file_kind(file.extension.as_deref()).to_owned();
     let content = match kind.as_str() {
-        "json" | "text" => read_text_file(&file.full_path)?,
+        "html" | "json" | "text" => read_text_file(&file.full_path)?,
         _ => String::new(),
     };
 
@@ -540,6 +540,7 @@ fn read_text_file(path: &std::path::Path) -> Result<String, ApiError> {
 
 fn file_kind(extension: Option<&str>) -> &'static str {
     match extension {
+        Some("html") | Some("htm") => "html",
         Some("json") => "json",
         Some("svg") => "image",
         Some(
@@ -556,6 +557,7 @@ fn normalize_lumis_line_html(html: &str) -> String {
 
 fn render_markdown_html(
     markdown: &str,
+    base_folder: Option<&str>,
     theme_preference: Option<&str>,
 ) -> Result<String, ApiError> {
     use pulldown_cmark::{CodeBlockKind, CowStr, Event, Options, Parser, Tag, TagEnd};
@@ -591,6 +593,19 @@ fn render_markdown_html(
                         .into_boxed_str(),
                 )));
             }
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => events.push(Event::Start(Tag::Image {
+                link_type,
+                dest_url: rewrite_markdown_svg_url(&dest_url, base_folder)
+                    .map(CowStr::Boxed)
+                    .unwrap_or(dest_url),
+                title,
+                id,
+            })),
             other => events.push(other),
         }
     }
@@ -598,6 +613,106 @@ fn render_markdown_html(
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events.into_iter());
     Ok(html)
+}
+
+fn rewrite_markdown_svg_url(dest_url: &str, base_folder: Option<&str>) -> Option<Box<str>> {
+    if !is_local_markdown_url(dest_url) {
+        return None;
+    }
+
+    let (path_part, query, fragment) = split_markdown_url(dest_url);
+    if !path_part.to_ascii_lowercase().ends_with(".svg") {
+        return None;
+    }
+
+    let vault_relative_path = normalize_markdown_asset_path(base_folder.unwrap_or(""), path_part)?;
+    let mut rewritten = format!(
+        "/api/file/raw?path={}",
+        percent_encode_query_value(&vault_relative_path)
+    );
+    if let Some(query) = query {
+        rewritten.push('&');
+        rewritten.push_str(query);
+    }
+    if let Some(fragment) = fragment {
+        rewritten.push('#');
+        rewritten.push_str(fragment);
+    }
+    Some(rewritten.into_boxed_str())
+}
+
+fn is_local_markdown_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    if trimmed.starts_with('#') {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if matches!(
+        lower.split_once(':').map(|(scheme, _)| scheme),
+        Some("http" | "https" | "data" | "mailto" | "tel" | "javascript")
+    ) {
+        return false;
+    }
+    true
+}
+
+fn split_markdown_url(url: &str) -> (&str, Option<&str>, Option<&str>) {
+    let without_fragment;
+    let fragment;
+    if let Some((head, tail)) = url.split_once('#') {
+        without_fragment = head;
+        fragment = Some(tail);
+    } else {
+        without_fragment = url;
+        fragment = None;
+    }
+
+    if let Some((path, query)) = without_fragment.split_once('?') {
+        (path, Some(query), fragment)
+    } else {
+        (without_fragment, None, fragment)
+    }
+}
+
+fn normalize_markdown_asset_path(base_folder: &str, path: &str) -> Option<String> {
+    let path = path.trim().replace('\\', "/");
+    let mut parts = Vec::new();
+
+    if !path.starts_with('/') {
+        for part in base_folder.split('/') {
+            if !part.is_empty() {
+                parts.push(part.to_owned());
+            }
+        }
+    }
+
+    for part in path.trim_start_matches('/').split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            _ => parts.push(part.to_owned()),
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
+fn percent_encode_query_value(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
+            output.push(byte as char);
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
 }
 
 fn render_code_block_html(
@@ -775,7 +890,12 @@ fn document_response_from_parts(
         )
     })?;
 
-    let html = render_markdown_html(&markdown, None)?;
+    let base_folder = if metadata.markdown == "index.md" {
+        id.as_str()
+    } else {
+        id.folder()
+    };
+    let html = render_markdown_html(&markdown, Some(base_folder), None)?;
 
     Ok(DocumentResponse {
         id: id.as_str().to_owned(),
@@ -1311,6 +1431,19 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
     }
 
     #[tokio::test]
+    async fn file_endpoint_returns_html_file() {
+        let root = test_vault();
+        fs::write(root.join("projects/chart.html"), "<h1>Chart</h1>").unwrap();
+        let app = test_app(&root);
+
+        let response = request(app, "GET", "/api/file?path=projects%2Fchart.html").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
     async fn highlight_endpoint_returns_html() {
         let root = test_vault();
         fs::write(root.join("projects/data.json"), r#"{"name":"demo"}"#).unwrap();
@@ -1330,6 +1463,33 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
         assert_eq!(
             normalize_lumis_line_html(html),
             "<div class=\"line\">{</div><div class=\"line\">}</div>"
+        );
+    }
+
+    #[test]
+    fn markdown_svg_images_are_rewritten_to_raw_file_api() {
+        let html = render_markdown_html(
+            "![Look-to-book pollution map](charts/look-to-book.svg)",
+            Some("projects/airline-anchor"),
+            None,
+        )
+        .unwrap();
+
+        assert!(html.contains(
+            "src=\"/api/file/raw?path=projects/airline-anchor/charts/look-to-book.svg\""
+        ));
+        assert!(html.contains("alt=\"Look-to-book pollution map\""));
+    }
+
+    #[test]
+    fn markdown_svg_images_do_not_escape_vault() {
+        assert_eq!(
+            rewrite_markdown_svg_url("../../diagram.svg", Some("projects")),
+            None
+        );
+        assert_eq!(
+            rewrite_markdown_svg_url("https://example.com/diagram.svg", Some("projects")),
+            None
         );
     }
 

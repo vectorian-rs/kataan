@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+const AGENT_GUIDE: &str = include_str!("../../../docs/kataan-agent-guide.md");
+
 #[derive(Debug, Parser)]
-#[command(name = "kataan")]
+#[command(name = "kataan-cli")]
 #[command(about = "Filesystem-native Markdown/TOML knowledge workspace")]
 struct Cli {
     #[command(subcommand)]
@@ -24,6 +26,8 @@ enum Command {
     RebuildIndexes {
         path: PathBuf,
     },
+    #[command(alias = "quide")]
+    Guide,
 }
 
 fn main() -> Result<()> {
@@ -55,6 +59,9 @@ fn main() -> Result<()> {
         Command::RebuildIndexes { path } => {
             kataan_core::rebuild::rebuild_indexes(&path)?;
             println!("rebuilt indexes at {}", path.display());
+        }
+        Command::Guide => {
+            print!("{AGENT_GUIDE}");
         }
     }
 

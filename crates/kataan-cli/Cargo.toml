@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "kataan"
+name = "kataan-cli"
 path = "src/main.rs"
 
 [dependencies]

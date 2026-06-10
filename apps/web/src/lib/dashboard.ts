@@ -350,14 +350,26 @@ function renderDocumentButton(vaultDocument: FolderDocument) {
 }
 
 function renderFileRow(file: FolderFile) {
-  const row = clickableRow('file-row');
+  const row = clickableRow(`file-row ${fileExtensionClass(file.extension)}`);
 
   const title = document.createElement('strong');
   title.textContent = file.name;
 
   const meta = document.createElement('span');
-  meta.className = 'muted';
-  meta.textContent = file.extension ? `${file.extension.toUpperCase()} · ${file.path}` : file.path;
+  meta.className = 'muted file-meta';
+  if (file.extension) {
+    const extension = document.createElement('span');
+    extension.className = 'file-extension-label';
+    extension.textContent = file.extension.toUpperCase();
+
+    const path = document.createElement('span');
+    path.className = 'file-path';
+    path.textContent = file.path;
+
+    meta.append(extension, path);
+  } else {
+    meta.textContent = file.path;
+  }
 
   const icon = document.createElement('span');
   icon.className = 'file-icon';
@@ -372,21 +384,57 @@ function renderFileRow(file: FolderFile) {
   return row;
 }
 
+function fileExtensionClass(extension: string | undefined) {
+  const normalized = extension?.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  return normalized ? `file-ext-${normalized}` : 'file-ext-none';
+}
+
 async function selectFile(file: FolderFile) {
   selectedDocument = null;
   selectedFile = file;
   updateActiveRows();
-  try {
-    const highlighted = await getHighlightedFile(file.path, currentTheme());
-    breadcrumb.textContent = highlighted.path.replaceAll('/', ' › ');
-    documentTitle.textContent = highlighted.name;
-    renderHighlightedFile(highlighted.html);
-  } catch {
-    const vaultFile = await getFile(file.path);
-    breadcrumb.textContent = vaultFile.path.replaceAll('/', ' › ');
-    documentTitle.textContent = vaultFile.name;
-    renderFileBody(vaultFile);
+
+  if (isHighlightableFile(file)) {
+    try {
+      const highlighted = await getHighlightedFile(file.path, currentTheme());
+      breadcrumb.textContent = highlighted.path.replaceAll('/', ' › ');
+      documentTitle.textContent = highlighted.name;
+      renderHighlightedFile(highlighted.html);
+      return;
+    } catch {
+      // Fall back to the generic file preview below if highlighting fails.
+    }
   }
+
+  const vaultFile = await getFile(file.path);
+  breadcrumb.textContent = vaultFile.path.replaceAll('/', ' › ');
+  documentTitle.textContent = vaultFile.name;
+  renderFileBody(vaultFile);
+}
+
+function isHighlightableFile(file: FolderFile) {
+  return new Set([
+    'bash',
+    'c',
+    'cc',
+    'cpp',
+    'cxx',
+    'h',
+    'hpp',
+    'hs',
+    'hxx',
+    'js',
+    'json',
+    'md',
+    'py',
+    'rs',
+    'sh',
+    'toml',
+    'ts',
+    'txt',
+    'yaml',
+    'yml',
+  ]).has(file.extension?.toLowerCase() ?? '');
 }
 
 function currentTheme() {
@@ -518,6 +566,17 @@ function renderFileBody(file: FileResponse) {
       pre.textContent = file.content;
     }
     documentBody.append(pre);
+    return;
+  }
+
+  if (file.kind === 'html') {
+    documentBody.className = 'reader-body file-reader-body html-reader-body';
+    const frame = document.createElement('iframe');
+    frame.className = 'html-preview';
+    frame.title = file.name;
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.srcdoc = file.content;
+    documentBody.append(frame);
     return;
   }
 
