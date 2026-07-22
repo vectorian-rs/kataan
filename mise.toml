@@ -50,6 +50,10 @@ run = [
 description = "Run all Rust tests"
 run = "cargo test"
 
+[tasks.build-release]
+description = "Build all Rust binaries in release mode"
+run = "cargo build --workspace --release --bins"
+
 [tasks.check]
 description = "Run Rust format, tests, clippy, and web build"
 run = [

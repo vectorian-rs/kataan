@@ -21,6 +21,21 @@ import ThemeToggle from './ThemeToggle.astro';
       <ThemeToggle />
     </header>
 
+    <section class="search-panel" aria-label="Vault search">
+      <form id="search-form" class="search-form">
+        <label class="visually-hidden" for="search-input">Search vault</label>
+        <input
+          id="search-input"
+          class="search-input"
+          name="q"
+          type="search"
+          autocomplete="off"
+          placeholder="Search vault…"
+        />
+      </form>
+      <div id="search-status" class="search-status muted">Checking search index…</div>
+    </section>
+
     <FolderNav />
 
     <section class="section">

@@ -113,6 +113,64 @@ export type TomlSchemaResponse = {
   toml_template: string;
 };
 
+export type SearchQuery = {
+  q?: string;
+  kind?: 'document' | 'folder' | 'file';
+  type?: string;
+  status?: string;
+  facet?: string;
+  path_prefix?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type SearchResponse = {
+  query: string;
+  mode: 'keyword';
+  results: SearchResult[];
+  facets: SearchFacetCount[];
+};
+
+export type SearchResult = {
+  kind: 'document' | 'folder' | 'file';
+  id?: string;
+  path: string;
+  title?: string;
+  type?: string;
+  status?: string;
+  extension?: string;
+  route_token?: string;
+  facets: string[];
+  snippet?: string;
+  score: number;
+};
+
+export type SearchFacetCount = {
+  facet: string;
+  count: number;
+};
+
+export type SearchStatus = {
+  index_path: string;
+  exists: boolean;
+  item_count: number;
+  document_count: number;
+  folder_count: number;
+  file_count: number;
+  last_indexed_at?: string | null;
+  extractor_version?: string | null;
+};
+
+export type SearchReindexResponse = {
+  ok: boolean;
+  index_path: string;
+  item_count: number;
+  document_count: number;
+  folder_count: number;
+  file_count: number;
+  indexed_at: string;
+};
+
 export async function getVault() {
   return getJson<VaultIndex>('/api/vault');
 }
@@ -157,6 +215,32 @@ export async function validateVault() {
 
 export async function rebuildIndexes() {
   return postJson<{ ok: boolean }>('/api/rebuild-indexes');
+}
+
+export async function searchVault(query: SearchQuery) {
+  const params = new URLSearchParams();
+  appendQueryParam(params, 'q', query.q);
+  appendQueryParam(params, 'kind', query.kind);
+  appendQueryParam(params, 'type', query.type);
+  appendQueryParam(params, 'status', query.status);
+  appendQueryParam(params, 'facet', query.facet);
+  appendQueryParam(params, 'path_prefix', query.path_prefix);
+  appendQueryParam(params, 'limit', query.limit);
+  appendQueryParam(params, 'offset', query.offset);
+  return getJson<SearchResponse>(`/api/search?${params.toString()}`);
+}
+
+export async function getSearchStatus() {
+  return getJson<SearchStatus>('/api/search/status');
+}
+
+export async function reindexSearch() {
+  return postJson<SearchReindexResponse>('/api/search/reindex');
+}
+
+function appendQueryParam(params: URLSearchParams, key: string, value: string | number | undefined) {
+  if (value === undefined || value === '') return;
+  params.set(key, String(value));
 }
 
 async function getJson<T>(path: string): Promise<T> {

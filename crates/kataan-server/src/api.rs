@@ -146,6 +146,9 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/watch", get(watch_status))
+        .route("/api/search", get(search))
+        .route("/api/search/status", get(search_status))
+        .route("/api/search/reindex", post(search_reindex))
         .route("/api/vault", get(vault))
         .route("/api/folders", get(folders))
         .route("/api/folder", get(folder_by_id))
@@ -174,6 +177,35 @@ pub async fn watch_status(State(state): State<AppState>) -> Json<WatchStatus> {
         .map(|status| status.clone())
         .unwrap_or_default();
     Json(status)
+}
+
+pub async fn search(
+    State(state): State<AppState>,
+    Query(query): Query<kataan_search::SearchQuery>,
+) -> Result<Json<kataan_search::SearchResponse>, ApiError> {
+    let index = kataan_search::SearchIndex::open_default(state.vault_path.as_ref())
+        .map_err(ApiError::from)?;
+    index.search(&query).map(Json).map_err(ApiError::from)
+}
+
+pub async fn search_status(
+    State(state): State<AppState>,
+) -> Result<Json<kataan_search::SearchStatus>, ApiError> {
+    kataan_search::SearchIndex::status_for_vault(state.vault_path.as_ref())
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+pub async fn search_reindex(
+    State(state): State<AppState>,
+) -> Result<Json<kataan_search::ReindexResponse>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
+    let index = kataan_search::SearchIndex::open_default(state.vault_path.as_ref())
+        .map_err(ApiError::from)?;
+    index
+        .reindex_loaded(&loaded)
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 pub async fn vault(
@@ -1515,6 +1547,73 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
         assert_eq!(response.status(), StatusCode::OK);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn search_endpoints_reindex_and_query_documents() {
+        let root = test_vault();
+        let default_index_path = kataan_search::default_index_path(&root);
+        let _ = fs::remove_file(&default_index_path);
+        fs::write(
+            root.join("notes/session-store.md"),
+            "# Session Store\n\nThe durable platypus store coordinates local search state.",
+        )
+        .unwrap();
+        fs::write(
+            root.join("notes/session-store.toml"),
+            r#"type = "note"
+status = "active"
+markdown = "session-store.md"
+aliases = ["session cache"]
+labels = ["local-first"]
+"#,
+        )
+        .unwrap();
+
+        let app = test_app(&root);
+
+        let status_response = request(app.clone(), "GET", "/api/search/status").await;
+        assert_eq!(status_response.status(), StatusCode::OK);
+        let status: kataan_search::SearchStatus = json_response(status_response).await;
+        assert!(!status.exists);
+
+        let reindex_response = request(app.clone(), "POST", "/api/search/reindex").await;
+        assert_eq!(reindex_response.status(), StatusCode::OK);
+        let reindex: kataan_search::ReindexResponse = json_response(reindex_response).await;
+        assert!(reindex.document_count > 0);
+
+        let search_response = request(
+            app.clone(),
+            "GET",
+            "/api/search?q=platypus&kind=document&type=note&status=active&facet=local-first",
+        )
+        .await;
+        assert_eq!(search_response.status(), StatusCode::OK);
+        let search: kataan_search::SearchResponse = json_response(search_response).await;
+        assert!(search
+            .results
+            .iter()
+            .any(|result| result.id.as_deref() == Some("notes/session-store")));
+
+        let alias_response = request(app, "GET", "/api/search?q=session%20cache").await;
+        assert_eq!(alias_response.status(), StatusCode::OK);
+        let alias_search: kataan_search::SearchResponse = json_response(alias_response).await;
+        assert!(alias_search
+            .results
+            .iter()
+            .any(|result| result.id.as_deref() == Some("notes/session-store")));
+
+        let _ = fs::remove_file(default_index_path);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    async fn json_response<T: serde::de::DeserializeOwned>(
+        response: axum::response::Response,
+    ) -> T {
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
     }
 
     async fn request(app: Router, method: &str, uri: &str) -> axum::response::Response {

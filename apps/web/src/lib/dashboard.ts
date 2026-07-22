@@ -28,9 +28,12 @@ import {
   getFolders,
   getRawFileUrl,
   getSchema,
+  getSearchStatus,
   getVault,
   rebuildIndexes,
+  reindexSearch,
   resolveRoute,
+  searchVault,
   validateVault,
   type Diagnostic,
   type DocumentResponse,
@@ -39,6 +42,9 @@ import {
   type FileResponse,
   type FolderFile,
   type FolderSummary,
+  type SearchResponse,
+  type SearchResult,
+  type SearchStatus,
   type TomlSchemaResponse,
   type ValidateResponse,
 } from './api';
@@ -60,6 +66,9 @@ const metadataPanel = requireElement<HTMLElement>('metadata-panel');
 const schemaPanel = requireElement<HTMLElement>('schema-panel');
 const validateButton = requireElement<HTMLButtonElement>('validate-button');
 const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
+const searchForm = requireElement<HTMLFormElement>('search-form');
+const searchInput = requireElement<HTMLInputElement>('search-input');
+const searchStatusEl = requireElement<HTMLElement>('search-status');
 
 type ResizableColumn = 'sidebar' | 'list' | 'properties';
 
@@ -112,6 +121,9 @@ let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
 let selectedFile: FolderFile | null = null;
 let propertiesVisible = localStorage.getItem('kataan:properties-visible') === 'true';
+let searchStatus: SearchStatus | null = null;
+let searchDebounce: number | undefined;
+let activeSearchRequest = 0;
 const columnWidths = new Map<ResizableColumn, number>();
 const expandedFolderIds = new Set<string>();
 
@@ -133,11 +145,30 @@ validateButton.addEventListener('click', async () => {
 
 rebuildButton.addEventListener('click', async () => {
   await runAction(async () => {
+    setSearchStatusMessage('Rebuilding vault and search index…');
     await rebuildIndexes();
     await loadFolders();
+    await reindexSearch();
+    await refreshSearchStatus();
+    if (searchInput.value.trim()) {
+      await runSearch(searchInput.value);
+    }
     renderDiagnostics(await validateVault());
   });
 });
+
+searchForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void runAction(() => runSearch(searchInput.value));
+});
+
+searchInput.addEventListener('input', () => {
+  window.clearTimeout(searchDebounce);
+  searchDebounce = window.setTimeout(() => {
+    void runAction(() => runSearch(searchInput.value));
+  }, 180);
+});
+
 
 window.addEventListener('kataan:theme-change', () => {
   if (selectedFile) {
@@ -148,6 +179,7 @@ window.addEventListener('kataan:theme-change', () => {
 await runAction(async () => {
   await loadVault();
   await loadFolders();
+  await refreshSearchStatus();
   await restoreRouteSelection();
 });
 
@@ -184,6 +216,228 @@ async function loadFolders() {
   }
 }
 
+async function refreshSearchStatus() {
+  try {
+    searchStatus = await getSearchStatus();
+    renderSearchStatus(searchStatus);
+  } catch (error) {
+    searchStatus = null;
+    const message = error instanceof Error ? error.message : String(error);
+    searchStatusEl.textContent = `Search unavailable: ${message}`;
+  }
+}
+
+function renderSearchStatus(status: SearchStatus) {
+  if (!status.exists || status.item_count === 0) {
+    searchStatusEl.textContent = 'Search index not built. Use Rebuild.';
+    return;
+  }
+
+  searchStatusEl.textContent = `Search ready · ${status.item_count} items`;
+}
+
+function setSearchStatusMessage(message: string) {
+  searchStatusEl.textContent = message;
+}
+
+async function runSearch(value: string) {
+  const query = value.trim();
+  const requestId = ++activeSearchRequest;
+
+  if (!query) {
+    if (selectedFolder) {
+      await selectFolder(selectedFolder, { selectFirst: false });
+    }
+    return;
+  }
+
+  if (!searchStatus) {
+    await refreshSearchStatus();
+  }
+
+  if (!searchStatus?.exists || searchStatus.item_count === 0) {
+    renderMissingSearchIndex(query);
+    return;
+  }
+
+  renderSearchLoading(query);
+  try {
+    const response = await searchVault({ q: query, limit: 50 });
+    if (requestId !== activeSearchRequest) return;
+    renderSearchResults(response);
+  } catch (error) {
+    if (requestId !== activeSearchRequest) return;
+    renderSearchListError(error);
+  }
+}
+
+function renderMissingSearchIndex(query: string) {
+  folderTitle.textContent = 'Search';
+  documentsEl.className = 'search-results-panel';
+  const message = emptyListNote(`Use Rebuild to build the search index before searching for “${query}”.`);
+  documentsEl.replaceChildren(listSection('Search index required', [message]));
+}
+
+function renderSearchLoading(query: string) {
+  folderTitle.textContent = 'Search';
+  documentsEl.className = 'search-results-panel';
+  documentsEl.replaceChildren(listSection('Searching', [emptyListNote(`Searching for “${query}”…`)]));
+}
+
+function renderSearchListError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  folderTitle.textContent = 'Search';
+  documentsEl.className = 'search-results-panel';
+  const note = document.createElement('div');
+  note.className = 'diagnostic error';
+  note.textContent = message;
+  documentsEl.replaceChildren(listSection('Search error', [note]));
+}
+
+function renderSearchResults(response: SearchResponse) {
+  folderTitle.textContent = 'Search results';
+  documentsEl.className = 'search-results-panel';
+
+  const rows = response.results.map(renderSearchResult);
+  const summary = searchSummary(response);
+  const sections = [
+    listSection(summary, rows.length > 0 ? rows : [emptyListNote('No results.')]),
+  ];
+
+  if (response.facets.length > 0) {
+    sections.push(listSection('Result facets', [renderSearchFacetSummary(response.facets)]));
+  }
+
+  documentsEl.replaceChildren(...sections);
+}
+
+function searchSummary(response: SearchResponse) {
+  const count = response.results.length;
+  const suffix = count === 1 ? 'result' : 'results';
+  return `${count} ${suffix} for “${response.query}”`;
+}
+
+function renderSearchResult(result: SearchResult) {
+  const row = clickableRow('search-result-row');
+  if (result.kind === 'document' && result.id) row.dataset.document = result.id;
+  if (result.kind === 'folder' && result.id) row.dataset.folder = result.id;
+
+  const topLine = document.createElement('div');
+  topLine.className = 'search-result-topline';
+
+  const kind = document.createElement('span');
+  kind.className = `search-kind search-kind-${result.kind}`;
+  kind.textContent = result.kind;
+
+  const title = document.createElement('strong');
+  title.textContent = result.title ?? result.id ?? basenameFromId(result.path);
+
+  topLine.append(kind, title);
+
+  const path = document.createElement('span');
+  path.className = 'search-result-path muted';
+  path.textContent = result.path;
+
+  const metadata = document.createElement('div');
+  metadata.className = 'search-result-metadata';
+  if (result.type) metadata.append(searchMetaPill(result.type));
+  if (result.status) metadata.append(searchMetaPill(result.status));
+  metadata.append(...result.facets.slice(0, 6).map(searchMetaPill));
+
+  const snippet = document.createElement('p');
+  snippet.className = 'search-result-snippet muted';
+  if (result.snippet) {
+    appendSafeSnippet(snippet, result.snippet);
+  } else {
+    snippet.textContent = 'No snippet available.';
+  }
+
+  row.append(topLine, path, metadata, snippet);
+  row.addEventListener('click', () => runAction(() => openSearchResult(result)));
+  return row;
+}
+
+function renderSearchFacetSummary(facets: SearchResponse['facets']) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'search-facet-summary';
+  wrapper.replaceChildren(
+    ...facets.slice(0, 12).map(({ facet, count }) => {
+      const pill = document.createElement('button');
+      pill.className = 'pill search-facet-button';
+      pill.type = 'button';
+      pill.textContent = `${facet} ${count}`;
+      pill.addEventListener('click', () => runAction(() => runSearchWithFacet(facet)));
+      return pill;
+    }),
+  );
+  return wrapper;
+}
+
+async function runSearchWithFacet(facet: string) {
+  const query = searchInput.value.trim();
+  if (!query) return;
+  renderSearchLoading(query);
+  try {
+    renderSearchResults(await searchVault({ q: query, facet, limit: 50 }));
+  } catch (error) {
+    renderSearchListError(error);
+  }
+}
+
+function searchMetaPill(value: string) {
+  const pill = document.createElement('span');
+  pill.className = 'pill search-meta-pill';
+  pill.textContent = value;
+  return pill;
+}
+
+function appendSafeSnippet(parent: HTMLElement, snippet: string) {
+  const parts = snippet.split(/(<mark>|<\/mark>)/);
+  let mark: HTMLElement | null = null;
+  for (const part of parts) {
+    if (part === '<mark>') {
+      mark = document.createElement('mark');
+      parent.append(mark);
+      continue;
+    }
+    if (part === '</mark>') {
+      mark = null;
+      continue;
+    }
+    if (part.length > 0) {
+      (mark ?? parent).append(document.createTextNode(part));
+    }
+  }
+}
+
+async function openSearchResult(result: SearchResult) {
+  searchInput.value = '';
+  activeSearchRequest += 1;
+  if (result.kind === 'document' && result.id) {
+    const folder = result.id.split('/').slice(0, -1).join('/');
+    for (const chainFolder of folderChain(folder)) {
+      await selectFolder(chainFolder, { selectFirst: false });
+    }
+    await selectDocument(result.id);
+    return;
+  }
+
+  if (result.kind === 'folder' && result.id) {
+    for (const chainFolder of folderChain(result.id)) {
+      await selectFolder(chainFolder, { selectFirst: false });
+    }
+    return;
+  }
+
+  if (result.kind === 'file') {
+    await selectFile({
+      name: basenameFromId(result.path),
+      path: result.path,
+      extension: result.extension,
+    });
+  }
+}
+
 function renderFolderButton(folder: FolderSummary) {
   const button = clickableRow('nav-row');
   button.dataset.folder = folder.folder;
@@ -210,6 +464,8 @@ function renderFolderButton(folder: FolderSummary) {
 }
 
 async function handleFolderClick(folder: string) {
+  searchInput.value = '';
+  activeSearchRequest += 1;
   if (selectedFolder === folder && expandedFolderIds.has(folder)) {
     collapseFolder(folder);
     return;
