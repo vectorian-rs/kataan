@@ -356,6 +356,14 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                 }
             }
 
+            if !validate_metadata_markdown_path(
+                &mut issues,
+                &toml_path,
+                &relative_toml_path,
+                &metadata,
+            ) {
+                continue;
+            }
             let markdown_path = folder_path.join(&metadata.markdown);
             if !markdown_path.exists() {
                 continue;
@@ -449,7 +457,7 @@ fn validate_nested_folder_recursive(
     known_document_types: &mut BTreeMap<String, String>,
     loaded_metadata: &mut Vec<(String, String, DocumentMetadata)>,
 ) -> Result<()> {
-    validate_folder_pair(issues, root_folder, root_folder_path, folder_path)?;
+    let folder_index = validate_folder_pair(issues, root_folder, root_folder_path, folder_path)?;
 
     let relative = relative_folder_path(root_folder, root_folder_path, folder_path);
     let mut markdown_slugs = BTreeSet::new();
@@ -523,7 +531,7 @@ fn validate_nested_folder_recursive(
             .is_some_and(|stem| markdown_slugs.contains(stem))
     });
 
-    if let Some(folder_index) = read_folder_index_if_present(folder_path)? {
+    if let Some(folder_index) = folder_index {
         validate_folder_index(
             issues,
             &relative,
@@ -558,9 +566,9 @@ fn validate_folder_pair(
     root_folder: &str,
     root_folder_path: &Path,
     folder_path: &Path,
-) -> Result<()> {
+) -> Result<Option<FolderIndex>> {
     let relative = relative_folder_path(root_folder, root_folder_path, folder_path);
-    validate_optional_folder_index_pair(issues, folder_path, &relative).map(|_| ())
+    validate_optional_folder_index_pair(issues, folder_path, &relative)
 }
 
 fn validate_optional_folder_index_pair(
@@ -571,7 +579,7 @@ fn validate_optional_folder_index_pair(
     let folder_index_path = folder_path.join("index.toml");
     let folder_markdown_path = folder_path.join("index.md");
     match (folder_markdown_path.exists(), folder_index_path.exists()) {
-        (true, true) => read_folder_index_if_present(folder_path),
+        (true, true) => read_folder_index_with_diagnostic(issues, folder_path, relative),
         (true, false) => {
             issues.push(
                 Diagnostic::error(
@@ -590,10 +598,37 @@ fn validate_optional_folder_index_pair(
                 )
                 .with_path(format!("{relative}/index.md")),
             );
-            read_folder_index_if_present(folder_path)
+            read_folder_index_with_diagnostic(issues, folder_path, relative)
         }
         (false, false) => Ok(None),
     }
+}
+
+fn validate_metadata_markdown_path(
+    issues: &mut Vec<Diagnostic>,
+    toml_path: &Path,
+    relative_toml_path: &str,
+    metadata: &DocumentMetadata,
+) -> bool {
+    let Some(stem) = toml_path.file_stem().and_then(|stem| stem.to_str()) else {
+        return true;
+    };
+    let expected_markdown = format!("{stem}.md");
+    if metadata.markdown == expected_markdown {
+        return true;
+    }
+
+    issues.push(
+        Diagnostic::error(
+            codes::MARKDOWN_PATH_MISMATCH,
+            format!(
+                "metadata.markdown must point to `{expected_markdown}`, not `{}`",
+                metadata.markdown
+            ),
+        )
+        .with_path(relative_toml_path.to_owned()),
+    );
+    false
 }
 
 fn relative_folder_path(root_folder: &str, root_folder_path: &Path, folder_path: &Path) -> String {
@@ -713,6 +748,9 @@ fn validate_document_metadata(
         }
     }
 
+    if !validate_metadata_markdown_path(issues, toml_path, relative_toml_path, &metadata) {
+        return Ok(());
+    }
     let markdown_path = folder_path.join(&metadata.markdown);
     if markdown_path.exists() {
         if let Some(expected_checksum) = metadata.markdown_checksum {
@@ -732,6 +770,31 @@ fn validate_document_metadata(
     Ok(())
 }
 
+fn read_folder_index_with_diagnostic(
+    issues: &mut Vec<Diagnostic>,
+    folder_path: &Path,
+    relative: &str,
+) -> Result<Option<FolderIndex>> {
+    let path = folder_path.join("index.toml");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path).map_err(|source| crate::Error::Io {
+        path: path.clone(),
+        source,
+    })?;
+    match toml::from_str::<FolderIndex>(&text) {
+        Ok(index) => Ok(Some(index)),
+        Err(source) => {
+            issues.push(
+                Diagnostic::error(codes::INVALID_TOML, source.to_string())
+                    .with_path(format!("{relative}/index.toml")),
+            );
+            Ok(None)
+        }
+    }
+}
+
 fn read_folder_index_if_present(folder_path: &Path) -> Result<Option<FolderIndex>> {
     let path = folder_path.join("index.toml");
     if !path.exists() {
@@ -741,9 +804,7 @@ fn read_folder_index_if_present(folder_path: &Path) -> Result<Option<FolderIndex
         path: path.clone(),
         source,
     })?;
-    toml::from_str::<FolderIndex>(&text)
-        .map(Some)
-        .map_err(|source| crate::Error::TomlParse { path, source })
+    Ok(toml::from_str::<FolderIndex>(&text).ok())
 }
 
 fn validate_folder_index(
@@ -1061,6 +1122,34 @@ markdown = "project.md"
     }
 
     #[test]
+    fn reports_invalid_folder_index_toml_as_diagnostics() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects/company-x")).unwrap();
+        write_root_index(&root);
+        fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
+        fs::write(root.join("projects/index.toml"), "name = [\n").unwrap();
+        fs::write(root.join("projects/company-x/index.md"), "# Company\n").unwrap();
+        fs::write(root.join("projects/company-x/index.toml"), "name = [\n").unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(!report.is_ok());
+        for path in ["projects/index.toml", "projects/company-x/index.toml"] {
+            assert!(
+                report
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == codes::INVALID_TOML
+                        && diagnostic.path.as_deref() == Some(path)),
+                "missing invalid TOML diagnostic for {path}: {:#?}",
+                report.diagnostics
+            );
+        }
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn validates_nested_documents_recursively() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("projects/company-x")).unwrap();
@@ -1197,6 +1286,48 @@ markdown_checksum = "blake3:not-the-real-hash"
             .iter()
             .any(|diagnostic| diagnostic.code == codes::CHECKSUM_MISMATCH
                 && diagnostic.path.as_deref() == Some("projects/kataan-redesign.toml")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reports_markdown_metadata_path_mismatch() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects/company-x")).unwrap();
+        write_root_index(&root);
+        fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
+        fs::write(root.join("projects/index.toml"), "name = \"Projects\"\n").unwrap();
+        fs::write(root.join("projects/overview.md"), "# Overview\n").unwrap();
+        fs::write(
+            root.join("projects/overview.toml"),
+            "type = \"project\"\nmarkdown = \"other.md\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("projects/company-x/index.md"), "# Company\n").unwrap();
+        fs::write(
+            root.join("projects/company-x/index.toml"),
+            "name = \"Company X\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("projects/company-x/deep.md"), "# Deep\n").unwrap();
+        fs::write(
+            root.join("projects/company-x/deep.toml"),
+            "type = \"project\"\nmarkdown = \"other.md\"\n",
+        )
+        .unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(!report.is_ok());
+        for path in ["projects/overview.toml", "projects/company-x/deep.toml"] {
+            assert!(
+                report.diagnostics.iter().any(|diagnostic| diagnostic.code
+                    == codes::MARKDOWN_PATH_MISMATCH
+                    && diagnostic.path.as_deref() == Some(path)),
+                "missing markdown path mismatch for {path}: {:#?}",
+                report.diagnostics
+            );
+        }
 
         fs::remove_dir_all(root).unwrap();
     }

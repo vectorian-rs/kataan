@@ -5,8 +5,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use kataan_core::vault::{route_token_for_id, DocumentRecord, LoadedVault};
-use rusqlite::{params, Connection, OptionalExtension};
+use kataan_core::{
+    title::title_from_id,
+    vault::{route_token_for_id, DocumentRecord, LoadedVault},
+};
+use rusqlite::{named_params, params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
 pub const EXTRACTOR_VERSION: &str = "search-v1";
@@ -187,35 +190,12 @@ impl SearchIndex {
         let fts_query = fts_query_for(&raw_query);
         let limit = query.limit.unwrap_or(20).clamp(1, 100);
         let offset = query.offset.unwrap_or(0);
-        let kind = blank_as_none(query.kind.as_deref());
-        let type_filter = blank_as_none(query.type_filter.as_deref());
-        let status = blank_as_none(query.status.as_deref());
-        let facet = blank_as_none(query.facet.as_deref());
-        let path_prefix = blank_as_none(query.path_prefix.as_deref());
+        let filters = SearchFilters::from_query(query);
 
         let rows = if let Some(fts_query) = fts_query {
-            search_fts(
-                &connection,
-                &fts_query,
-                kind,
-                type_filter,
-                status,
-                facet,
-                path_prefix,
-                limit,
-                offset,
-            )?
+            search_fts(&connection, &fts_query, &filters, limit, offset)?
         } else {
-            search_filtered(
-                &connection,
-                kind,
-                type_filter,
-                status,
-                facet,
-                path_prefix,
-                limit,
-                offset,
-            )?
+            search_filtered(&connection, &filters, limit, offset)?
         };
 
         let mut results = Vec::with_capacity(rows.len());
@@ -357,6 +337,41 @@ impl SearchRow {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SearchFilters<'a> {
+    kind: Option<&'a str>,
+    type_filter: Option<&'a str>,
+    status: Option<&'a str>,
+    facet: Option<&'a str>,
+    path_prefix: Option<&'a str>,
+}
+
+impl<'a> SearchFilters<'a> {
+    fn from_query(query: &'a SearchQuery) -> Self {
+        Self {
+            kind: blank_as_none(query.kind.as_deref()),
+            type_filter: blank_as_none(query.type_filter.as_deref()),
+            status: blank_as_none(query.status.as_deref()),
+            facet: blank_as_none(query.facet.as_deref()),
+            path_prefix: blank_as_none(query.path_prefix.as_deref()),
+        }
+    }
+}
+
+const SEARCH_FILTER_SQL: &str = "\
+           AND (:kind IS NULL OR i.kind = :kind)
+           AND (:type_filter IS NULL OR i.type = :type_filter)
+           AND (:status IS NULL OR i.status = :status)
+           AND (:facet IS NULL OR EXISTS (
+             SELECT 1 FROM search_facets sf
+             WHERE sf.item_key = i.item_key AND sf.facet = :facet
+           ))
+           AND (
+             :path_prefix IS NULL
+             OR i.path = :path_prefix
+             OR i.path LIKE (:path_prefix || '/%')
+           )";
+
 fn create_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS search_items (
@@ -453,19 +468,14 @@ fn insert_item(connection: &Connection, item: &SearchItem) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn search_fts(
     connection: &Connection,
     fts_query: &str,
-    kind: Option<&str>,
-    type_filter: Option<&str>,
-    status: Option<&str>,
-    facet: Option<&str>,
-    path_prefix: Option<&str>,
+    filters: &SearchFilters<'_>,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<SearchRow>> {
-    let mut statement = connection.prepare(
+    let sql = format!(
         "SELECT
            i.item_key,
            i.kind,
@@ -480,63 +490,37 @@ fn search_fts(
            bm25(search_fts, 0.0, 5.0, 3.0, 4.0, 3.0, 2.0, 1.0) AS rank
          FROM search_fts
          JOIN search_items i ON i.item_key = search_fts.item_key
-         WHERE search_fts MATCH ?1
-           AND (?2 IS NULL OR i.kind = ?2)
-           AND (?3 IS NULL OR i.type = ?3)
-           AND (?4 IS NULL OR i.status = ?4)
-           AND (?5 IS NULL OR EXISTS (
-             SELECT 1 FROM search_facets sf
-             WHERE sf.item_key = i.item_key AND sf.facet = ?5
-           ))
-           AND (?6 IS NULL OR i.path = ?6 OR i.path LIKE (?6 || '%'))
+         WHERE search_fts MATCH :fts_query
+{SEARCH_FILTER_SQL}
          ORDER BY rank ASC, i.path ASC
-         LIMIT ?7 OFFSET ?8",
-    )?;
+         LIMIT :limit OFFSET :offset"
+    );
+    let mut statement = connection.prepare(&sql)?;
 
     let rows = statement.query_map(
-        params![
-            fts_query,
-            kind,
-            type_filter,
-            status,
-            facet,
-            path_prefix,
-            limit as i64,
-            offset as i64,
-        ],
-        |row| {
-            let rank: f64 = row.get(10)?;
-            Ok(SearchRow {
-                item_key: row.get(0)?,
-                kind: row.get(1)?,
-                id: row.get(2)?,
-                path: row.get(3)?,
-                title: row.get(4)?,
-                type_name: row.get(5)?,
-                status: row.get(6)?,
-                extension: row.get(7)?,
-                route_token: row.get(8)?,
-                snippet: row.get(9)?,
-                score: -rank,
-            })
+        named_params! {
+            ":fts_query": fts_query,
+            ":kind": filters.kind,
+            ":type_filter": filters.type_filter,
+            ":status": filters.status,
+            ":facet": filters.facet,
+            ":path_prefix": filters.path_prefix,
+            ":limit": limit as i64,
+            ":offset": offset as i64,
         },
+        search_row_from_fts,
     )?;
 
     collect_rows(rows)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn search_filtered(
     connection: &Connection,
-    kind: Option<&str>,
-    type_filter: Option<&str>,
-    status: Option<&str>,
-    facet: Option<&str>,
-    path_prefix: Option<&str>,
+    filters: &SearchFilters<'_>,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<SearchRow>> {
-    let mut statement = connection.prepare(
+    let sql = format!(
         "SELECT
            i.item_key,
            i.kind,
@@ -548,46 +532,53 @@ fn search_filtered(
            i.extension,
            i.route_token
          FROM search_items i
-         WHERE (?1 IS NULL OR i.kind = ?1)
-           AND (?2 IS NULL OR i.type = ?2)
-           AND (?3 IS NULL OR i.status = ?3)
-           AND (?4 IS NULL OR EXISTS (
-             SELECT 1 FROM search_facets sf
-             WHERE sf.item_key = i.item_key AND sf.facet = ?4
-           ))
-           AND (?5 IS NULL OR i.path = ?5 OR i.path LIKE (?5 || '%'))
+         WHERE 1 = 1
+{SEARCH_FILTER_SQL}
          ORDER BY COALESCE(i.title, i.path) ASC, i.path ASC
-         LIMIT ?6 OFFSET ?7",
-    )?;
+         LIMIT :limit OFFSET :offset"
+    );
+    let mut statement = connection.prepare(&sql)?;
 
     let rows = statement.query_map(
-        params![
-            kind,
-            type_filter,
-            status,
-            facet,
-            path_prefix,
-            limit as i64,
-            offset as i64,
-        ],
-        |row| {
-            Ok(SearchRow {
-                item_key: row.get(0)?,
-                kind: row.get(1)?,
-                id: row.get(2)?,
-                path: row.get(3)?,
-                title: row.get(4)?,
-                type_name: row.get(5)?,
-                status: row.get(6)?,
-                extension: row.get(7)?,
-                route_token: row.get(8)?,
-                snippet: None,
-                score: 0.0,
-            })
+        named_params! {
+            ":kind": filters.kind,
+            ":type_filter": filters.type_filter,
+            ":status": filters.status,
+            ":facet": filters.facet,
+            ":path_prefix": filters.path_prefix,
+            ":limit": limit as i64,
+            ":offset": offset as i64,
         },
+        search_row_without_snippet,
     )?;
 
     collect_rows(rows)
+}
+
+fn search_row_from_fts(row: &Row<'_>) -> rusqlite::Result<SearchRow> {
+    let snippet = row.get(9)?;
+    let rank: f64 = row.get(10)?;
+    search_row(row, snippet, -rank)
+}
+
+fn search_row_without_snippet(row: &Row<'_>) -> rusqlite::Result<SearchRow> {
+    search_row(row, None, 0.0)
+}
+
+fn search_row(row: &Row<'_>, snippet: Option<String>, score: f64) -> rusqlite::Result<SearchRow> {
+    Ok(SearchRow {
+        item_key: row.get(0)?,
+        kind: row.get(1)?,
+        id: row.get(2)?,
+        path: row.get(3)?,
+        title: row.get(4)?,
+        type_name: row.get(5)?,
+        status: row.get(6)?,
+        extension: row.get(7)?,
+        route_token: row.get(8)?,
+        snippet,
+        score,
+    })
 }
 
 fn collect_rows(
@@ -763,24 +754,6 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
     deduped
 }
 
-fn title_from_id(id: &str) -> String {
-    id.rsplit('/')
-        .next()
-        .unwrap_or(id)
-        .replace('-', " ")
-        .split(' ')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn unix_timestamp_string() -> Result<String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)?
@@ -861,6 +834,21 @@ labels = ["launch"]
 "#,
         )
         .unwrap();
+        fs::create_dir_all(root.join("projects/company-x-extra")).unwrap();
+        fs::write(
+            root.join("projects/company-x-extra/q2-launch.md"),
+            "# Sibling Launch\n\nLaunch notes in a sibling prefix.",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/company-x-extra/q2-launch.toml"),
+            r#"type = "project"
+status = "active"
+markdown = "q2-launch.md"
+labels = ["launch"]
+"#,
+        )
+        .unwrap();
 
         let loaded = LoadedVault::load(&root).unwrap();
         let index = SearchIndex::open(root.join("search.sqlite")).unwrap();
@@ -892,6 +880,21 @@ labels = ["launch"]
             .results
             .iter()
             .any(|result| result.id.as_deref() == Some("projects/company-x/q2-launch")));
+        let prefix_response = index
+            .search(&SearchQuery {
+                q: Some("launch".to_owned()),
+                path_prefix: Some("projects/company-x".to_owned()),
+                ..SearchQuery::default()
+            })
+            .unwrap();
+        assert!(prefix_response
+            .results
+            .iter()
+            .any(|result| result.id.as_deref() == Some("projects/company-x/q2-launch")));
+        assert!(!prefix_response
+            .results
+            .iter()
+            .any(|result| result.id.as_deref() == Some("projects/company-x-extra/q2-launch")));
 
         fs::remove_dir_all(root).unwrap();
     }

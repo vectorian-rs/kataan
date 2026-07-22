@@ -1,12 +1,43 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
+
+use serde::Serialize;
 
 use crate::{
     checksum,
-    constants::{CODE_FOLDER, SCHEMA_VERSION, TYPE_CODE, VAULT_CONFIG_FILE},
+    constants::{
+        CODE_FOLDER, DEFAULT_MAX_FOLDER_DEPTH, SCHEMA_VERSION, TYPE_CODE, VAULT_CONFIG_FILE,
+    },
     rebuild::rebuild_indexes,
+    title::title_case_slug,
     write, Error, Result,
 };
 const DEFAULT_ONTOLOGY: &str = include_str!("../templates/default-ontology.toml");
+
+#[derive(Serialize)]
+struct VaultToml<'a> {
+    schema_version: &'a str,
+    name: &'a str,
+    created_at: &'a str,
+    updated_at: &'a str,
+    limits: VaultLimitsToml,
+    type_folders: BTreeMap<&'a str, &'a str>,
+}
+
+#[derive(Serialize)]
+struct VaultLimitsToml {
+    max_folder_depth: usize,
+}
+
+#[derive(Serialize)]
+struct InitialFolderIndexToml<'a> {
+    #[serde(rename = "type")]
+    document_type: &'a str,
+    name: &'a str,
+    description: &'a str,
+    default_type: &'a str,
+    markdown: &'a str,
+    folder_checksum: &'a str,
+}
 
 pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {
     let root = root.as_ref();
@@ -16,28 +47,26 @@ pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {
     })?;
 
     let now = "2026-04-28T12:00:00Z";
-    write_file(
-        &root.join(VAULT_CONFIG_FILE),
-        &format!(
-            r#"schema_version = "{SCHEMA_VERSION}"
-name = "{name}"
-created_at = "{now}"
-updated_at = "{now}"
-
-[limits]
-max_folder_depth = 4
-
-[type_folders]
-intake = "intake"
-project = "projects"
-person = "people"
-note = "notes"
-topic = "topics"
-code = "code"
-type-definition = "type"
-"#
-        ),
-    )?;
+    let config = VaultToml {
+        schema_version: SCHEMA_VERSION,
+        name,
+        created_at: now,
+        updated_at: now,
+        limits: VaultLimitsToml {
+            max_folder_depth: DEFAULT_MAX_FOLDER_DEPTH,
+        },
+        type_folders: BTreeMap::from([
+            ("intake", "intake"),
+            ("project", "projects"),
+            ("person", "people"),
+            ("note", "notes"),
+            ("topic", "topics"),
+            ("code", "code"),
+            ("type-definition", "type"),
+        ]),
+    };
+    let config_text = toml::to_string_pretty(&config).expect("serialize vault config TOML");
+    write_file(&root.join(VAULT_CONFIG_FILE), &config_text)?;
 
     write_file(&root.join("ontology.toml"), DEFAULT_ONTOLOGY)?;
 
@@ -68,18 +97,17 @@ type-definition = "type"
             &folder_path.join("index.md"),
             &format!("# {title}\n\n{description}\n"),
         )?;
-        write_file(
-            &folder_path.join("index.toml"),
-            &format!(
-                r#"type = "{default_type}"
-name = "{title}"
-description = "{description}"
-default_type = "{default_type}"
-markdown = "index.md"
-folder_checksum = "blake3:todo"
-"#
-            ),
-        )?;
+        let folder_index = InitialFolderIndexToml {
+            document_type: default_type,
+            name: title,
+            description,
+            default_type,
+            markdown: "index.md",
+            folder_checksum: "blake3:todo",
+        };
+        let folder_index_text =
+            toml::to_string_pretty(&folder_index).expect("serialize folder index TOML");
+        write_file(&folder_path.join("index.toml"), &folder_index_text)?;
     }
 
     let code_path = root.join(CODE_FOLDER);
@@ -97,7 +125,7 @@ folder_checksum = "blake3:todo"
         TYPE_CODE,
         "type-definition",
     ] {
-        let title = title_case(ty);
+        let title = title_case_slug(ty);
         let md_path = root.join("type").join(format!("{ty}.md"));
         write_file(
             &md_path,
@@ -159,20 +187,6 @@ fn type_icon(ty: &str) -> &str {
     }
 }
 
-fn title_case(value: &str) -> String {
-    value
-        .split('-')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::PathBuf};
@@ -221,6 +235,19 @@ mod tests {
 
         let report = crate::validate::validate(&root).unwrap();
         assert!(report.is_ok(), "{:#?}", report.diagnostics);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn escapes_vault_name_in_toml() {
+        let root = unique_temp_dir();
+        let name = "My \"Quoted\"\nVault";
+
+        init_vault(&root, name).unwrap();
+
+        let vault = crate::vault::Vault::open(&root).unwrap();
+        assert_eq!(vault.index.name, name);
 
         fs::remove_dir_all(root).unwrap();
     }

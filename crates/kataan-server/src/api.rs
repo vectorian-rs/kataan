@@ -8,6 +8,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
+use kataan_core::title::title_from_id;
+
 use crate::{state::AppState, watch::WatchStatus};
 
 #[derive(Debug, Serialize)]
@@ -527,17 +529,11 @@ struct ResolvedVaultFile {
 
 fn resolve_vault_file(state: &AppState, path: &str) -> Result<ResolvedVaultFile, ApiError> {
     let relative = std::path::Path::new(path);
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
+    if !is_safe_relative_path(relative) {
         return Err(ApiError(anyhow::anyhow!("invalid file path `{path}`")));
     }
-    let full_path = state.vault_path.join(relative);
-    if !full_path.is_file() {
-        return Err(ApiError(anyhow::anyhow!("file `{path}` does not exist")));
-    }
+    let full_path = regular_descendant_file_path(state.vault_path.as_ref(), relative)
+        .ok_or_else(|| ApiError(anyhow::anyhow!("file `{path}` does not exist")))?;
     if crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?.should_ignore_path(&full_path) {
         return Err(ApiError(anyhow::anyhow!("file `{path}` is ignored")));
     }
@@ -558,7 +554,69 @@ fn resolve_vault_file(state: &AppState, path: &str) -> Result<ResolvedVaultFile,
     })
 }
 
+fn is_safe_relative_path(relative: &std::path::Path) -> bool {
+    !relative.is_absolute()
+        && relative.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+}
+
+fn regular_descendant_file_path(
+    root: &std::path::Path,
+    relative: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let mut current = root.to_path_buf();
+    let mut components = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(part) => Some(part),
+            std::path::Component::CurDir => None,
+            _ => None,
+        })
+        .peekable();
+
+    components.peek()?;
+
+    while let Some(component) = components.next() {
+        current.push(component);
+        let file_type = std::fs::symlink_metadata(&current).ok()?.file_type();
+        if file_type.is_symlink() {
+            return None;
+        }
+        if components.peek().is_some() {
+            if !file_type.is_dir() {
+                return None;
+            }
+        } else if !file_type.is_file() {
+            return None;
+        }
+    }
+
+    Some(current)
+}
+
+fn is_regular_file(path: &std::path::Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_file())
+        .unwrap_or(false)
+}
+
+fn is_regular_dir(path: &std::path::Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_dir())
+        .unwrap_or(false)
+}
+
 fn read_text_file(path: &std::path::Path) -> Result<String, ApiError> {
+    if !is_regular_file(path) {
+        return Err(ApiError(anyhow::anyhow!(
+            "file `{}` does not exist",
+            path.display()
+        )));
+    }
     std::fs::read_to_string(path).map_err(|source| {
         ApiError(
             kataan_core::Error::Io {
@@ -880,7 +938,7 @@ fn canonical_folder_response(
         let documents = direct_documents(&loaded, &id);
         (record.clone(), folders, documents, record.markdown_path)
     };
-    let markdown = std::fs::read_to_string(&markdown_path).ok();
+    let markdown = read_text_file(&markdown_path).ok();
     let files = folder_files(state, &id, &documents)?;
 
     Ok(CanonicalFolderResponse {
@@ -912,15 +970,7 @@ fn document_response_from_parts(
     metadata: kataan_core::document::DocumentMetadata,
     markdown_path: &std::path::Path,
 ) -> Result<DocumentResponse, ApiError> {
-    let markdown = std::fs::read_to_string(markdown_path).map_err(|source| {
-        ApiError(
-            kataan_core::Error::Io {
-                path: markdown_path.to_path_buf(),
-                source,
-            }
-            .into(),
-        )
-    })?;
+    let markdown = read_text_file(markdown_path)?;
 
     let base_folder = if metadata.markdown == "index.md" {
         id.as_str()
@@ -977,12 +1027,12 @@ fn filesystem_canonical_folder_response(
     }
 
     let folder_path = state.vault_path.join(id.as_str());
-    if !folder_path.is_dir() {
+    if !is_regular_dir(&folder_path) {
         return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
     }
 
     let metadata = read_document_metadata_if_valid(&folder_path.join("index.toml"));
-    let markdown = std::fs::read_to_string(folder_path.join("index.md")).ok();
+    let markdown = read_text_file(&folder_path.join("index.md")).ok();
     let mut folders = Vec::new();
     let mut documents = Vec::new();
     let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
@@ -1000,15 +1050,17 @@ fn filesystem_canonical_folder_response(
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if path.is_dir() {
+        if is_regular_dir(&path) {
             folders.push(FolderChildResponse {
                 id: format!("{}/{}", id.as_str(), name),
                 name,
-                has_index: path.join("index.md").exists() && path.join("index.toml").exists(),
+                has_index: is_regular_file(&path.join("index.md"))
+                    && is_regular_file(&path.join("index.toml")),
             });
             continue;
         }
-        if path.extension().and_then(|extension| extension.to_str()) != Some("md")
+        if !is_regular_file(&path)
+            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
             || name == "index.md"
         {
             continue;
@@ -1064,7 +1116,7 @@ fn folder_files(
             source,
         })?;
         let path = entry.path();
-        if ignore.should_ignore_path(&path) || !path.is_file() {
+        if ignore.should_ignore_path(&path) || !is_regular_file(&path) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -1088,7 +1140,7 @@ fn folder_files(
 fn read_document_metadata_if_valid(
     path: &std::path::Path,
 ) -> Option<kataan_core::document::DocumentMetadata> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = read_text_file(path).ok()?;
     toml::from_str(&text).ok()
 }
 
@@ -1098,10 +1150,7 @@ fn push_code_folder_if_needed(
     folders: &mut Vec<FolderSummaryResponse>,
 ) {
     if !has_code_mapping
-        && state
-            .vault_path
-            .join(kataan_core::constants::CODE_FOLDER)
-            .is_dir()
+        && is_regular_dir(&state.vault_path.join(kataan_core::constants::CODE_FOLDER))
     {
         folders.push(FolderSummaryResponse {
             r#type: kataan_core::constants::TYPE_CODE.to_owned(),
@@ -1126,7 +1175,7 @@ fn empty_code_folder_index(id: &str) -> kataan_core::index::FolderIndex {
 
 fn direct_code_folders(state: &AppState, id: &str) -> Result<Vec<FolderChildResponse>, ApiError> {
     let folder_path = state.vault_path.join(id);
-    if !folder_path.is_dir() {
+    if !is_regular_dir(&folder_path) {
         return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
     }
 
@@ -1141,7 +1190,7 @@ fn direct_code_folders(state: &AppState, id: &str) -> Result<Vec<FolderChildResp
             source,
         })?;
         let path = entry.path();
-        if ignore.should_ignore_path(&path) || !path.is_dir() {
+        if ignore.should_ignore_path(&path) || !is_regular_dir(&path) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -1188,10 +1237,10 @@ fn recursive_filesystem_document_count(folder_path: &std::path::Path) -> usize {
         .filter_map(Result::ok)
         .map(|entry| {
             let path = entry.path();
-            if path.is_dir() {
+            if is_regular_dir(&path) {
                 return recursive_filesystem_document_count(&path);
             }
-            if !path.is_file()
+            if !is_regular_file(&path)
                 || path.extension().and_then(|extension| extension.to_str()) != Some("md")
                 || path.file_name().and_then(|name| name.to_str()) == Some("index.md")
             {
@@ -1200,7 +1249,7 @@ fn recursive_filesystem_document_count(folder_path: &std::path::Path) -> usize {
             let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
                 return 0;
             };
-            path.with_file_name(format!("{stem}.toml")).exists() as usize
+            is_regular_file(&path.with_file_name(format!("{stem}.toml"))) as usize
         })
         .sum()
 }
@@ -1253,7 +1302,6 @@ fn direct_documents(
         })
         .collect()
 }
-
 fn document_name(document: &kataan_core::vault::DocumentRecord) -> Option<String> {
     document
         .metadata
@@ -1261,24 +1309,6 @@ fn document_name(document: &kataan_core::vault::DocumentRecord) -> Option<String
         .first()
         .cloned()
         .or_else(|| document.metadata.labels.first().cloned())
-}
-
-fn title_from_id(id: &str) -> String {
-    id.rsplit('/')
-        .next()
-        .unwrap_or(id)
-        .replace('-', " ")
-        .split(' ')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 #[derive(Debug)]
@@ -1435,6 +1465,47 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
         assert_eq!(response.status(), StatusCode::OK);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_endpoints_reject_symlink_files_and_intermediate_dirs() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_vault();
+        let outside = unique_temp_dir();
+        fs::create_dir_all(outside.join("nested")).unwrap();
+        fs::write(outside.join("secret.json"), r#"{"secret":true}"#).unwrap();
+        fs::write(outside.join("secret.svg"), "<svg></svg>").unwrap();
+        fs::write(outside.join("nested/data.json"), r#"{"nested":true}"#).unwrap();
+        symlink(outside.join("secret.json"), root.join("projects/leak.json")).unwrap();
+        symlink(outside.join("secret.svg"), root.join("projects/leak.svg")).unwrap();
+        symlink(outside.join("nested"), root.join("projects/outside-dir")).unwrap();
+        let app = test_app(&root);
+
+        for uri in [
+            "/api/file?path=projects%2Fleak.json",
+            "/api/file/highlight?path=projects%2Fleak.json",
+            "/api/file/raw?path=projects%2Fleak.svg",
+            "/api/file?path=projects%2Foutside-dir%2Fdata.json",
+        ] {
+            let response = request(app.clone(), "GET", uri).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{uri}"
+            );
+        }
+
+        let response = request(app, "GET", "/api/folder?id=projects").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = json_response(response).await;
+        let files = body["files"].as_array().unwrap();
+        assert!(!files.iter().any(|file| file["name"] == "leak.json"));
+        assert!(!files.iter().any(|file| file["name"] == "leak.svg"));
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[tokio::test]

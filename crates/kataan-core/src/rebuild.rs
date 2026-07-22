@@ -1,11 +1,35 @@
 use std::{fs, path::Path};
 
+use serde::Serialize;
+
 use crate::{
     checksum::{self, SubfolderChecksum},
     constants::VAULT_CONFIG_FILE,
     index::{FolderDocument, FolderSubfolder, VaultConfig},
+    title::title_from_path,
     write, Error, Result,
 };
+#[derive(Serialize)]
+struct FolderIndexToml<'a> {
+    #[serde(rename = "type")]
+    document_type: &'a str,
+    markdown: &'a str,
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_type: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    folder_checksum: Option<&'a str>,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    documents: &'a [FolderDocument],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    subfolders: &'a [FolderSubfolder],
+}
+
+fn slice_is_empty<T>(slice: &&[T]) -> bool {
+    slice.is_empty()
+}
 
 pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
     let root = root.as_ref();
@@ -152,13 +176,19 @@ fn ensure_folder_index_pair(
         write::atomic_write_string(markdown_path, &format!("# {name}\n"))?;
     }
     if !toml_path.exists() {
-        let default_type = default_type.unwrap_or(document_type);
-        write::atomic_write_string(
-            toml_path,
-            &format!(
-                "type = \"{document_type}\"\nmarkdown = \"index.md\"\nname = \"{name}\"\ndefault_type = \"{default_type}\"\n"
-            ),
-        )?;
+        let folder_index = FolderIndexToml {
+            document_type,
+            markdown: "index.md",
+            name,
+            description: None,
+            default_type: Some(default_type.unwrap_or(document_type)),
+            folder_checksum: None,
+            documents: &[],
+            subfolders: &[],
+        };
+        let folder_index_text =
+            toml::to_string_pretty(&folder_index).expect("serialize folder index TOML");
+        write::atomic_write_string(toml_path, &folder_index_text)?;
     }
     Ok(())
 }
@@ -219,13 +249,13 @@ fn parse_folder_index_header(
     folder_path: &Path,
 ) -> (String, Option<String>, Option<String>) {
     let Ok(value) = toml::from_str::<toml::Value>(text) else {
-        return (title_case(folder_path), None, None);
+        return (title_from_path(folder_path, "folder"), None, None);
     };
     let name = value
         .get("name")
         .and_then(toml::Value::as_str)
         .map(str::to_owned)
-        .unwrap_or_else(|| title_case(folder_path));
+        .unwrap_or_else(|| title_from_path(folder_path, "folder"));
     let description = value
         .get("description")
         .and_then(toml::Value::as_str)
@@ -248,53 +278,18 @@ fn write_folder_index(
     documents: &[FolderDocument],
     subfolders: &[FolderSubfolder],
 ) -> Result<()> {
-    let mut output = String::new();
-    output.push_str(&format!("type = \"{document_type}\"\n"));
-    output.push_str("markdown = \"index.md\"\n");
-    output.push_str(&format!("name = \"{name}\"\n"));
-    if let Some(description) = description {
-        output.push_str(&format!("description = \"{description}\"\n"));
-    }
-    if let Some(default_type) = default_type {
-        output.push_str(&format!("default_type = \"{default_type}\"\n"));
-    }
-    output.push_str(&format!("folder_checksum = \"{folder_checksum}\"\n"));
-
-    for document in documents {
-        output.push_str("\n[[documents]]\n");
-        output.push_str(&format!("slug = \"{}\"\n", document.slug));
-        output.push_str(&format!("markdown = \"{}\"\n", document.markdown));
-        output.push_str(&format!("toml = \"{}\"\n", document.toml));
-        output.push_str(&format!(
-            "markdown_checksum = \"{}\"\n",
-            document.markdown_checksum
-        ));
-        output.push_str(&format!("toml_checksum = \"{}\"\n", document.toml_checksum));
-    }
-
-    for subfolder in subfolders {
-        output.push_str("\n[[subfolders]]\n");
-        output.push_str(&format!("name = \"{}\"\n", subfolder.name));
-        output.push_str(&format!(
-            "folder_checksum = \"{}\"\n",
-            subfolder.folder_checksum
-        ));
-    }
-
+    let folder_index = FolderIndexToml {
+        document_type,
+        markdown: "index.md",
+        name,
+        description,
+        default_type,
+        folder_checksum: Some(folder_checksum),
+        documents,
+        subfolders,
+    };
+    let output = toml::to_string_pretty(&folder_index).expect("serialize folder index TOML");
     write::atomic_write_string(path, &output)
-}
-
-fn title_case(path: &Path) -> String {
-    let value = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("folder");
-    let spaced = value.replace('-', " ");
-    let mut chars = spaced.chars();
-    match chars.next() {
-        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
-        None => String::new(),
-    }
 }
 
 #[cfg(test)]
@@ -396,6 +391,32 @@ last_updated_by = "human"
 
         let report = validate(&root).unwrap();
         assert!(report.is_ok(), "{:#?}", report.diagnostics);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rebuild_serializes_folder_index_strings() {
+        let root = unique_temp_dir();
+        crate::init::init_vault(&root, "Rebuild Vault").unwrap();
+        fs::write(
+            root.join("projects/index.toml"),
+            "type = \"project\"\nmarkdown = \"index.md\"\nname = \"Projects \\\"Quoted\\\"\"\ndescription = \"Line one\\nLine two\"\n",
+        )
+        .unwrap();
+
+        rebuild_indexes(&root).unwrap();
+
+        let folder_index = fs::read_to_string(root.join("projects/index.toml")).unwrap();
+        let value: toml::Value = toml::from_str(&folder_index).unwrap();
+        assert_eq!(
+            value.get("name").and_then(toml::Value::as_str),
+            Some("Projects \"Quoted\"")
+        );
+        assert_eq!(
+            value.get("description").and_then(toml::Value::as_str),
+            Some("Line one\nLine two")
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

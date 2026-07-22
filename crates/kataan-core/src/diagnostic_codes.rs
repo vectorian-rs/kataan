@@ -8,6 +8,7 @@ pub const INVALID_TOML: &str = "invalid-toml";
 pub const INVALID_TYPE: &str = "invalid-type";
 pub const MISSING_FOLDER_INDEX: &str = "missing-folder-index";
 pub const MISSING_MARKDOWN_FILE: &str = "missing-markdown-file";
+pub const MARKDOWN_PATH_MISMATCH: &str = "markdown-path-mismatch";
 pub const MISSING_ONTOLOGY: &str = "missing-ontology";
 pub const MISSING_REQUIRED_FOLDER: &str = "missing-required-folder";
 pub const MISSING_ROOT_INDEX: &str = "missing-root-index";

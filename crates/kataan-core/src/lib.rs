@@ -11,6 +11,7 @@ pub mod init;
 pub mod ontology;
 pub mod rebuild;
 pub mod schema;
+pub mod title;
 pub mod types;
 pub mod validate;
 pub mod vault;
