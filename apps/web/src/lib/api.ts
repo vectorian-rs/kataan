@@ -68,7 +68,7 @@ export type FileResponse = {
   path: string;
   name: string;
   extension?: string;
-  kind: 'html' | 'json' | 'text' | 'image' | 'unsupported';
+  kind: 'html' | 'json' | 'text' | 'image' | 'pdf' | 'unsupported';
   content: string;
 };
 

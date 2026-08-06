@@ -446,11 +446,39 @@ pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkRes
     Ok(Json(OkResponse { ok: true }))
 }
 
+const MAX_TEXT_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
+const MAX_RAW_PREVIEW_BYTES: u64 = 50 * 1024 * 1024;
+
+fn ensure_preview_size(path: &str, full_path: &std::path::Path, limit: u64) -> Result<(), ApiError> {
+    let size = std::fs::symlink_metadata(full_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    if size > limit {
+        return Err(ApiError(anyhow::anyhow!(
+            "file `{path}` is {} and exceeds the {} preview limit",
+            format_megabytes(size),
+            format_megabytes(limit)
+        )));
+    }
+    Ok(())
+}
+
+fn format_megabytes(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+}
+
 fn file_response(state: &AppState, path: &str) -> Result<FileResponse, ApiError> {
     let file = resolve_vault_file(state, path)?;
     let kind = file_kind(file.extension.as_deref()).to_owned();
     let content = match kind.as_str() {
-        "html" | "json" | "text" => read_text_file(&file.full_path)?,
+        "html" | "json" | "text" => {
+            ensure_preview_size(path, &file.full_path, MAX_TEXT_PREVIEW_BYTES)?;
+            read_text_file(&file.full_path)?
+        }
+        "image" | "pdf" => {
+            ensure_preview_size(path, &file.full_path, MAX_RAW_PREVIEW_BYTES)?;
+            String::new()
+        }
         _ => String::new(),
     };
 
@@ -467,12 +495,14 @@ fn raw_file_response(state: &AppState, path: &str) -> Result<axum::response::Res
     let file = resolve_vault_file(state, path)?;
     let content_type = match file.extension.as_deref() {
         Some("svg") => "image/svg+xml",
+        Some("pdf") => "application/pdf",
         _ => {
             return Err(ApiError(anyhow::anyhow!(
-                "file `{path}` cannot be previewed as an image"
+                "file `{path}` cannot be previewed as raw content"
             )))
         }
     };
+    ensure_preview_size(path, &file.full_path, MAX_RAW_PREVIEW_BYTES)?;
     let bytes = std::fs::read(&file.full_path).map_err(|source| {
         ApiError(
             kataan_core::Error::Io {
@@ -500,6 +530,7 @@ fn highlight_response(
     let file = resolve_vault_file(state, path)?;
     let (language_name, language) = highlight_language(file.extension.as_deref())
         .ok_or_else(|| ApiError(anyhow::anyhow!("file `{path}` cannot be highlighted")))?;
+    ensure_preview_size(path, &file.full_path, MAX_TEXT_PREVIEW_BYTES)?;
     let content = read_text_file(&file.full_path)?;
     let theme = lumis::themes::get(highlight_theme(theme_preference))
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
@@ -633,6 +664,7 @@ fn file_kind(extension: Option<&str>) -> &'static str {
         Some("html") | Some("htm") => "html",
         Some("json") => "json",
         Some("svg") => "image",
+        Some("pdf") => "pdf",
         Some(
             "md" | "txt" | "toml" | "rs" | "ts" | "js" | "sh" | "bash" | "yaml" | "yml" | "py",
         ) => "text",
@@ -1542,6 +1574,55 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
         let response = request(app, "GET", "/api/file?path=projects%2Fchart.html").await;
 
         assert_eq!(response.status(), StatusCode::OK);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn file_endpoints_return_pdf_file() {
+        let root = test_vault();
+        fs::write(root.join("projects/report.pdf"), b"%PDF-1.4").unwrap();
+        let app = test_app(&root);
+
+        let response = request(app.clone(), "GET", "/api/file?path=projects%2Freport.pdf").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = json_response(response).await;
+        assert_eq!(body["kind"], "pdf");
+        assert_eq!(body["content"], "");
+
+        let response = request(app, "GET", "/api/file/raw?path=projects%2Freport.pdf").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/pdf");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn file_endpoints_reject_oversized_files() {
+        let root = test_vault();
+        fs::File::create(root.join("projects/big.txt"))
+            .unwrap()
+            .set_len(MAX_TEXT_PREVIEW_BYTES + 1)
+            .unwrap();
+        fs::File::create(root.join("projects/big.pdf"))
+            .unwrap()
+            .set_len(MAX_RAW_PREVIEW_BYTES + 1)
+            .unwrap();
+        let app = test_app(&root);
+
+        for uri in [
+            "/api/file?path=projects%2Fbig.txt",
+            "/api/file/highlight?path=projects%2Fbig.txt",
+            "/api/file?path=projects%2Fbig.pdf",
+            "/api/file/raw?path=projects%2Fbig.pdf",
+        ] {
+            let response = request(app.clone(), "GET", uri).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{uri}"
+            );
+        }
 
         fs::remove_dir_all(root).unwrap();
     }

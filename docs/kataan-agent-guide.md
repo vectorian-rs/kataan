@@ -54,6 +54,8 @@ GET  /api/schema/ontology
 GET  /api/schema/edge-predicate
 ```
 
+File previews are size-limited: `/api/file` and `/api/file/highlight` serve text content up to 10 MB, and `/api/file/raw` serves binary content (SVG, PDF) up to 50 MB. Larger files return an error.
+
 Useful repair endpoints:
 
 ```txt

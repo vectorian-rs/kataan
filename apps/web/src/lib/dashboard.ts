@@ -844,6 +844,16 @@ function renderFileBody(file: FileResponse) {
     return;
   }
 
+  if (file.kind === 'pdf') {
+    documentBody.className = 'reader-body file-reader-body pdf-reader-body';
+    const frame = document.createElement('iframe');
+    frame.className = 'pdf-preview';
+    frame.title = file.name;
+    frame.src = getRawFileUrl(file.path);
+    documentBody.append(frame);
+    return;
+  }
+
   if (file.kind === 'image') {
     documentBody.className = 'reader-body file-reader-body image-reader-body';
     const preview = document.createElement('img');
