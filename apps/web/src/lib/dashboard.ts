@@ -849,7 +849,7 @@ function renderFileBody(file: FileResponse) {
     const frame = document.createElement('iframe');
     frame.className = 'pdf-preview';
     frame.title = file.name;
-    frame.src = getRawFileUrl(file.path);
+    frame.src = `${getRawFileUrl(file.path)}#toolbar=0&navpanes=0&scrollbar=0`;
     documentBody.append(frame);
     return;
   }
