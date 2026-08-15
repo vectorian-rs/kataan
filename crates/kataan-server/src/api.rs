@@ -145,26 +145,38 @@ pub struct DiagnosticResponse {
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/api/health", get(health))
-        .route("/api/watch", get(watch_status))
-        .route("/api/search", get(search))
-        .route("/api/search/status", get(search_status))
-        .route("/api/search/reindex", post(search_reindex))
-        .route("/api/vault", get(vault))
-        .route("/api/folders", get(folders))
-        .route("/api/folder", get(folder_by_id))
-        .route("/api/document", get(document_by_id))
-        .route("/api/file", get(file_by_path))
-        .route("/api/file/raw", get(raw_file_by_path))
-        .route("/api/file/highlight", get(highlight_file_by_path))
-        .route("/api/resolve", get(resolve_route))
-        .route("/api/schema/:kind", get(schema))
-        .route("/api/folders/:folder", get(folder))
-        .route("/api/documents/*id", get(document))
-        .route("/api/validate", post(validate))
-        .route("/api/rebuild-indexes", post(rebuild_indexes))
-        .with_state(state)
+    // The API owns the `/api` prefix in one place; unknown `/api/*` paths get a
+    // 404 from this nested router rather than falling through to the UI shell.
+    let api = Router::new()
+        .route("/health", get(health))
+        .route("/watch", get(watch_status))
+        .route("/search", get(search))
+        .route("/search/status", get(search_status))
+        .route("/search/reindex", post(search_reindex))
+        .route("/vault", get(vault))
+        .route("/folders", get(folders))
+        .route("/folder", get(folder_by_id))
+        .route("/document", get(document_by_id))
+        .route("/file", get(file_by_path))
+        .route("/file/raw", get(raw_file_by_path))
+        .route("/file/highlight", get(highlight_file_by_path))
+        .route("/resolve", get(resolve_route))
+        .route("/schema/:kind", get(schema))
+        .route("/folders/:folder", get(folder))
+        .route("/documents/*id", get(document))
+        .route("/validate", post(validate))
+        .route("/rebuild-indexes", post(rebuild_indexes))
+        // Own the miss: an unknown /api/* path is a 404, not the SPA shell that
+        // the outer fallback would otherwise serve (axum propagates it here).
+        .fallback(|| async { StatusCode::NOT_FOUND });
+
+    let app = Router::new().nest("/api", api).with_state(state);
+
+    // With `--features embed-ui`, serve the embedded SPA for any non-API path.
+    #[cfg(feature = "embed-ui")]
+    let app = app.fallback(crate::ui::serve);
+
+    app
 }
 
 pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -449,7 +461,11 @@ pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkRes
 const MAX_TEXT_PREVIEW_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_RAW_PREVIEW_BYTES: u64 = 50 * 1024 * 1024;
 
-fn ensure_preview_size(path: &str, full_path: &std::path::Path, limit: u64) -> Result<(), ApiError> {
+fn ensure_preview_size(
+    path: &str,
+    full_path: &std::path::Path,
+    limit: u64,
+) -> Result<(), ApiError> {
     let size = std::fs::symlink_metadata(full_path)
         .map(|metadata| metadata.len())
         .unwrap_or(0);

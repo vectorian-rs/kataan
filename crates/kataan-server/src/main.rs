@@ -7,6 +7,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 mod api;
 mod ignore;
 mod state;
+#[cfg(feature = "embed-ui")]
+mod ui;
 mod watch;
 
 use state::AppState;

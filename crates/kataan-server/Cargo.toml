@@ -5,7 +5,13 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# Embed the built web UI (apps/web/dist) into the binary and serve it. Off by
+# default so `cargo build`/`test`/`clippy` don't require a prior web build.
+embed-ui = ["dep:rust-embed"]
+
 [dependencies]
+rust-embed = { version = "8", optional = true, features = ["mime-guess"] }
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
