@@ -109,7 +109,9 @@ other default-pruned name.** A folder matching one is skipped entirely and
 silently: its documents never appear in an index and never validate. If you need
 a knowledge node about one of these topics, name the folder something else (for
 example `build-systems` instead of `build`), or set `use_default_ignores = false`
-and manage the ignore list yourself.
+and manage the ignore list yourself. On case-insensitive filesystems (macOS,
+Windows) matching is case-insensitive, so `Target` and `NODE_MODULES` are
+reserved too.
 
 Extend the defaults per vault with gitignore-style patterns, resolved relative
 to the vault root. Patterns must match the directory to prune it (a trailing

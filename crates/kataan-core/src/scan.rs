@@ -49,6 +49,12 @@ impl ScanIgnore {
     /// scan, so a config typo cannot take down validation or index rebuilds.
     pub fn load(root: &Path, config: &ScanConfig) -> Result<Self> {
         let mut builder = GitignoreBuilder::new(root);
+        // Match ignore names case-insensitively on filesystems that are (macOS,
+        // Windows), the way git auto-sets core.ignorecase, so `Node_Modules`
+        // still prunes.
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            builder.case_insensitive(true).map_err(scan_error)?;
+        }
         let mut warnings = Vec::new();
         if config.use_default_ignores {
             for name in DEFAULT_IGNORED_DIRS {
@@ -177,6 +183,15 @@ mod tests {
         assert_eq!(ignore.warnings().len(), 1);
         // The valid pattern still applies despite the invalid one.
         assert!(ignore.is_ignored(&root.join("a/node_modules"), true));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn matches_case_insensitively_on_case_insensitive_platforms() {
+        let root = Path::new("/vault");
+        let ignore = ScanIgnore::load(root, &ScanConfig::default()).unwrap();
+        assert!(ignore.is_ignored(&root.join("a/Node_Modules"), true));
+        assert!(ignore.is_ignored(&root.join("TARGET"), true));
     }
 
     #[test]
