@@ -818,6 +818,8 @@ dependencies = [
  "anyhow",
  "clap",
  "kataan-core",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

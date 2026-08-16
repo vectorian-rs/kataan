@@ -13,3 +13,5 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 kataan-core = { path = "../kataan-core" }
+tracing.workspace = true
+tracing-subscriber.workspace = true
