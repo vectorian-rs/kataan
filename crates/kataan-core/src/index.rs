@@ -51,7 +51,7 @@ impl Default for ScanConfig {
     fn default() -> Self {
         Self {
             ignore: Vec::new(),
-            use_default_ignores: true,
+            use_default_ignores: default_use_default_ignores(),
         }
     }
 }
