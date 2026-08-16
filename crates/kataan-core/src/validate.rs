@@ -15,6 +15,7 @@ use crate::{
     id::CanonicalId,
     index::{FolderDocument, FolderIndex, FolderSubfolder},
     ontology::{type_allowed, Ontology},
+    scan::ScanIgnore,
     types::TypeRegistry,
     vault::Vault,
     Result,
@@ -122,6 +123,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         .limits
         .max_folder_depth
         .unwrap_or(DEFAULT_MAX_FOLDER_DEPTH);
+    let ignore = ScanIgnore::load(&vault.root, &vault.index.scan)?;
 
     let ontology = match Ontology::load(&vault.root) {
         Ok(ontology) => {
@@ -184,6 +186,9 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
             let path = entry.path();
 
             if path.is_dir() {
+                if ignore.is_ignored(&path, true) {
+                    continue;
+                }
                 validate_nested_folder_recursive(
                     &mut issues,
                     folder,
@@ -192,6 +197,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                     max_folder_depth,
                     type_registry.as_ref(),
                     &vault.index.type_folders,
+                    &ignore,
                     &mut known_document_ids,
                     &mut known_document_types,
                     &mut loaded_metadata,
@@ -248,6 +254,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                 folder_index,
                 &markdown_slugs,
                 &toml_slugs,
+                &ignore,
             )?;
         }
 
@@ -453,6 +460,7 @@ fn validate_nested_folder_recursive(
     max_folder_depth: usize,
     type_registry: Option<&TypeRegistry>,
     type_folders: &BTreeMap<String, String>,
+    ignore: &ScanIgnore,
     known_document_ids: &mut BTreeSet<String>,
     known_document_types: &mut BTreeMap<String, String>,
     loaded_metadata: &mut Vec<(String, String, DocumentMetadata)>,
@@ -475,6 +483,9 @@ fn validate_nested_folder_recursive(
         let path = entry.path();
 
         if path.is_dir() {
+            if ignore.is_ignored(&path, true) {
+                continue;
+            }
             validate_nested_folder_recursive(
                 issues,
                 root_folder,
@@ -483,6 +494,7 @@ fn validate_nested_folder_recursive(
                 max_folder_depth,
                 type_registry,
                 type_folders,
+                ignore,
                 known_document_ids,
                 known_document_types,
                 loaded_metadata,
@@ -539,6 +551,7 @@ fn validate_nested_folder_recursive(
             &folder_index,
             &markdown_slugs,
             &toml_slugs,
+            ignore,
         )?;
     }
 
@@ -814,6 +827,7 @@ fn validate_folder_index(
     folder_index: &FolderIndex,
     markdown_slugs: &BTreeSet<String>,
     toml_slugs: &BTreeSet<String>,
+    ignore: &ScanIgnore,
 ) -> Result<()> {
     let actual_slugs = markdown_slugs
         .intersection(toml_slugs)
@@ -842,7 +856,7 @@ fn validate_folder_index(
         );
     }
 
-    let actual_subfolders = actual_subfolders(folder_path)?;
+    let actual_subfolders = actual_subfolders(folder_path, ignore)?;
     let indexed_subfolders = folder_index
         .subfolders
         .iter()
@@ -933,7 +947,7 @@ fn validate_folder_index(
     Ok(())
 }
 
-fn actual_subfolders(folder_path: &Path) -> Result<Vec<FolderSubfolder>> {
+fn actual_subfolders(folder_path: &Path, ignore: &ScanIgnore) -> Result<Vec<FolderSubfolder>> {
     let mut subfolders = Vec::new();
     for entry in fs::read_dir(folder_path).map_err(|source| crate::Error::Io {
         path: folder_path.to_path_buf(),
@@ -944,7 +958,11 @@ fn actual_subfolders(folder_path: &Path) -> Result<Vec<FolderSubfolder>> {
             source,
         })?;
         let path = entry.path();
-        if !path.is_dir() || !path.join("index.md").exists() || !path.join("index.toml").exists() {
+        if !path.is_dir()
+            || ignore.is_ignored(&path, true)
+            || !path.join("index.md").exists()
+            || !path.join("index.toml").exists()
+        {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -1010,6 +1028,85 @@ toml_checksum = "blake3:not-real"
             .iter()
             .any(|diagnostic| diagnostic.code == codes::CHECKSUM_MISMATCH
                 && diagnostic.path.as_deref() == Some("projects/index.toml")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn default_ignores_prune_vendor_directories() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects/opex/node_modules/undici/docs")).unwrap();
+        write_root_index(&root);
+        fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
+        fs::write(
+            root.join("projects/index.toml"),
+            "type = \"project\"\nname = \"Projects\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        // A vendored file that would otherwise trip missing-folder-index.
+        fs::write(
+            root.join("projects/opex/node_modules/undici/docs/index.md"),
+            "# vendor\n",
+        )
+        .unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(
+            report.diagnostics.iter().all(|diagnostic| diagnostic
+                .path
+                .as_deref()
+                .is_none_or(|path| !path.contains("node_modules"))),
+            "node_modules must not produce diagnostics: {:?}",
+            report
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.path.clone())
+                .collect::<Vec<_>>()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_config_ignore_patterns_are_honored() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects/site/vendor/pkg")).unwrap();
+        write_root_index(&root);
+        // Same type folders as write_root_index, plus a custom `[scan]` ignore.
+        fs::write(
+            root.join(VAULT_CONFIG_FILE),
+            r#"schema_version = "0.1.0"
+name = "Test Vault"
+
+[scan]
+ignore = ["vendor"]
+
+[type_folders]
+intake = "intake"
+project = "projects"
+person = "people"
+note = "notes"
+topic = "topics"
+type-definition = "type"
+"#,
+        )
+        .unwrap();
+        fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
+        fs::write(
+            root.join("projects/index.toml"),
+            "type = \"project\"\nname = \"Projects\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        // `vendor` is not a default ignore; only the [scan] config prunes it.
+        fs::write(root.join("projects/site/vendor/pkg/index.md"), "# vendor\n").unwrap();
+
+        let report = validate(&root).unwrap();
+
+        assert!(report.diagnostics.iter().all(|diagnostic| diagnostic
+            .path
+            .as_deref()
+            .is_none_or(|path| !path.contains("vendor"))));
 
         fs::remove_dir_all(root).unwrap();
     }

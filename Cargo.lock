@@ -825,6 +825,7 @@ name = "kataan-core"
 version = "0.2.0"
 dependencies = [
  "blake3",
+ "ignore",
  "schemars",
  "serde",
  "serde_json",

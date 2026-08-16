@@ -111,10 +111,11 @@ impl Vault {
 
     pub fn load_documents(&self) -> Result<Vec<DocumentRecord>> {
         let mut documents = Vec::new();
+        let ignore = crate::scan::ScanIgnore::load(&self.root, &self.index.scan)?;
         for folder in self.index.type_folders.values() {
             let folder_path = self.root.join(folder);
             if folder_path.exists() {
-                for entry in walk_type_folder(&self.root, folder)? {
+                for entry in walk_type_folder(&self.root, folder, &ignore)? {
                     match self.load_entry(&entry) {
                         Ok(document) => documents.push(document),
                         Err(Error::TomlParse { .. }) if !entry.is_folder_index() => continue,

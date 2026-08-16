@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+ignore = "0.4"
 blake3.workspace = true
 schemars.workspace = true
 serde.workspace = true

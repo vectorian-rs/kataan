@@ -6,6 +6,7 @@ use crate::{
     checksum::{self, SubfolderChecksum},
     constants::VAULT_CONFIG_FILE,
     index::{FolderDocument, FolderSubfolder, VaultConfig},
+    scan::ScanIgnore,
     title::title_from_path,
     write, Error, Result,
 };
@@ -44,10 +45,11 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
             source,
         })?;
 
+    let ignore = ScanIgnore::load(root, &root_index.scan)?;
     for (document_type, folder) in &root_index.type_folders {
         let folder_path = root.join(folder);
         if folder_path.exists() {
-            rebuild_folder_recursive(&folder_path, document_type)?;
+            rebuild_folder_recursive(&folder_path, document_type, &ignore)?;
         }
     }
 
@@ -56,7 +58,11 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
-fn rebuild_folder_recursive(folder_path: &Path, document_type: &str) -> Result<Option<String>> {
+fn rebuild_folder_recursive(
+    folder_path: &Path,
+    document_type: &str,
+    ignore: &ScanIgnore,
+) -> Result<Option<String>> {
     let mut subfolders = Vec::new();
     for entry in fs::read_dir(folder_path).map_err(|source| Error::Io {
         path: folder_path.to_path_buf(),
@@ -67,11 +73,11 @@ fn rebuild_folder_recursive(folder_path: &Path, document_type: &str) -> Result<O
             source,
         })?;
         let path = entry.path();
-        if !path.is_dir() {
+        if !path.is_dir() || ignore.is_ignored(&path, true) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if let Some(folder_checksum) = rebuild_folder_recursive(&path, document_type)? {
+        if let Some(folder_checksum) = rebuild_folder_recursive(&path, document_type, ignore)? {
             subfolders.push(FolderSubfolder {
                 name,
                 folder_checksum,
@@ -460,6 +466,61 @@ last_updated_by = "human"
 
         let report = validate(&root).unwrap();
         assert!(report.is_ok(), "{:#?}", report.diagnostics);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rebuild_ignores_vendor_directories() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects/opex/node_modules/pkg")).unwrap();
+        write_root_index(&root);
+        fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
+        fs::write(
+            root.join("projects/index.toml"),
+            "type = \"project\"\nname = \"Projects\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("projects/opex/index.md"), "# Opex\n").unwrap();
+        fs::write(
+            root.join("projects/opex/index.toml"),
+            "type = \"project\"\nname = \"Opex\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        // A vendored folder that itself has an index pair; without pruning it
+        // would be recorded as a subfolder of opex and folded into its checksum.
+        fs::write(
+            root.join("projects/opex/node_modules/pkg/index.md"),
+            "# pkg\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("projects/opex/node_modules/pkg/index.toml"),
+            "type = \"project\"\nname = \"pkg\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+
+        rebuild_indexes(&root).unwrap();
+
+        let opex_index = fs::read_to_string(root.join("projects/opex/index.toml")).unwrap();
+        assert!(
+            !opex_index.contains("node_modules"),
+            "vendored dir leaked into index: {opex_index}"
+        );
+        assert!(!root.join("projects/opex/node_modules/index.toml").exists());
+
+        // Churn inside the ignored tree must not change the folder checksum.
+        fs::write(
+            root.join("projects/opex/node_modules/pkg/extra.md"),
+            "# extra\n",
+        )
+        .unwrap();
+        rebuild_indexes(&root).unwrap();
+        let opex_index_again = fs::read_to_string(root.join("projects/opex/index.toml")).unwrap();
+        assert_eq!(
+            opex_index, opex_index_again,
+            "ignored churn changed the folder index/checksum"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

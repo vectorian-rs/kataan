@@ -95,6 +95,27 @@ vault/
 
 Read `kataan.toml` before creating files. Its `[type_folders]` table is authoritative: a document with `type = "project"` belongs under the mapped project folder, a document with `type = "topic"` belongs under the mapped topic folder, and so on.
 
+## Ignored paths
+
+Scans (`validate`, `rebuild-indexes`, document loading) prune build and vendor
+directories so they never produce diagnostics or land in generated indexes or
+`folder_checksum` values. Default pruned directory names, matched at any depth:
+`node_modules`, `.git`, `.svn`, `target`, `dist`, `build`, `.astro`, `.next`,
+`.cache`, `.venv`, `venv`, `__pycache__`, `.DS_Store`.
+
+Extend the defaults per vault with gitignore-style patterns, resolved relative
+to the vault root:
+
+```toml
+# kataan.toml
+[scan]
+ignore = ["**/node_modules/**", "**/*.tmp", "some/specific/dir"]
+# use_default_ignores = false   # opt out of the built-in defaults entirely
+```
+
+A `.kataanignore` file at the vault root (gitignore syntax) is merged in as
+well. Vaults without a `[scan]` section keep using the defaults.
+
 ## Documents
 
 A Kataan document is a Markdown file plus a matching TOML sidecar in the same folder:
