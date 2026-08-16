@@ -858,6 +858,7 @@ dependencies = [
  "kataan-search",
  "lumis",
  "notify",
+ "percent-encoding",
  "pulldown-cmark",
  "rust-embed",
  "serde",

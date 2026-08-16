@@ -38,30 +38,47 @@ pub const KATAANIGNORE_FILE: &str = ".kataanignore";
 pub struct ScanIgnore {
     root: PathBuf,
     gitignore: Gitignore,
+    warnings: Vec<String>,
 }
 
 impl ScanIgnore {
     /// Build the matcher for `root` from its scan configuration.
+    ///
+    /// Invalid `[scan] ignore` patterns and `.kataanignore` lines are skipped
+    /// and collected as [`warnings`](Self::warnings) rather than aborting the
+    /// scan, so a config typo cannot take down validation or index rebuilds.
     pub fn load(root: &Path, config: &ScanConfig) -> Result<Self> {
         let mut builder = GitignoreBuilder::new(root);
+        let mut warnings = Vec::new();
         if config.use_default_ignores {
             for name in DEFAULT_IGNORED_DIRS {
-                add_pattern(&mut builder, name)?;
+                // Defaults are static and known-valid; ignore defensively.
+                let _ = builder.add_line(None, name);
             }
         }
         for pattern in &config.ignore {
-            add_pattern(&mut builder, pattern)?;
+            add_checked(&mut builder, root, pattern, "[scan] ignore", &mut warnings);
         }
         let kataanignore = root.join(KATAANIGNORE_FILE);
         if kataanignore.is_file() {
-            if let Some(error) = builder.add(&kataanignore) {
-                return Err(scan_error(error));
+            match std::fs::read_to_string(&kataanignore) {
+                Ok(text) => {
+                    for line in text.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() || trimmed.starts_with('#') {
+                            continue;
+                        }
+                        add_checked(&mut builder, root, line, KATAANIGNORE_FILE, &mut warnings);
+                    }
+                }
+                Err(error) => warnings.push(format!("cannot read {KATAANIGNORE_FILE}: {error}")),
             }
         }
         let gitignore = builder.build().map_err(scan_error)?;
         Ok(Self {
             root: root.to_path_buf(),
             gitignore,
+            warnings,
         })
     }
 
@@ -70,7 +87,13 @@ impl ScanIgnore {
         Self {
             root: root.to_path_buf(),
             gitignore: Gitignore::empty(),
+            warnings: Vec::new(),
         }
+    }
+
+    /// Human-readable messages for ignore patterns that could not be compiled.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 
     /// Whether `path` (a descendant of the vault root) should be skipped.
@@ -82,11 +105,32 @@ impl ScanIgnore {
     }
 }
 
-fn add_pattern(builder: &mut GitignoreBuilder, pattern: &str) -> Result<()> {
-    builder
-        .add_line(None, pattern)
-        .map(|_| ())
-        .map_err(scan_error)
+/// Add `pattern` to `builder` only if it compiles on its own. A bad glob is
+/// recorded in `warnings` and skipped, because `GitignoreBuilder` defers glob
+/// compilation to `build()`, so a single invalid line would otherwise poison
+/// the whole matcher.
+fn add_checked(
+    builder: &mut GitignoreBuilder,
+    root: &Path,
+    pattern: &str,
+    source: &str,
+    warnings: &mut Vec<String>,
+) {
+    if let Err(error) = compile_probe(root, pattern) {
+        warnings.push(format!(
+            "{source}: invalid ignore pattern `{pattern}`: {error}"
+        ));
+        return;
+    }
+    let _ = builder.add_line(None, pattern);
+}
+
+/// Compile `pattern` in an isolated builder to surface parse errors eagerly.
+fn compile_probe(root: &Path, pattern: &str) -> std::result::Result<(), ignore::Error> {
+    let mut probe = GitignoreBuilder::new(root);
+    probe.add_line(None, pattern)?;
+    probe.build()?;
+    Ok(())
 }
 
 fn scan_error(error: ignore::Error) -> Error {
@@ -117,6 +161,22 @@ mod tests {
         assert!(!ignore.is_ignored(&root.join("public"), true));
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn invalid_pattern_is_collected_as_warning_not_error() {
+        let root = Path::new("/vault");
+        let config = ScanConfig {
+            // Unclosed alternate group `{`: an invalid glob.
+            ignore: vec!["a{b,c".to_owned(), "node_modules".to_owned()],
+            use_default_ignores: false,
+        };
+
+        let ignore = ScanIgnore::load(root, &config).unwrap();
+
+        assert_eq!(ignore.warnings().len(), 1);
+        // The valid pattern still applies despite the invalid one.
+        assert!(ignore.is_ignored(&root.join("a/node_modules"), true));
     }
 
     #[test]

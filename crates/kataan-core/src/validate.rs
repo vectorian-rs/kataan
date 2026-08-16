@@ -123,6 +123,12 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         .max_folder_depth
         .unwrap_or(DEFAULT_MAX_FOLDER_DEPTH);
     let ignore = ScanIgnore::load(&vault.root, &vault.index.scan)?;
+    for warning in ignore.warnings() {
+        issues.push(
+            Diagnostic::warning(codes::INVALID_SCAN_PATTERN, warning.clone())
+                .with_path(VAULT_CONFIG_FILE),
+        );
+    }
 
     let ontology = match Ontology::load(&vault.root) {
         Ok(ontology) => {

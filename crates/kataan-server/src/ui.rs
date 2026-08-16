@@ -11,6 +11,7 @@ use axum::{
     http::{header, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
+use percent_encoding::percent_decode_str;
 use rust_embed::RustEmbed;
 
 /// The static web build (apps/web/dist), embedded at compile time.
@@ -20,11 +21,15 @@ struct WebAssets;
 
 /// Serve an embedded asset, or the SPA shell (index.html) for deep links.
 pub async fn serve(uri: Uri) -> Response {
-    let lookup = uri.path().trim_start_matches('/');
-    let lookup = if lookup.is_empty() {
+    // Decode percent-escapes so a request for `/my%20logo.svg` matches the
+    // embedded key `my logo.svg`. Embedded lookups are map keys, not filesystem
+    // paths, so a decoded `..` simply misses and falls back to the shell.
+    let raw = uri.path().trim_start_matches('/');
+    let decoded = percent_decode_str(raw).decode_utf8_lossy();
+    let lookup = if decoded.is_empty() {
         "index.html"
     } else {
-        lookup
+        decoded.as_ref()
     };
 
     let direct = WebAssets::get(lookup);
