@@ -145,12 +145,9 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         Err(error) => return Err(error),
     };
 
-    let type_registry = {
-        let registry = TypeRegistry::load(vault)?;
-        Some(registry)
-    };
+    let type_registry = Some(TypeRegistry::load(vault)?);
     let mut known_document_types = BTreeMap::new();
-    if let Ok(documents) = vault.load_documents() {
+    if let Ok(documents) = vault.load_documents_with_ignore(&ignore) {
         for document in documents {
             known_document_ids.insert(document.id.as_str().to_owned());
             known_document_types.insert(document.id.as_str().to_owned(), document.metadata.r#type);

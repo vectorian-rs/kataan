@@ -110,12 +110,22 @@ impl Vault {
     }
 
     pub fn load_documents(&self) -> Result<Vec<DocumentRecord>> {
-        let mut documents = Vec::new();
         let ignore = crate::scan::ScanIgnore::load(&self.root, &self.index.scan)?;
+        self.load_documents_with_ignore(&ignore)
+    }
+
+    /// Like [`load_documents`](Self::load_documents) but reuses an already-built
+    /// ignore matcher, so callers that have loaded one (e.g. validation) don't
+    /// re-read `.kataanignore` and recompile the globs a second time.
+    pub(crate) fn load_documents_with_ignore(
+        &self,
+        ignore: &crate::scan::ScanIgnore,
+    ) -> Result<Vec<DocumentRecord>> {
+        let mut documents = Vec::new();
         for folder in self.index.type_folders.values() {
             let folder_path = self.root.join(folder);
             if folder_path.exists() {
-                for entry in walk_type_folder(&self.root, folder, &ignore)? {
+                for entry in walk_type_folder(&self.root, folder, ignore)? {
                     match self.load_entry(&entry) {
                         Ok(document) => documents.push(document),
                         Err(Error::TomlParse { .. }) if !entry.is_folder_index() => continue,
