@@ -103,13 +103,22 @@ directories so they never produce diagnostics or land in generated indexes or
 `node_modules`, `.git`, `.svn`, `target`, `dist`, `build`, `.astro`, `.next`,
 `.cache`, `.venv`, `venv`, `__pycache__`, `.DS_Store`.
 
+**These names are reserved: a knowledge folder must not be named `node_modules`,
+`target`, `dist`, `build`, `venv`, `.venv`, `.cache`, `.next`, `.astro`, or any
+other default-pruned name.** A folder matching one is skipped entirely and
+silently: its documents never appear in an index and never validate. If you need
+a knowledge node about one of these topics, name the folder something else (for
+example `build-systems` instead of `build`), or set `use_default_ignores = false`
+and manage the ignore list yourself.
+
 Extend the defaults per vault with gitignore-style patterns, resolved relative
-to the vault root:
+to the vault root. Patterns must match the directory to prune it (a trailing
+`/**` matches only the contents, not the directory itself):
 
 ```toml
 # kataan.toml
 [scan]
-ignore = ["**/node_modules/**", "**/*.tmp", "some/specific/dir"]
+ignore = ["vendor/", "**/*.tmp", "some/specific/dir"]
 # use_default_ignores = false   # opt out of the built-in defaults entirely
 ```
 
