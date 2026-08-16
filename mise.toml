@@ -54,6 +54,22 @@ run = "cargo test"
 description = "Build all Rust binaries in release mode"
 run = "cargo build --workspace --release --bins"
 
+[tasks.build-app]
+description = "Build the web UI and the server with the UI embedded (single binary)"
+run = [
+  "bun install",
+  "bun --filter @kataan/web build",
+  "cargo build -p kataan-server --release --features embed-ui",
+]
+
+[tasks.install-server]
+description = "Build the UI and install kataan-server (UI embedded) into ~/.cargo/bin"
+run = [
+  "bun install",
+  "bun --filter @kataan/web build",
+  "cargo install --path crates/kataan-server --features embed-ui --force",
+]
+
 [tasks.check]
 description = "Run Rust format, tests, clippy, and web build"
 run = [

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{id::CanonicalId, Error, Result};
+use crate::{id::CanonicalId, scan::ScanIgnore, Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VaultEntry {
@@ -16,17 +16,26 @@ pub enum VaultEntry {
     },
 }
 
-pub fn walk_type_folder(root: &Path, type_folder: &str) -> Result<Vec<VaultEntry>> {
+pub fn walk_type_folder(
+    root: &Path,
+    type_folder: &str,
+    ignore: &ScanIgnore,
+) -> Result<Vec<VaultEntry>> {
     let mut entries = Vec::new();
     let relative_folder = Path::new(type_folder);
     if root.join(relative_folder).exists() {
-        walk_folder(root, relative_folder, &mut entries)?;
+        walk_folder(root, relative_folder, ignore, &mut entries)?;
     }
     entries.sort_by(|left, right| left.id().cmp(right.id()));
     Ok(entries)
 }
 
-fn walk_folder(root: &Path, relative_folder: &Path, entries: &mut Vec<VaultEntry>) -> Result<()> {
+fn walk_folder(
+    root: &Path,
+    relative_folder: &Path,
+    ignore: &ScanIgnore,
+    entries: &mut Vec<VaultEntry>,
+) -> Result<()> {
     let folder_path = root.join(relative_folder);
     let index_md = folder_path.join("index.md");
     let index_toml = folder_path.join("index.toml");
@@ -52,7 +61,10 @@ fn walk_folder(root: &Path, relative_folder: &Path, entries: &mut Vec<VaultEntry
         let file_name = entry.file_name().to_string_lossy().to_string();
 
         if path.is_dir() {
-            walk_folder(root, &relative_folder.join(file_name), entries)?;
+            if ignore.is_ignored(&path, true) {
+                continue;
+            }
+            walk_folder(root, &relative_folder.join(file_name), ignore, entries)?;
             continue;
         }
 
@@ -136,7 +148,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = walk_type_folder(&root, "projects").unwrap_err();
+        let error = walk_type_folder(&root, "projects", &ScanIgnore::none(&root)).unwrap_err();
         assert!(matches!(
             error,
             Error::InvalidCanonicalIdAtPath { path, .. }
@@ -165,7 +177,7 @@ mod tests {
         )
         .unwrap();
 
-        let entries = walk_type_folder(&root, "projects").unwrap();
+        let entries = walk_type_folder(&root, "projects", &ScanIgnore::none(&root)).unwrap();
         let ids = entries
             .iter()
             .map(|entry| entry.id().as_str())

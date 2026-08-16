@@ -24,7 +24,36 @@ pub struct VaultConfig {
     pub updated_at: Option<String>,
     #[serde(default)]
     pub limits: VaultLimits,
+    #[serde(default)]
+    pub scan: ScanConfig,
     pub type_folders: std::collections::BTreeMap<String, String>,
+}
+
+/// Directory-scan ignore configuration (kataan.toml `[scan]`). Absent sections
+/// deserialize to the defaults, so legacy vaults keep parsing.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ScanConfig {
+    /// Extra gitignore-style patterns, resolved relative to the vault root and
+    /// added to the built-in defaults.
+    #[serde(default)]
+    pub ignore: Vec<String>,
+    /// When false, drop the built-in defaults and honor only `ignore` (and
+    /// `.kataanignore`).
+    #[serde(default = "default_use_default_ignores")]
+    pub use_default_ignores: bool,
+}
+
+fn default_use_default_ignores() -> bool {
+    true
+}
+
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            ignore: Vec::new(),
+            use_default_ignores: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

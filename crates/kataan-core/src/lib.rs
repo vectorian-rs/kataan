@@ -10,6 +10,7 @@ pub mod index;
 pub mod init;
 pub mod ontology;
 pub mod rebuild;
+pub mod scan;
 pub mod schema;
 pub mod title;
 pub mod types;
