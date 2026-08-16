@@ -154,7 +154,7 @@ impl SearchIndex {
                 .with_context(|| format!("failed to read markdown for `{}`", record.id))?;
             let item = SearchItem::from_document_record(loaded, record, &markdown)?;
 
-            insert_item(&transaction, &item)?;
+            insert_item(&transaction, &item, &indexed_at)?;
             item_count += 1;
             if item.kind == "folder" {
                 folder_count += 1;
@@ -164,12 +164,13 @@ impl SearchIndex {
         }
 
         transaction.execute(
-            "INSERT OR REPLACE INTO search_metadata(key, value) VALUES (?1, ?2)",
-            params!["extractor_version", EXTRACTOR_VERSION],
-        )?;
-        transaction.execute(
-            "INSERT OR REPLACE INTO search_metadata(key, value) VALUES (?1, ?2)",
-            params!["last_indexed_at", indexed_at],
+            "INSERT OR REPLACE INTO search_metadata(key, value) VALUES (?1, ?2), (?3, ?4)",
+            params![
+                "extractor_version",
+                EXTRACTOR_VERSION,
+                "last_indexed_at",
+                indexed_at,
+            ],
         )?;
         transaction.commit()?;
 
@@ -214,18 +215,16 @@ impl SearchIndex {
 
     pub fn status(&self) -> Result<SearchStatus> {
         let connection = self.connect()?;
-        let item_count = count_items(&connection, None)?;
-        let document_count = count_items(&connection, Some("document"))?;
-        let folder_count = count_items(&connection, Some("folder"))?;
-        let file_count = count_items(&connection, Some("file"))?;
+        let counts = count_by_kind(&connection)?;
+        let count_of = |kind: &str| counts.get(kind).copied().unwrap_or(0);
 
         Ok(SearchStatus {
             index_path: self.path.display().to_string(),
             exists: true,
-            item_count,
-            document_count,
-            folder_count,
-            file_count,
+            item_count: counts.values().sum(),
+            document_count: count_of("document"),
+            folder_count: count_of("folder"),
+            file_count: count_of("file"),
             last_indexed_at: metadata_value(&connection, "last_indexed_at")?,
             extractor_version: metadata_value(&connection, "extractor_version")?,
         })
@@ -420,14 +419,15 @@ fn create_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn insert_item(connection: &Connection, item: &SearchItem) -> Result<()> {
-    let indexed_at = unix_timestamp_string()?;
-    connection.execute(
-        "INSERT INTO search_items(
-           item_key, kind, id, path, title, type, status, extension, route_token,
-           checksum, extractor_version, indexed_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
+fn insert_item(connection: &Connection, item: &SearchItem, indexed_at: &str) -> Result<()> {
+    connection
+        .prepare_cached(
+            "INSERT INTO search_items(
+               item_key, kind, id, path, title, type, status, extension, route_token,
+               checksum, extractor_version, indexed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )?
+        .execute(params![
             &item.item_key,
             &item.kind,
             item.id.as_deref(),
@@ -439,15 +439,16 @@ fn insert_item(connection: &Connection, item: &SearchItem) -> Result<()> {
             item.route_token.as_deref(),
             &item.checksum,
             EXTRACTOR_VERSION,
-            &indexed_at,
-        ],
-    )?;
+            indexed_at,
+        ])?;
 
     let facet_text = item.facets.join(" ");
-    connection.execute(
-        "INSERT INTO search_fts(item_key, title, path, aliases, facets, metadata, body)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
+    connection
+        .prepare_cached(
+            "INSERT INTO search_fts(item_key, title, path, aliases, facets, metadata, body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?
+        .execute(params![
             &item.item_key,
             item.title.as_deref(),
             &item.path,
@@ -455,14 +456,12 @@ fn insert_item(connection: &Connection, item: &SearchItem) -> Result<()> {
             &facet_text,
             &item.metadata,
             &item.body,
-        ],
-    )?;
+        ])?;
 
+    let mut facet_statement = connection
+        .prepare_cached("INSERT OR IGNORE INTO search_facets(item_key, facet) VALUES (?1, ?2)")?;
     for facet in &item.facets {
-        connection.execute(
-            "INSERT OR IGNORE INTO search_facets(item_key, facet) VALUES (?1, ?2)",
-            params![&item.item_key, facet],
-        )?;
+        facet_statement.execute(params![&item.item_key, facet])?;
     }
 
     Ok(())
@@ -511,7 +510,7 @@ fn search_fts(
         search_row_from_fts,
     )?;
 
-    collect_rows(rows)
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }
 
 fn search_filtered(
@@ -552,7 +551,7 @@ fn search_filtered(
         search_row_without_snippet,
     )?;
 
-    collect_rows(rows)
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }
 
 fn search_row_from_fts(row: &Row<'_>) -> rusqlite::Result<SearchRow> {
@@ -581,24 +580,12 @@ fn search_row(row: &Row<'_>, snippet: Option<String>, score: f64) -> rusqlite::R
     })
 }
 
-fn collect_rows(
-    rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<SearchRow>>,
-) -> Result<Vec<SearchRow>> {
-    let mut collected = Vec::new();
-    for row in rows {
-        collected.push(row?);
-    }
-    Ok(collected)
-}
-
 fn facets_for_item(connection: &Connection, item_key: &str) -> Result<Vec<String>> {
     let mut statement = connection
-        .prepare("SELECT facet FROM search_facets WHERE item_key = ?1 ORDER BY facet ASC")?;
-    let rows = statement.query_map(params![item_key], |row| row.get::<_, String>(0))?;
-    let mut facets = Vec::new();
-    for row in rows {
-        facets.push(row?);
-    }
+        .prepare_cached("SELECT facet FROM search_facets WHERE item_key = ?1 ORDER BY facet ASC")?;
+    let facets = statement
+        .query_map(params![item_key], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(facets)
 }
 
@@ -615,17 +602,18 @@ fn facet_counts(results: &[SearchResult]) -> Vec<SearchFacetCount> {
         .collect()
 }
 
-fn count_items(connection: &Connection, kind: Option<&str>) -> Result<usize> {
-    let count: i64 = if let Some(kind) = kind {
-        connection.query_row(
-            "SELECT COUNT(*) FROM search_items WHERE kind = ?1",
-            params![kind],
-            |row| row.get(0),
-        )?
-    } else {
-        connection.query_row("SELECT COUNT(*) FROM search_items", [], |row| row.get(0))?
-    };
-    Ok(count as usize)
+fn count_by_kind(connection: &Connection) -> Result<BTreeMap<String, usize>> {
+    let mut statement =
+        connection.prepare("SELECT kind, COUNT(*) FROM search_items GROUP BY kind")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+    })?;
+    let mut counts = BTreeMap::new();
+    for row in rows {
+        let (kind, count) = row?;
+        counts.insert(kind, count);
+    }
+    Ok(counts)
 }
 
 fn metadata_value(connection: &Connection, key: &str) -> Result<Option<String>> {
@@ -672,14 +660,7 @@ fn fts_query_for(query: &str) -> Option<String> {
 }
 
 fn blank_as_none(value: Option<&str>) -> Option<&str> {
-    value.and_then(|value| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
-    })
+    value.map(str::trim).filter(|trimmed| !trimmed.is_empty())
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
