@@ -22,6 +22,7 @@ use crate::{
     Result,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn validate_nested_folder_recursive(
     issues: &mut Vec<Diagnostic>,
     root_folder: &str,
@@ -97,11 +98,9 @@ pub(super) fn validate_nested_folder_recursive(
                     markdown_slugs.insert(stem.to_owned());
                 }
             }
-            "toml" => {
-                if CanonicalId::from_document_path(&relative_path).is_ok() {
-                    toml_slugs.insert(stem.to_owned());
-                    document_toml_files.push((path.clone(), format!("{relative}/{file_name}")));
-                }
+            "toml" if CanonicalId::from_document_path(&relative_path).is_ok() => {
+                toml_slugs.insert(stem.to_owned());
+                document_toml_files.push((path.clone(), format!("{relative}/{file_name}")));
             }
             _ => {}
         }

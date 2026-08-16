@@ -139,9 +139,9 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         Err(error) => return Err(error),
     };
 
-    let type_registry = match TypeRegistry::load(vault) {
-        Ok(registry) => Some(registry),
-        Err(error) => return Err(error),
+    let type_registry = {
+        let registry = TypeRegistry::load(vault)?;
+        Some(registry)
     };
     let mut known_document_types = BTreeMap::new();
     if let Ok(documents) = vault.load_documents() {
@@ -230,11 +230,9 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                         markdown_slugs.insert(stem.to_owned());
                     }
                 }
-                "toml" => {
-                    if CanonicalId::from_document_path(&relative_path).is_ok() {
-                        toml_slugs.insert(stem.to_owned());
-                        document_toml_files.push((path.clone(), format!("{folder}/{file_name}")));
-                    }
+                "toml" if CanonicalId::from_document_path(&relative_path).is_ok() => {
+                    toml_slugs.insert(stem.to_owned());
+                    document_toml_files.push((path.clone(), format!("{folder}/{file_name}")));
                 }
                 _ => {}
             }
