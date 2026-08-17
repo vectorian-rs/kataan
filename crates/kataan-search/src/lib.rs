@@ -105,6 +105,17 @@ impl SearchIndex {
         Self::open(default_index_path(vault_root.as_ref()))
     }
 
+    /// Resolve the default index path without touching disk, so callers can
+    /// cache a handle at startup and let the SQLite file be created lazily on
+    /// first use (via [`connect`](Self::connect)). Unlike [`open_default`], this
+    /// neither creates the directory nor the database, so it never fails and
+    /// leaves the "index exists" status accurate until the index is first used.
+    pub fn at_default_path(vault_root: impl AsRef<Path>) -> Self {
+        Self {
+            path: default_index_path(vault_root.as_ref()),
+        }
+    }
+
     pub fn status_for_vault(vault_root: impl AsRef<Path>) -> Result<SearchStatus> {
         Self::status_at_path(default_index_path(vault_root.as_ref()))
     }
@@ -231,6 +242,14 @@ impl SearchIndex {
     }
 
     fn connect(&self) -> Result<Connection> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create search index directory `{}`",
+                    parent.display()
+                )
+            })?;
+        }
         let connection = Connection::open(&self.path)
             .with_context(|| format!("failed to open search index `{}`", self.path.display()))?;
         create_schema(&connection)?;

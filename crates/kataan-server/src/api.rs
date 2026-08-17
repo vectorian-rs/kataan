@@ -208,9 +208,7 @@ pub async fn search(
     State(state): State<AppState>,
     Query(query): Query<kataan_search::SearchQuery>,
 ) -> Result<Json<kataan_search::SearchResponse>, ApiError> {
-    let index = kataan_search::SearchIndex::open_default(state.vault_path.as_ref())
-        .map_err(ApiError::from)?;
-    index.search(&query).map(Json).map_err(ApiError::from)
+    state.search.search(&query).map(Json).map_err(ApiError::from)
 }
 
 pub async fn search_status(
@@ -225,9 +223,8 @@ pub async fn search_reindex(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_search::ReindexResponse>, ApiError> {
     let loaded = read_loaded_vault(&state)?;
-    let index = kataan_search::SearchIndex::open_default(state.vault_path.as_ref())
-        .map_err(ApiError::from)?;
-    index
+    state
+        .search
         .reindex_loaded(&loaded)
         .map(Json)
         .map_err(ApiError::from)

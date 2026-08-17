@@ -125,7 +125,7 @@ pub(super) fn resolve_vault_file(
     }
     let full_path = regular_descendant_file_path(state.vault_path.as_ref(), relative)
         .ok_or_else(|| ApiError(anyhow::anyhow!("file `{path}` does not exist")))?;
-    if crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?.should_ignore_path(&full_path) {
+    if state.ignore().should_ignore_path(&full_path) {
         return Err(ApiError(anyhow::anyhow!("file `{path}` is ignored")));
     }
     let extension = full_path
@@ -394,7 +394,7 @@ pub(super) fn filesystem_canonical_folder_response(
     let markdown = read_text_file(&folder_path.join("index.md")).ok();
     let mut folders = Vec::new();
     let mut documents = Vec::new();
-    let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
+    let ignore = state.ignore();
 
     for entry in read_dir_entries(&folder_path)? {
         let path = entry.path();
@@ -457,7 +457,7 @@ pub(super) fn folder_files(
         .flat_map(|document| [document.markdown.as_str(), document.toml.as_str()])
         .collect::<std::collections::BTreeSet<_>>();
     let mut files = Vec::new();
-    let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
+    let ignore = state.ignore();
 
     for entry in read_dir_entries(&folder_path)? {
         let path = entry.path();
@@ -527,7 +527,7 @@ pub(super) fn direct_code_folders(
         return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
     }
 
-    let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
+    let ignore = state.ignore();
     let mut folders = Vec::new();
     for entry in read_dir_entries(&folder_path)? {
         let path = entry.path();

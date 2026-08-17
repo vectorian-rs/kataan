@@ -8,7 +8,25 @@ pub struct VaultIgnore {
     gitignore: Option<Gitignore>,
 }
 
+impl std::fmt::Debug for VaultIgnore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultIgnore")
+            .field("root", &self.root)
+            .field("has_gitignore", &self.gitignore.is_some())
+            .finish()
+    }
+}
+
 impl VaultIgnore {
+    /// A matcher that applies only the built-in ignores (no `.gitignore`). Used
+    /// as a graceful fallback when the vault's `.gitignore` cannot be compiled.
+    pub fn empty(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: root.as_ref().to_path_buf(),
+            gitignore: None,
+        }
+    }
+
     pub fn load(root: impl AsRef<Path>) -> anyhow::Result<Self> {
         let root = root.as_ref().to_path_buf();
         let gitignore_path = root.join(".gitignore");
