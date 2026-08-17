@@ -242,17 +242,13 @@ pub(super) fn file_kind(extension: Option<&str>) -> &'static str {
 
 pub(super) fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(id).map_err(ApiError::bad_request)?;
-
-    if let Ok(loaded) = read_loaded_vault(state) {
-        let record = loaded
-            .documents
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| ApiError::not_found(format!("document `{id}` does not exist")))?;
-        return document_response_from_parts(&id, record.metadata, &record.markdown_path);
-    }
-
-    filesystem_document_response(state, &id)
+    let loaded = read_loaded_vault(state)?;
+    let record = loaded
+        .documents
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("document `{id}` does not exist")))?;
+    document_response_from_parts(&id, record.metadata, &record.markdown_path)
 }
 
 pub(super) fn canonical_folder_response(
@@ -260,9 +256,7 @@ pub(super) fn canonical_folder_response(
     id: &str,
 ) -> Result<CanonicalFolderResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(id).map_err(ApiError::bad_request)?;
-    let Ok(loaded) = read_loaded_vault(state) else {
-        return filesystem_canonical_folder_response(state, &id);
-    };
+    let loaded = read_loaded_vault(state)?;
     let (record, folders, documents, markdown_path) = {
         let Some(record) = loaded.documents.get(&id).cloned() else {
             if kataan_core::constants::is_code_path(id.as_str()) {
@@ -299,20 +293,6 @@ pub(super) fn canonical_folder_response(
     })
 }
 
-pub(super) fn filesystem_document_response(
-    state: &AppState,
-    id: &kataan_core::id::CanonicalId,
-) -> Result<DocumentResponse, ApiError> {
-    let toml_path = state.vault_path.join(id.toml_path());
-    let metadata = read_document_metadata_if_valid(&toml_path).ok_or_else(|| {
-        ApiError::from(anyhow::anyhow!(
-            "document `{id}` cannot be loaded because its TOML metadata is invalid"
-        ))
-    })?;
-    let markdown_path = state.vault_path.join(id.folder()).join(&metadata.markdown);
-    document_response_from_parts(id, metadata, &markdown_path)
-}
-
 pub(super) fn document_response_from_parts(
     id: &kataan_core::id::CanonicalId,
     metadata: kataan_core::document::DocumentMetadata,
@@ -334,106 +314,6 @@ pub(super) fn document_response_from_parts(
         metadata,
         markdown,
         html,
-    })
-}
-
-pub(super) fn filesystem_folder_response(
-    state: &AppState,
-    folder: &str,
-) -> Result<FolderResponse, ApiError> {
-    let id = kataan_core::id::CanonicalId::parse(folder).map_err(ApiError::bad_request)?;
-    let response = filesystem_canonical_folder_response(state, &id)?;
-    Ok(FolderResponse {
-        folder: response.id.clone(),
-        index: kataan_core::index::FolderIndex {
-            name: response
-                .metadata
-                .as_ref()
-                .and_then(|metadata| metadata.aliases.first().cloned())
-                .unwrap_or_else(|| title_from_id(&response.id)),
-            description: None,
-            default_type: response.metadata.map(|metadata| metadata.r#type),
-            folder_checksum: None,
-            documents: Vec::new(),
-            subfolders: Vec::new(),
-        },
-        documents: response.documents,
-    })
-}
-
-pub(super) fn filesystem_canonical_folder_response(
-    state: &AppState,
-    id: &kataan_core::id::CanonicalId,
-) -> Result<CanonicalFolderResponse, ApiError> {
-    if kataan_core::constants::is_code_path(id.as_str()) {
-        return Ok(CanonicalFolderResponse {
-            id: id.as_str().to_owned(),
-            metadata: None,
-            markdown: None,
-            folders: direct_code_folders(state, id.as_str())?,
-            documents: Vec::new(),
-            files: folder_files(state, id, &[])?,
-        });
-    }
-
-    let folder_path = state.vault_path.join(id.as_str());
-    if !is_regular_dir(&folder_path) {
-        return Err(ApiError::not_found(format!("folder `{id}` does not exist")));
-    }
-
-    let metadata = read_document_metadata_if_valid(&folder_path.join("index.toml"));
-    let markdown = read_text_file(&folder_path.join("index.md")).ok();
-    let mut folders = Vec::new();
-    let mut documents = Vec::new();
-    let ignore = state.ignore();
-
-    for entry in read_dir_entries(&folder_path)? {
-        let path = entry.path();
-        if ignore.should_ignore_path(&path) {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if is_regular_dir(&path) {
-            folders.push(FolderChildResponse {
-                id: format!("{}/{}", id.as_str(), name),
-                name,
-                has_index: is_regular_file(&path.join("index.md"))
-                    && is_regular_file(&path.join("index.toml")),
-            });
-            continue;
-        }
-        if !is_regular_file(&path)
-            || path.extension().and_then(|extension| extension.to_str()) != Some("md")
-            || name == "index.md"
-        {
-            continue;
-        }
-        let Some(slug) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            continue;
-        };
-        let toml_path = folder_path.join(format!("{slug}.toml"));
-        if read_document_metadata_if_valid(&toml_path).is_none() {
-            continue;
-        }
-        documents.push(FolderDocumentResponse {
-            id: format!("{}/{}", id.as_str(), slug),
-            slug: slug.to_owned(),
-            markdown: name,
-            toml: format!("{slug}.toml"),
-        });
-    }
-
-    folders.sort_by(|left, right| left.id.cmp(&right.id));
-    documents.sort_by(|left, right| left.id.cmp(&right.id));
-    let files = folder_files(state, id, &documents)?;
-
-    Ok(CanonicalFolderResponse {
-        id: id.as_str().to_owned(),
-        metadata,
-        markdown,
-        folders,
-        documents,
-        files,
     })
 }
 
@@ -471,13 +351,6 @@ pub(super) fn folder_files(
 
     files.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(files)
-}
-
-pub(super) fn read_document_metadata_if_valid(
-    path: &std::path::Path,
-) -> Option<kataan_core::document::DocumentMetadata> {
-    let text = read_text_file(path).ok()?;
-    toml::from_str(&text).ok()
 }
 
 pub(super) fn push_code_folder_if_needed(
@@ -563,32 +436,6 @@ pub(super) fn recursive_document_count(
                         .starts_with(&descendant_prefix))
         })
         .count()
-}
-
-pub(super) fn recursive_filesystem_document_count(folder_path: &std::path::Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(folder_path) else {
-        return 0;
-    };
-
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| {
-            let path = entry.path();
-            if is_regular_dir(&path) {
-                return recursive_filesystem_document_count(&path);
-            }
-            if !is_regular_file(&path)
-                || path.extension().and_then(|extension| extension.to_str()) != Some("md")
-                || path.file_name().and_then(|name| name.to_str()) == Some("index.md")
-            {
-                return 0;
-            }
-            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-                return 0;
-            };
-            is_regular_file(&path.with_file_name(format!("{stem}.toml"))) as usize
-        })
-        .sum()
 }
 
 pub(super) fn direct_folders(

@@ -46,6 +46,20 @@ async fn folders_endpoint_returns_folder_list() {
     let response = request(app, "GET", "/api/folders").await;
 
     assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    let folders = body["folders"].as_array().unwrap();
+    let projects = folders
+        .iter()
+        .find(|folder| folder["folder"] == "projects")
+        .expect("projects folder present");
+    assert_eq!(projects["type"], "project");
+    assert!(projects["name"].is_string());
+    // The seed vault puts its type-definition documents under `type/`.
+    let type_folder = folders
+        .iter()
+        .find(|folder| folder["folder"] == "type")
+        .expect("type folder present");
+    assert_eq!(type_folder["document_count"], 7);
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -58,6 +72,9 @@ async fn folder_endpoint_returns_folder_index() {
     let response = request(app, "GET", "/api/folders/type").await;
 
     assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    assert!(body["index"]["name"].is_string());
+    assert_eq!(body["documents"].as_array().unwrap().len(), 7);
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -94,9 +111,32 @@ markdown = "demo.md"
     .unwrap();
     let app = test_app(&root);
 
-    let response = request(app, "GET", "/api/folder?id=projects%2Fsnappy%2Fsows").await;
-
+    let response = request(
+        app.clone(),
+        "GET",
+        "/api/folder?id=projects%2Fsnappy%2Fsows",
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    // `sows` holds one document (`demo`) and no subfolders.
+    assert!(body["folders"].as_array().unwrap().is_empty());
+    let documents = body["documents"].as_array().unwrap();
+    assert_eq!(documents.len(), 1);
+    assert_eq!(documents[0]["slug"], "demo");
+
+    // The parent lists `sows` as a subfolder child with an index.
+    let response = request(app, "GET", "/api/folder?id=projects%2Fsnappy").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    let child = body["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|folder| folder["id"] == "projects/snappy/sows")
+        .expect("sows child present");
+    assert_eq!(child["has_index"], true);
+    assert!(child["name"].is_string());
 
     fs::remove_dir_all(root).unwrap();
 }

@@ -237,77 +237,37 @@ pub async fn search_reindex(
 pub async fn vault(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_core::index::VaultConfig>, ApiError> {
-    if let Ok(loaded) = read_loaded_vault(&state) {
-        return Ok(Json(loaded.index.clone()));
-    }
-
-    let vault =
-        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
-    Ok(Json(vault.index))
+    Ok(Json(read_loaded_vault(&state)?.index.clone()))
 }
 
 pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersResponse>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
     let mut folders = Vec::new();
 
-    if let Ok(loaded) = read_loaded_vault(&state) {
-        for (ty, folder) in &loaded.index.type_folders {
-            let id = kataan_core::id::CanonicalId::parse(folder)
-                .map_err(|source| ApiError::from(anyhow::anyhow!(source)))?;
-            let record = loaded.documents.get(&id);
-            let document_count = recursive_document_count(&loaded, folder);
-            folders.push(FolderSummaryResponse {
-                r#type: ty.clone(),
-                folder: folder.clone(),
-                name: Some(
-                    record
-                        .and_then(document_name)
-                        .unwrap_or_else(|| title_from_id(folder)),
-                ),
-                icon: loaded
-                    .type_registry
-                    .definitions
-                    .get(ty)
-                    .and_then(|definition| definition.icon.clone()),
-                document_count,
-            });
-        }
-        push_code_folder_if_needed(
-            &state,
-            loaded
-                .index
-                .type_folders
-                .values()
-                .any(|folder| kataan_core::constants::is_code_folder(folder)),
-            &mut folders,
-        );
-        return Ok(Json(FoldersResponse { folders }));
-    }
-
-    let vault =
-        kataan_core::vault::Vault::open(state.vault_path.as_ref()).map_err(ApiError::from)?;
-    for (ty, folder) in &vault.index.type_folders {
-        let index = vault.load_folder_index(folder).ok();
+    for (ty, folder) in &loaded.index.type_folders {
+        let id = kataan_core::id::CanonicalId::parse(folder)
+            .map_err(|source| ApiError::from(anyhow::anyhow!(source)))?;
+        let record = loaded.documents.get(&id);
+        let document_count = recursive_document_count(&loaded, folder);
         folders.push(FolderSummaryResponse {
             r#type: ty.clone(),
             folder: folder.clone(),
-            name: index
-                .as_ref()
-                .map(|index| index.name.clone())
-                .or_else(|| Some(title_from_id(folder))),
-            icon: kataan_core::types::TypeRegistry::load(&vault)
-                .ok()
-                .and_then(|registry| {
-                    registry
-                        .definitions
-                        .get(ty)
-                        .and_then(|definition| definition.icon.clone())
-                }),
-            document_count: recursive_filesystem_document_count(&state.vault_path.join(folder)),
+            name: Some(
+                record
+                    .and_then(document_name)
+                    .unwrap_or_else(|| title_from_id(folder)),
+            ),
+            icon: loaded
+                .type_registry
+                .definitions
+                .get(ty)
+                .and_then(|definition| definition.icon.clone()),
+            document_count,
         });
     }
     push_code_folder_if_needed(
         &state,
-        vault
+        loaded
             .index
             .type_folders
             .values()
@@ -322,9 +282,7 @@ pub async fn folder(
     State(state): State<AppState>,
     Path(folder): Path<String>,
 ) -> Result<Json<FolderResponse>, ApiError> {
-    let Ok(loaded) = read_loaded_vault(&state) else {
-        return filesystem_folder_response(&state, &folder).map(Json);
-    };
+    let loaded = read_loaded_vault(&state)?;
     let id = kataan_core::id::CanonicalId::parse(&folder).map_err(ApiError::bad_request)?;
     let Some(record) = loaded.documents.get(&id) else {
         if kataan_core::constants::is_code_path(id.as_str()) {
