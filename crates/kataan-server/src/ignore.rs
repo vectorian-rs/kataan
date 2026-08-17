@@ -73,13 +73,14 @@ fn is_ignore_match(matched: Match<&::ignore::gitignore::Glob>) -> bool {
 }
 
 fn is_builtin_ignore_path(root: &Path, path: &Path) -> bool {
+    use kataan_core::scan::DEFAULT_IGNORED_DIRS;
     let relative = path.strip_prefix(root).unwrap_or(path);
     relative.components().any(|component| {
         let name = component.as_os_str().to_string_lossy();
-        matches!(
-            name.as_ref(),
-            ".git" | "target" | "node_modules" | "dist" | ".astro"
-        ) || name.starts_with(".swp")
+        // Share the core scan default-ignore list so the server watches/serves
+        // exactly the tree that scan/validate/rebuild see, plus editor temp files.
+        DEFAULT_IGNORED_DIRS.contains(&name.as_ref())
+            || name.starts_with(".swp")
             || name.ends_with('~')
     })
 }
