@@ -94,20 +94,11 @@ pub(super) fn highlight_response(
     theme_preference: Option<&str>,
 ) -> Result<HighlightResponse, ApiError> {
     let file = resolve_vault_file(state, path)?;
-    let (language_name, language) = highlight_language(file.extension.as_deref())
+    let (language_name, language) = highlight_language_name(file.extension.as_deref())
         .ok_or_else(|| ApiError(anyhow::anyhow!("file `{path}` cannot be highlighted")))?;
     ensure_preview_size(path, &file.full_path, MAX_TEXT_PREVIEW_BYTES)?;
     let content = read_text_file(&file.full_path)?;
-    let theme = lumis::themes::get(highlight_theme(theme_preference))
-        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
-    let formatter = lumis::HtmlInlineBuilder::new()
-        .language(language)
-        .theme(Some(theme))
-        .pre_class(Some("highlight-preview".to_owned()))
-        .build()
-        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
-    let highlighted_content = content.trim_end_matches(['\r', '\n']);
-    let html = normalize_lumis_line_html(&lumis::highlight(highlighted_content, formatter));
+    let html = highlight_to_html(&content, language, theme_preference)?;
 
     Ok(HighlightResponse {
         path: path.to_owned(),
@@ -208,6 +199,22 @@ pub(super) fn is_regular_dir(path: &std::path::Path) -> bool {
     std::fs::symlink_metadata(path)
         .map(|metadata| metadata.file_type().is_dir())
         .unwrap_or(false)
+}
+
+pub(super) fn read_dir_entries(
+    dir: &std::path::Path,
+) -> Result<Vec<std::fs::DirEntry>, ApiError> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|source| kataan_core::Error::Io {
+        path: dir.to_path_buf(),
+        source,
+    })? {
+        entries.push(entry.map_err(|source| kataan_core::Error::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?);
+    }
+    Ok(entries)
 }
 
 pub(super) fn read_text_file(path: &std::path::Path) -> Result<String, ApiError> {
@@ -389,14 +396,7 @@ pub(super) fn filesystem_canonical_folder_response(
     let mut documents = Vec::new();
     let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
 
-    for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
-        path: folder_path.clone(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| kataan_core::Error::Io {
-            path: folder_path.clone(),
-            source,
-        })?;
+    for entry in read_dir_entries(&folder_path)? {
         let path = entry.path();
         if ignore.should_ignore_path(&path) {
             continue;
@@ -459,14 +459,7 @@ pub(super) fn folder_files(
     let mut files = Vec::new();
     let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
 
-    for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
-        path: folder_path.clone(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| kataan_core::Error::Io {
-            path: folder_path.clone(),
-            source,
-        })?;
+    for entry in read_dir_entries(&folder_path)? {
         let path = entry.path();
         if ignore.should_ignore_path(&path) || !is_regular_file(&path) {
             continue;
@@ -536,14 +529,7 @@ pub(super) fn direct_code_folders(
 
     let ignore = crate::ignore::VaultIgnore::load(state.vault_path.as_ref())?;
     let mut folders = Vec::new();
-    for entry in std::fs::read_dir(&folder_path).map_err(|source| kataan_core::Error::Io {
-        path: folder_path.clone(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| kataan_core::Error::Io {
-            path: folder_path.clone(),
-            source,
-        })?;
+    for entry in read_dir_entries(&folder_path)? {
         let path = entry.path();
         if ignore.should_ignore_path(&path) || !is_regular_dir(&path) {
             continue;
@@ -561,12 +547,12 @@ pub(super) fn direct_code_folders(
 
 pub(super) fn read_loaded_vault(
     state: &AppState,
-) -> Result<kataan_core::vault::LoadedVault, ApiError> {
+) -> Result<std::sync::Arc<kataan_core::vault::LoadedVault>, ApiError> {
     state
         .vault
         .read()
         .map_err(|_| ApiError(anyhow::anyhow!("vault lock poisoned")))
-        .map(|vault| vault.clone())
+        .map(|vault| std::sync::Arc::clone(&vault))
 }
 
 pub(super) fn recursive_document_count(

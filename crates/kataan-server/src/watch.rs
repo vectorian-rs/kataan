@@ -25,15 +25,7 @@ pub struct WatchStatus {
     pub last_rebuild_at: Option<String>,
     pub last_fingerprint: Option<String>,
     pub last_error: Option<String>,
-    pub diagnostics: Vec<WatchDiagnostic>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct WatchDiagnostic {
-    pub severity: String,
-    pub code: String,
-    pub message: String,
-    pub path: Option<String>,
+    pub diagnostics: Vec<crate::api::DiagnosticResponse>,
 }
 
 pub type SharedWatchStatus = Arc<RwLock<WatchStatus>>;
@@ -172,21 +164,19 @@ fn process_change_inner(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn watch_diagnostics(report: &kataan_core::diagnostic::DiagnosticReport) -> Vec<WatchDiagnostic> {
+fn watch_diagnostics(
+    report: &kataan_core::diagnostic::DiagnosticReport,
+) -> Vec<crate::api::DiagnosticResponse> {
     report
         .diagnostics
         .iter()
-        .map(|diagnostic| WatchDiagnostic {
-            severity: format!("{:?}", diagnostic.severity).to_lowercase(),
-            code: diagnostic.code.clone(),
-            message: diagnostic.message.clone(),
-            path: diagnostic.path.clone(),
-        })
+        .map(crate::api::DiagnosticResponse::from)
         .collect()
 }
 
 fn is_rebuild_repairable(code: &str) -> bool {
-    matches!(code, "checksum-mismatch" | "index-drift")
+    use kataan_core::diagnostic_codes::{CHECKSUM_MISMATCH, INDEX_DRIFT};
+    matches!(code, CHECKSUM_MISMATCH | INDEX_DRIFT)
 }
 
 fn vault_fingerprint(root: &Path) -> anyhow::Result<String> {

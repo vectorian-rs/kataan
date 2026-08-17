@@ -136,12 +136,23 @@ pub struct ResolveQuery {
     pub token: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiagnosticResponse {
     pub severity: String,
     pub code: String,
     pub message: String,
     pub path: Option<String>,
+}
+
+impl From<&kataan_core::diagnostic::Diagnostic> for DiagnosticResponse {
+    fn from(diagnostic: &kataan_core::diagnostic::Diagnostic) -> Self {
+        Self {
+            severity: format!("{:?}", diagnostic.severity).to_lowercase(),
+            code: diagnostic.code.clone(),
+            message: diagnostic.message.clone(),
+            path: diagnostic.path.clone(),
+        }
+    }
 }
 
 pub fn router(state: AppState) -> Router {
@@ -419,7 +430,7 @@ pub async fn schema(
     Path(kind): Path<String>,
 ) -> Result<Json<kataan_core::schema::TomlSchemaResponse>, ApiError> {
     let loaded = read_loaded_vault(&state).ok();
-    let response = kataan_core::schema::schema_response(&kind, loaded.as_ref())
+    let response = kataan_core::schema::schema_response(&kind, loaded.as_deref())
         .ok_or_else(|| ApiError(anyhow::anyhow!("unknown schema kind `{kind}`")))?;
     Ok(Json(response))
 }
@@ -431,13 +442,8 @@ pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResp
     let ok = report.is_ok();
     let diagnostics = report
         .diagnostics
-        .into_iter()
-        .map(|diagnostic| DiagnosticResponse {
-            severity: format!("{:?}", diagnostic.severity).to_lowercase(),
-            code: diagnostic.code,
-            message: diagnostic.message,
-            path: diagnostic.path,
-        })
+        .iter()
+        .map(DiagnosticResponse::from)
         .collect();
 
     match state.reload() {

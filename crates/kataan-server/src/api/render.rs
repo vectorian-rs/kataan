@@ -188,6 +188,16 @@ pub(super) fn render_code_block_html(
         ));
     };
 
+    highlight_to_html(code, language, theme_preference)
+}
+
+/// Render `code` to highlighted HTML with the preview theme/formatting shared by
+/// the code-block renderer and the file-highlight endpoint.
+pub(super) fn highlight_to_html(
+    code: &str,
+    language: lumis::languages::Language,
+    theme_preference: Option<&str>,
+) -> Result<String, ApiError> {
     let theme = lumis::themes::get(highlight_theme(theme_preference))
         .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
     let formatter = lumis::HtmlInlineBuilder::new()
@@ -218,12 +228,6 @@ pub(super) fn highlight_theme(theme_preference: Option<&str>) -> &'static str {
         Some("light") => "catppuccin_latte",
         _ => "catppuccin_mocha",
     }
-}
-
-pub(super) fn highlight_language(
-    extension: Option<&str>,
-) -> Option<(&'static str, lumis::languages::Language)> {
-    highlight_language_name(extension)
 }
 
 pub(super) fn highlight_language_hint(
