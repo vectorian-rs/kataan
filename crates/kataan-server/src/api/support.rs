@@ -645,10 +645,5 @@ pub(super) fn direct_documents(
         .collect()
 }
 pub(super) fn document_name(document: &kataan_core::vault::DocumentRecord) -> Option<String> {
-    document
-        .metadata
-        .aliases
-        .first()
-        .cloned()
-        .or_else(|| document.metadata.labels.first().cloned())
+    kataan_core::document::display_name(&document.metadata)
 }

@@ -2,6 +2,16 @@ use std::path::{Path, PathBuf};
 
 use crate::{id::CanonicalId, scan::ScanIgnore, Error, Result};
 
+/// A vault-root-relative path rendered with forward slashes, for stable
+/// cross-platform keys and identifiers. Falls back to the full path when it is
+/// not under `root`.
+pub fn relative_slug(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VaultEntry {
     FolderIndex {

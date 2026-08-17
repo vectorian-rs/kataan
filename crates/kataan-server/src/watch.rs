@@ -218,11 +218,7 @@ fn collect_fingerprint_entries_with_ignore(
         if path.is_dir() {
             collect_fingerprint_entries_with_ignore(root, &path, ignore, entries)?;
         } else if path.is_file() {
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(path.as_path())
-                .to_string_lossy()
-                .replace('\\', "/");
+            let relative = kataan_core::walk::relative_slug(root, &path);
             let hash = kataan_core::checksum::blake3_file(&path)?;
             entries.push((relative, hash));
         }

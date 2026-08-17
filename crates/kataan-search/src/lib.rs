@@ -1,7 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -145,7 +144,7 @@ impl SearchIndex {
 
     pub fn reindex_loaded(&self, loaded: &LoadedVault) -> Result<ReindexResponse> {
         let mut connection = self.connect()?;
-        let indexed_at = unix_timestamp_string()?;
+        let indexed_at = kataan_core::time::unix_timestamp_string();
         let transaction = connection.transaction()?;
 
         transaction.execute_batch(
@@ -288,7 +287,7 @@ impl SearchItem {
         }
         .to_owned();
         let id = record.id.as_str().to_owned();
-        let path = relative_path(&loaded.root, &record.markdown_path);
+        let path = kataan_core::walk::relative_slug(&loaded.root, &record.markdown_path);
         let title = document_title(record, markdown);
         let extension = record
             .markdown_path
@@ -682,17 +681,9 @@ fn blank_as_none(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|trimmed| !trimmed.is_empty())
 }
 
-fn relative_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
 fn document_title(record: &DocumentRecord, markdown: &str) -> Option<String> {
     first_markdown_heading(markdown)
-        .or_else(|| record.metadata.aliases.first().cloned())
-        .or_else(|| record.metadata.labels.first().cloned())
+        .or_else(|| kataan_core::document::display_name(&record.metadata))
         .or_else(|| Some(title_from_id(record.id.as_str())))
 }
 
@@ -752,13 +743,6 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
         }
     }
     deduped
-}
-
-fn unix_timestamp_string() -> Result<String> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)?
-        .as_secs()
-        .to_string())
 }
 
 #[cfg(test)]

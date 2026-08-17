@@ -237,17 +237,10 @@ fn update_root_updated_at(path: &Path, text: &str) -> Result<()> {
     let table = value.as_table_mut().expect("vault TOML root must be table");
     table.insert(
         "updated_at".to_owned(),
-        toml::Value::String(unix_timestamp_string()),
+        toml::Value::String(crate::time::unix_timestamp_string()),
     );
     let updated = toml::to_string_pretty(&value).expect("serialize vault TOML");
     write::atomic_write_string(path, &updated)
-}
-
-fn unix_timestamp_string() -> String {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".to_owned())
 }
 
 fn parse_folder_index_header(

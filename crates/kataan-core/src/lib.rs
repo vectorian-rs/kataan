@@ -12,6 +12,7 @@ pub mod ontology;
 pub mod rebuild;
 pub mod scan;
 pub mod schema;
+pub mod time;
 pub mod title;
 pub mod types;
 pub mod validate;
