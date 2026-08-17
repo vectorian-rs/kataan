@@ -528,7 +528,8 @@ fn search_fts(
         search_row_from_fts,
     )?;
 
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 fn search_filtered(
@@ -569,7 +570,8 @@ fn search_filtered(
         search_row_without_snippet,
     )?;
 
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 fn search_row_from_fts(row: &Row<'_>) -> rusqlite::Result<SearchRow> {

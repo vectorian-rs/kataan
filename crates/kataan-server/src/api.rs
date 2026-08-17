@@ -208,7 +208,11 @@ pub async fn search(
     State(state): State<AppState>,
     Query(query): Query<kataan_search::SearchQuery>,
 ) -> Result<Json<kataan_search::SearchResponse>, ApiError> {
-    state.search.search(&query).map(Json).map_err(ApiError::from)
+    state
+        .search
+        .search(&query)
+        .map(Json)
+        .map_err(ApiError::from)
 }
 
 pub async fn search_status(
@@ -321,8 +325,7 @@ pub async fn folder(
     let Ok(loaded) = read_loaded_vault(&state) else {
         return filesystem_folder_response(&state, &folder).map(Json);
     };
-    let id = kataan_core::id::CanonicalId::parse(&folder)
-        .map_err(ApiError::bad_request)?;
+    let id = kataan_core::id::CanonicalId::parse(&folder).map_err(ApiError::bad_request)?;
     let Some(record) = loaded.documents.get(&id) else {
         if kataan_core::constants::is_code_path(id.as_str()) {
             return Ok(Json(FolderResponse {

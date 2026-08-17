@@ -198,9 +198,7 @@ pub(super) fn is_regular_dir(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-pub(super) fn read_dir_entries(
-    dir: &std::path::Path,
-) -> Result<Vec<std::fs::DirEntry>, ApiError> {
+pub(super) fn read_dir_entries(dir: &std::path::Path) -> Result<Vec<std::fs::DirEntry>, ApiError> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(|source| kataan_core::Error::Io {
         path: dir.to_path_buf(),
@@ -243,8 +241,7 @@ pub(super) fn file_kind(extension: Option<&str>) -> &'static str {
 }
 
 pub(super) fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {
-    let id = kataan_core::id::CanonicalId::parse(id)
-        .map_err(ApiError::bad_request)?;
+    let id = kataan_core::id::CanonicalId::parse(id).map_err(ApiError::bad_request)?;
 
     if let Ok(loaded) = read_loaded_vault(state) {
         let record = loaded
@@ -262,8 +259,7 @@ pub(super) fn canonical_folder_response(
     state: &AppState,
     id: &str,
 ) -> Result<CanonicalFolderResponse, ApiError> {
-    let id = kataan_core::id::CanonicalId::parse(id)
-        .map_err(ApiError::bad_request)?;
+    let id = kataan_core::id::CanonicalId::parse(id).map_err(ApiError::bad_request)?;
     let Ok(loaded) = read_loaded_vault(state) else {
         return filesystem_canonical_folder_response(state, &id);
     };
@@ -345,8 +341,7 @@ pub(super) fn filesystem_folder_response(
     state: &AppState,
     folder: &str,
 ) -> Result<FolderResponse, ApiError> {
-    let id = kataan_core::id::CanonicalId::parse(folder)
-        .map_err(ApiError::bad_request)?;
+    let id = kataan_core::id::CanonicalId::parse(folder).map_err(ApiError::bad_request)?;
     let response = filesystem_canonical_folder_response(state, &id)?;
     Ok(FolderResponse {
         folder: response.id.clone(),
