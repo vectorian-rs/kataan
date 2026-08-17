@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::{mpsc, Arc, RwLock},
@@ -51,10 +52,9 @@ pub fn spawn_watcher(state: AppState) {
 }
 
 fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
-    let mut ignore = VaultIgnore::load(&vault_path)?;
-    let initial_fingerprint = vault_fingerprint(&vault_path)?;
+    let mut fingerprint = VaultFingerprint::scan(&vault_path, &state.ignore())?;
     set_status(&state.watch, |status| {
-        status.last_fingerprint = Some(initial_fingerprint);
+        status.last_fingerprint = Some(fingerprint.digest());
     });
 
     let (tx, rx) = mpsc::channel();
@@ -66,12 +66,13 @@ fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
     watcher.watch(&vault_path, RecursiveMode::Recursive)?;
     info!(vault = %vault_path.display(), "filesystem watcher started");
 
-    let mut pending = false;
+    let mut changed: BTreeSet<PathBuf> = BTreeSet::new();
     let mut last_event = SystemTime::now();
 
     loop {
         match rx.recv_timeout(WATCH_CHANNEL_TIMEOUT) {
             Ok(Ok(event)) => {
+                let ignore = state.ignore();
                 if event
                     .paths
                     .iter()
@@ -79,7 +80,7 @@ fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
                 {
                     continue;
                 }
-                pending = true;
+                changed.extend(event.paths);
                 last_event = SystemTime::now();
                 set_status(&state.watch, |status| {
                     status.last_event_at = Some(timestamp(last_event));
@@ -94,10 +95,17 @@ fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
                 });
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if pending && last_event.elapsed().unwrap_or_default() >= DEBOUNCE {
-                    pending = false;
-                    process_change(&state);
-                    ignore = VaultIgnore::load(&vault_path)?;
+                if !changed.is_empty() && last_event.elapsed().unwrap_or_default() >= DEBOUNCE {
+                    let batch = std::mem::take(&mut changed);
+                    let ignore = state.ignore();
+                    // Ignore-rule edits change which files count, so a stale
+                    // incremental map could miss them: rescan fully in that case.
+                    if batch.iter().any(|path| affects_ignore_rules(path)) {
+                        fingerprint = VaultFingerprint::scan(&vault_path, &ignore)?;
+                    } else {
+                        fingerprint.apply(&vault_path, &ignore, &batch)?;
+                    }
+                    process_change(&state, &mut fingerprint);
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -107,23 +115,23 @@ fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
     }
 }
 
-fn process_change(state: &AppState) {
-    match process_change_inner(state) {
-        Ok(()) => {}
-        Err(error) => {
-            error!(error = %error, "failed to process filesystem change");
-            set_status(&state.watch, |status| {
-                status.last_processed_at = Some(timestamp(SystemTime::now()));
-                status.last_error = Some(error.to_string());
-                status.revision += 1;
-            });
-        }
+fn process_change(state: &AppState, fingerprint: &mut VaultFingerprint) {
+    if let Err(error) = process_change_inner(state, fingerprint) {
+        error!(error = %error, "failed to process filesystem change");
+        set_status(&state.watch, |status| {
+            status.last_processed_at = Some(timestamp(SystemTime::now()));
+            status.last_error = Some(error.to_string());
+            status.revision += 1;
+        });
     }
 }
 
-fn process_change_inner(state: &AppState) -> anyhow::Result<()> {
-    let fingerprint = vault_fingerprint(state.vault_path.as_ref())?;
-    if current_fingerprint(&state.watch).as_deref() == Some(fingerprint.as_str()) {
+fn process_change_inner(
+    state: &AppState,
+    fingerprint: &mut VaultFingerprint,
+) -> anyhow::Result<()> {
+    let digest = fingerprint.digest();
+    if current_fingerprint(&state.watch).as_deref() == Some(digest.as_str()) {
         debug!(vault = %state.vault_path.display(), "filesystem change ignored; fingerprint unchanged");
         return Ok(());
     }
@@ -137,13 +145,16 @@ fn process_change_inner(state: &AppState) -> anyhow::Result<()> {
             .iter()
             .all(|diagnostic| is_rebuild_repairable(&diagnostic.code));
 
-    let mut final_fingerprint = fingerprint;
+    let mut final_fingerprint = digest;
     let mut rebuilt = false;
     if should_rebuild {
         info!(vault = %state.vault_path.display(), "filesystem watcher rebuilding repairable index drift");
         kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref())?;
         rebuilt = true;
-        final_fingerprint = vault_fingerprint(state.vault_path.as_ref())?;
+        // Rebuild rewrites index files we did not observe as events, so rescan
+        // to fold those writes in; otherwise the next cycle sees them as a change.
+        *fingerprint = VaultFingerprint::scan(state.vault_path.as_ref(), &state.ignore())?;
+        final_fingerprint = fingerprint.digest();
         diagnostics =
             watch_diagnostics(&kataan_core::validate::validate(state.vault_path.as_ref())?);
     }
@@ -179,51 +190,95 @@ fn is_rebuild_repairable(code: &str) -> bool {
     matches!(code, CHECKSUM_MISMATCH | INDEX_DRIFT)
 }
 
-fn vault_fingerprint(root: &Path) -> anyhow::Result<String> {
-    let mut entries = Vec::new();
-    collect_fingerprint_entries(root, root, &mut entries)?;
-    entries.sort_by(|left, right| left.0.cmp(&right.0));
-
-    let mut input = String::new();
-    for (relative, hash) in entries {
-        input.push_str(&relative);
-        input.push('\0');
-        input.push_str(&hash);
-        input.push('\n');
-    }
-    Ok(kataan_core::checksum::blake3_bytes(input.as_bytes()))
+/// Content fingerprint of the watched vault, maintained incrementally. Maps each
+/// non-ignored file's root-relative slug to its blake3 hash; the digest is a
+/// stable hash of the whole map. A single edit re-hashes one file via
+/// [`apply`](Self::apply) instead of re-walking and re-hashing the entire tree.
+#[derive(Default)]
+struct VaultFingerprint {
+    hashes: BTreeMap<String, String>,
 }
 
-fn collect_fingerprint_entries(
-    root: &Path,
-    directory: &Path,
-    entries: &mut Vec<(String, String)>,
-) -> anyhow::Result<()> {
-    let ignore = VaultIgnore::load(root)?;
-    collect_fingerprint_entries_with_ignore(root, directory, &ignore, entries)
+impl VaultFingerprint {
+    /// Full walk of the vault; used at startup and after a rebuild (which writes
+    /// index files we did not observe as events).
+    fn scan(root: &Path, ignore: &VaultIgnore) -> anyhow::Result<Self> {
+        let mut fingerprint = Self::default();
+        fingerprint.scan_dir(root, root, ignore)?;
+        Ok(fingerprint)
+    }
+
+    fn scan_dir(
+        &mut self,
+        root: &Path,
+        directory: &Path,
+        ignore: &VaultIgnore,
+    ) -> anyhow::Result<()> {
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if ignore.should_ignore_path(&path) {
+                continue;
+            }
+            if path.is_dir() {
+                self.scan_dir(root, &path, ignore)?;
+            } else if path.is_file() {
+                self.hashes.insert(
+                    kataan_core::walk::relative_slug(root, &path),
+                    kataan_core::checksum::blake3_file(&path)?,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Update the map for the given changed paths: existing files are re-hashed,
+    /// new directories are (re)scanned, and removed paths — plus everything under
+    /// a removed directory — are dropped.
+    fn apply(
+        &mut self,
+        root: &Path,
+        ignore: &VaultIgnore,
+        changed: &BTreeSet<PathBuf>,
+    ) -> anyhow::Result<()> {
+        for path in changed {
+            let slug = kataan_core::walk::relative_slug(root, path);
+            if ignore.should_ignore_path(path) {
+                self.remove_subtree(&slug);
+            } else if path.is_dir() {
+                self.scan_dir(root, path, ignore)?;
+            } else if path.is_file() {
+                self.hashes
+                    .insert(slug, kataan_core::checksum::blake3_file(path)?);
+            } else {
+                self.remove_subtree(&slug);
+            }
+        }
+        Ok(())
+    }
+
+    fn remove_subtree(&mut self, slug: &str) {
+        let prefix = format!("{slug}/");
+        self.hashes
+            .retain(|key, _| key != slug && !key.starts_with(&prefix));
+    }
+
+    fn digest(&self) -> String {
+        // BTreeMap iterates in key order, so the digest is order-independent.
+        let mut input = String::new();
+        for (relative, hash) in &self.hashes {
+            input.push_str(relative);
+            input.push('\0');
+            input.push_str(hash);
+            input.push('\n');
+        }
+        kataan_core::checksum::blake3_bytes(input.as_bytes())
+    }
 }
 
-fn collect_fingerprint_entries_with_ignore(
-    root: &Path,
-    directory: &Path,
-    ignore: &VaultIgnore,
-    entries: &mut Vec<(String, String)>,
-) -> anyhow::Result<()> {
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
-        let path = entry.path();
-        if ignore.should_ignore_path(&path) {
-            continue;
-        }
-        if path.is_dir() {
-            collect_fingerprint_entries_with_ignore(root, &path, ignore, entries)?;
-        } else if path.is_file() {
-            let relative = kataan_core::walk::relative_slug(root, &path);
-            let hash = kataan_core::checksum::blake3_file(&path)?;
-            entries.push((relative, hash));
-        }
-    }
-    Ok(())
+/// Whether a changed path can alter which files are ignored, forcing a full
+/// rescan instead of an incremental update.
+fn affects_ignore_rules(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some(".gitignore")
 }
 
 fn current_fingerprint(status: &SharedWatchStatus) -> Option<String> {
@@ -256,21 +311,70 @@ mod tests {
         assert!(!is_rebuild_repairable("missing-folder-index"));
     }
 
-    #[test]
-    fn vault_fingerprint_respects_gitignore() {
+    fn temp_dir(name: &str) -> PathBuf {
         let root =
-            std::env::temp_dir().join(format!("kataan-server-watch-ignore-{}", std::process::id()));
+            std::env::temp_dir().join(format!("kataan-server-watch-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn digest(root: &Path) -> String {
+        let ignore = VaultIgnore::load(root).unwrap();
+        VaultFingerprint::scan(root, &ignore).unwrap().digest()
+    }
+
+    #[test]
+    fn fingerprint_respects_gitignore() {
+        let root = temp_dir("ignore");
         std::fs::create_dir_all(root.join("ignored")).unwrap();
         std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
         std::fs::write(root.join("kept.md"), "one").unwrap();
         std::fs::write(root.join("ignored/file.md"), "one").unwrap();
 
-        let initial = vault_fingerprint(&root).unwrap();
+        let initial = digest(&root);
         std::fs::write(root.join("ignored/file.md"), "two").unwrap();
-        assert_eq!(initial, vault_fingerprint(&root).unwrap());
+        assert_eq!(initial, digest(&root), "ignored files must not affect it");
         std::fs::write(root.join("kept.md"), "two").unwrap();
-        assert_ne!(initial, vault_fingerprint(&root).unwrap());
+        assert_ne!(initial, digest(&root), "tracked edits must change it");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn incremental_apply_matches_full_scan() {
+        let root = temp_dir("incremental");
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::write(root.join("keep.md"), "keep").unwrap();
+        std::fs::write(root.join("edit.md"), "before").unwrap();
+        std::fs::write(root.join("gone.md"), "gone").unwrap();
+        std::fs::write(root.join("dir/inside.md"), "inside").unwrap();
+
+        let ignore = VaultIgnore::load(&root).unwrap();
+        let mut incremental = VaultFingerprint::scan(&root, &ignore).unwrap();
+
+        // Edit a file, add one, delete a file, and delete a whole directory.
+        std::fs::write(root.join("edit.md"), "after").unwrap();
+        std::fs::write(root.join("added.md"), "added").unwrap();
+        std::fs::remove_file(root.join("gone.md")).unwrap();
+        std::fs::remove_dir_all(root.join("dir")).unwrap();
+
+        let changed: BTreeSet<PathBuf> = [
+            root.join("edit.md"),
+            root.join("added.md"),
+            root.join("gone.md"),
+            root.join("dir"),
+        ]
+        .into_iter()
+        .collect();
+        incremental.apply(&root, &ignore, &changed).unwrap();
+
+        let full = VaultFingerprint::scan(&root, &ignore).unwrap();
+        assert_eq!(
+            incremental.digest(),
+            full.digest(),
+            "incremental update must converge to a full rescan"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
