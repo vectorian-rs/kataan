@@ -246,9 +246,8 @@ pub(super) fn document_response(state: &AppState, id: &str) -> Result<DocumentRe
     let record = loaded
         .documents
         .get(&id)
-        .cloned()
         .ok_or_else(|| ApiError::not_found(format!("document `{id}` does not exist")))?;
-    document_response_from_parts(&id, record.metadata, &record.markdown_path)
+    document_response_from_parts(&id, record.metadata.clone(), &record.markdown_path)
 }
 
 pub(super) fn canonical_folder_response(
@@ -257,35 +256,32 @@ pub(super) fn canonical_folder_response(
 ) -> Result<CanonicalFolderResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(id).map_err(ApiError::bad_request)?;
     let loaded = read_loaded_vault(state)?;
-    let (record, folders, documents, markdown_path) = {
-        let Some(record) = loaded.documents.get(&id).cloned() else {
-            if kataan_core::constants::is_code_path(id.as_str()) {
-                return Ok(CanonicalFolderResponse {
-                    id: id.as_str().to_owned(),
-                    metadata: None,
-                    markdown: None,
-                    folders: direct_code_folders(state, id.as_str())?,
-                    documents: Vec::new(),
-                    files: folder_files(state, &id, &[])?,
-                });
-            }
-            return Err(ApiError::not_found(format!("folder `{id}` does not exist")));
-        };
-        if !record.is_folder_index {
-            return Err(ApiError::bad_request(format!(
-                "document `{id}` is not a folder"
-            )));
+    let Some(record) = loaded.documents.get(&id) else {
+        if kataan_core::constants::is_code_path(id.as_str()) {
+            return Ok(CanonicalFolderResponse {
+                id: id.as_str().to_owned(),
+                metadata: None,
+                markdown: None,
+                folders: direct_code_folders(state, id.as_str())?,
+                documents: Vec::new(),
+                files: folder_files(state, &id, &[])?,
+            });
         }
-        let folders = direct_folders(&loaded, &id);
-        let documents = direct_documents(&loaded, &id);
-        (record.clone(), folders, documents, record.markdown_path)
+        return Err(ApiError::not_found(format!("folder `{id}` does not exist")));
     };
-    let markdown = read_text_file(&markdown_path).ok();
+    if !record.is_folder_index {
+        return Err(ApiError::bad_request(format!(
+            "document `{id}` is not a folder"
+        )));
+    }
+    let folders = direct_folders(&loaded, &id);
+    let documents = direct_documents(&loaded, &id);
+    let markdown = read_text_file(&record.markdown_path).ok();
     let files = folder_files(state, &id, &documents)?;
 
     Ok(CanonicalFolderResponse {
         id: id.as_str().to_owned(),
-        metadata: Some(record.metadata),
+        metadata: Some(record.metadata.clone()),
         markdown,
         folders,
         documents,
@@ -375,7 +371,7 @@ pub(super) fn empty_code_folder_index(id: &str) -> kataan_core::index::FolderInd
     kataan_core::index::FolderIndex {
         name: title_from_id(id),
         description: Some("Agent tools and code assets.".to_owned()),
-        default_type: Some("code".to_owned()),
+        default_type: Some(kataan_core::constants::TYPE_CODE.to_owned()),
         folder_checksum: None,
         documents: Vec::new(),
         subfolders: Vec::new(),
