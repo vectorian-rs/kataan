@@ -17,7 +17,7 @@ pub(super) fn ensure_preview_size(
         .map(|metadata| metadata.len())
         .unwrap_or(0);
     if size > limit {
-        return Err(ApiError(anyhow::anyhow!(
+        return Err(ApiError::too_large(format!(
             "file `{path}` is {} and exceeds the {} preview limit",
             format_megabytes(size),
             format_megabytes(limit)
@@ -63,20 +63,17 @@ pub(super) fn raw_file_response(
         Some("svg") => "image/svg+xml",
         Some("pdf") => "application/pdf",
         _ => {
-            return Err(ApiError(anyhow::anyhow!(
+            return Err(ApiError::bad_request(format!(
                 "file `{path}` cannot be previewed as raw content"
             )))
         }
     };
     ensure_preview_size(path, &file.full_path, MAX_RAW_PREVIEW_BYTES)?;
     let bytes = std::fs::read(&file.full_path).map_err(|source| {
-        ApiError(
-            kataan_core::Error::Io {
-                path: file.full_path.clone(),
-                source,
-            }
-            .into(),
-        )
+        ApiError::from(kataan_core::Error::Io {
+            path: file.full_path.clone(),
+            source,
+        })
     })?;
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -95,7 +92,7 @@ pub(super) fn highlight_response(
 ) -> Result<HighlightResponse, ApiError> {
     let file = resolve_vault_file(state, path)?;
     let (language_name, language) = highlight_language_name(file.extension.as_deref())
-        .ok_or_else(|| ApiError(anyhow::anyhow!("file `{path}` cannot be highlighted")))?;
+        .ok_or_else(|| ApiError::bad_request(format!("file `{path}` cannot be highlighted")))?;
     ensure_preview_size(path, &file.full_path, MAX_TEXT_PREVIEW_BYTES)?;
     let content = read_text_file(&file.full_path)?;
     let html = highlight_to_html(&content, language, theme_preference)?;
@@ -121,12 +118,12 @@ pub(super) fn resolve_vault_file(
 ) -> Result<ResolvedVaultFile, ApiError> {
     let relative = std::path::Path::new(path);
     if !is_safe_relative_path(relative) {
-        return Err(ApiError(anyhow::anyhow!("invalid file path `{path}`")));
+        return Err(ApiError::bad_request(format!("invalid file path `{path}`")));
     }
     let full_path = regular_descendant_file_path(state.vault_path.as_ref(), relative)
-        .ok_or_else(|| ApiError(anyhow::anyhow!("file `{path}` does not exist")))?;
+        .ok_or_else(|| ApiError::not_found(format!("file `{path}` does not exist")))?;
     if state.ignore().should_ignore_path(&full_path) {
-        return Err(ApiError(anyhow::anyhow!("file `{path}` is ignored")));
+        return Err(ApiError::not_found(format!("file `{path}` is ignored")));
     }
     let extension = full_path
         .extension()
@@ -219,19 +216,16 @@ pub(super) fn read_dir_entries(
 
 pub(super) fn read_text_file(path: &std::path::Path) -> Result<String, ApiError> {
     if !is_regular_file(path) {
-        return Err(ApiError(anyhow::anyhow!(
+        return Err(ApiError::not_found(format!(
             "file `{}` does not exist",
             path.display()
         )));
     }
     std::fs::read_to_string(path).map_err(|source| {
-        ApiError(
-            kataan_core::Error::Io {
-                path: path.to_path_buf(),
-                source,
-            }
-            .into(),
-        )
+        ApiError::from(kataan_core::Error::Io {
+            path: path.to_path_buf(),
+            source,
+        })
     })
 }
 
@@ -250,14 +244,14 @@ pub(super) fn file_kind(extension: Option<&str>) -> &'static str {
 
 pub(super) fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(id)
-        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+        .map_err(ApiError::bad_request)?;
 
     if let Ok(loaded) = read_loaded_vault(state) {
         let record = loaded
             .documents
             .get(&id)
             .cloned()
-            .ok_or_else(|| ApiError(anyhow::anyhow!("document `{id}` does not exist")))?;
+            .ok_or_else(|| ApiError::not_found(format!("document `{id}` does not exist")))?;
         return document_response_from_parts(&id, record.metadata, &record.markdown_path);
     }
 
@@ -269,7 +263,7 @@ pub(super) fn canonical_folder_response(
     id: &str,
 ) -> Result<CanonicalFolderResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(id)
-        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+        .map_err(ApiError::bad_request)?;
     let Ok(loaded) = read_loaded_vault(state) else {
         return filesystem_canonical_folder_response(state, &id);
     };
@@ -285,10 +279,12 @@ pub(super) fn canonical_folder_response(
                     files: folder_files(state, &id, &[])?,
                 });
             }
-            return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
+            return Err(ApiError::not_found(format!("folder `{id}` does not exist")));
         };
         if !record.is_folder_index {
-            return Err(ApiError(anyhow::anyhow!("document `{id}` is not a folder")));
+            return Err(ApiError::bad_request(format!(
+                "document `{id}` is not a folder"
+            )));
         }
         let folders = direct_folders(&loaded, &id);
         let documents = direct_documents(&loaded, &id);
@@ -313,7 +309,7 @@ pub(super) fn filesystem_document_response(
 ) -> Result<DocumentResponse, ApiError> {
     let toml_path = state.vault_path.join(id.toml_path());
     let metadata = read_document_metadata_if_valid(&toml_path).ok_or_else(|| {
-        ApiError(anyhow::anyhow!(
+        ApiError::from(anyhow::anyhow!(
             "document `{id}` cannot be loaded because its TOML metadata is invalid"
         ))
     })?;
@@ -350,7 +346,7 @@ pub(super) fn filesystem_folder_response(
     folder: &str,
 ) -> Result<FolderResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(folder)
-        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+        .map_err(ApiError::bad_request)?;
     let response = filesystem_canonical_folder_response(state, &id)?;
     Ok(FolderResponse {
         folder: response.id.clone(),
@@ -387,7 +383,7 @@ pub(super) fn filesystem_canonical_folder_response(
 
     let folder_path = state.vault_path.join(id.as_str());
     if !is_regular_dir(&folder_path) {
-        return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
+        return Err(ApiError::not_found(format!("folder `{id}` does not exist")));
     }
 
     let metadata = read_document_metadata_if_valid(&folder_path.join("index.toml"));
@@ -524,7 +520,7 @@ pub(super) fn direct_code_folders(
 ) -> Result<Vec<FolderChildResponse>, ApiError> {
     let folder_path = state.vault_path.join(id);
     if !is_regular_dir(&folder_path) {
-        return Err(ApiError(anyhow::anyhow!("folder `{id}` does not exist")));
+        return Err(ApiError::not_found(format!("folder `{id}` does not exist")));
     }
 
     let ignore = state.ignore();
@@ -551,7 +547,7 @@ pub(super) fn read_loaded_vault(
     state
         .vault
         .read()
-        .map_err(|_| ApiError(anyhow::anyhow!("vault lock poisoned")))
+        .map_err(|_| ApiError::from(anyhow::anyhow!("vault lock poisoned")))
         .map(|vault| std::sync::Arc::clone(&vault))
 }
 

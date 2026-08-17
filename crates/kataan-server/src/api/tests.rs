@@ -147,6 +147,7 @@ async fn file_endpoints_reject_symlink_files_and_intermediate_dirs() {
     symlink(outside.join("nested"), root.join("projects/outside-dir")).unwrap();
     let app = test_app(&root);
 
+    // Symlinked / escaping paths resolve to nothing safe to serve -> 404.
     for uri in [
         "/api/file?path=projects%2Fleak.json",
         "/api/file/highlight?path=projects%2Fleak.json",
@@ -154,11 +155,7 @@ async fn file_endpoints_reject_symlink_files_and_intermediate_dirs() {
         "/api/file?path=projects%2Foutside-dir%2Fdata.json",
     ] {
         let response = request(app.clone(), "GET", uri).await;
-        assert_eq!(
-            response.status(),
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "{uri}"
-        );
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
     }
 
     let response = request(app, "GET", "/api/folder?id=projects").await;
@@ -242,18 +239,29 @@ async fn file_endpoints_reject_oversized_files() {
         .unwrap();
     let app = test_app(&root);
 
-    for uri in [
-        "/api/file?path=projects%2Fbig.txt",
-        "/api/file/highlight?path=projects%2Fbig.txt",
-        "/api/file?path=projects%2Fbig.pdf",
-        "/api/file/raw?path=projects%2Fbig.pdf",
+    // Over-limit previews are rejected with 413. The highlight endpoint rejects
+    // a `.txt` file earlier, at the "not a highlightable type" check (400),
+    // before it ever measures the file.
+    for (uri, expected) in [
+        (
+            "/api/file?path=projects%2Fbig.txt",
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+        (
+            "/api/file/highlight?path=projects%2Fbig.txt",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/file?path=projects%2Fbig.pdf",
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+        (
+            "/api/file/raw?path=projects%2Fbig.pdf",
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
     ] {
         let response = request(app.clone(), "GET", uri).await;
-        assert_eq!(
-            response.status(),
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "{uri}"
-        );
+        assert_eq!(response.status(), expected, "{uri}");
     }
 
     fs::remove_dir_all(root).unwrap();

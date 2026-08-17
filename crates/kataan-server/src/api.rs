@@ -248,7 +248,7 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
     if let Ok(loaded) = read_loaded_vault(&state) {
         for (ty, folder) in &loaded.index.type_folders {
             let id = kataan_core::id::CanonicalId::parse(folder)
-                .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+                .map_err(|source| ApiError::from(anyhow::anyhow!(source)))?;
             let record = loaded.documents.get(&id);
             let document_count = recursive_document_count(&loaded, folder);
             folders.push(FolderSummaryResponse {
@@ -322,7 +322,7 @@ pub async fn folder(
         return filesystem_folder_response(&state, &folder).map(Json);
     };
     let id = kataan_core::id::CanonicalId::parse(&folder)
-        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+        .map_err(ApiError::bad_request)?;
     let Some(record) = loaded.documents.get(&id) else {
         if kataan_core::constants::is_code_path(id.as_str()) {
             return Ok(Json(FolderResponse {
@@ -331,7 +331,7 @@ pub async fn folder(
                 documents: Vec::new(),
             }));
         }
-        return Err(ApiError(anyhow::anyhow!(
+        return Err(ApiError::not_found(format!(
             "folder `{folder}` does not exist"
         )));
     };
@@ -396,16 +396,15 @@ pub async fn resolve_route(
         .resolve_route_token(&query.r#type, &query.token)
         .cloned()
         .ok_or_else(|| {
-            ApiError(anyhow::anyhow!(
+            ApiError::not_found(format!(
                 "route token `{}` for type `{}` does not resolve",
-                query.token,
-                query.r#type
+                query.token, query.r#type
             ))
         })?;
     let document = loaded
         .documents
         .get(&id)
-        .ok_or_else(|| ApiError(anyhow::anyhow!("document `{id}` does not exist")))?;
+        .ok_or_else(|| ApiError::not_found(format!("document `{id}` does not exist")))?;
     Ok(Json(ResolveResponse {
         id: id.as_str().to_owned(),
         folder: id.containing_folder().to_owned(),
@@ -428,7 +427,7 @@ pub async fn schema(
 ) -> Result<Json<kataan_core::schema::TomlSchemaResponse>, ApiError> {
     let loaded = read_loaded_vault(&state).ok();
     let response = kataan_core::schema::schema_response(&kind, loaded.as_deref())
-        .ok_or_else(|| ApiError(anyhow::anyhow!("unknown schema kind `{kind}`")))?;
+        .ok_or_else(|| ApiError::not_found(format!("unknown schema kind `{kind}`")))?;
     Ok(Json(response))
 }
 
@@ -461,26 +460,60 @@ pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkRes
     Ok(Json(OkResponse { ok: true }))
 }
 
+/// An API failure carrying the HTTP status it should map to. Handlers build the
+/// semantic variants (`not_found`, `bad_request`, `too_large`); any other error
+/// converts via `From` and is treated as an internal 500.
 #[derive(Debug)]
-pub struct ApiError(anyhow::Error);
+pub struct ApiError {
+    status: StatusCode,
+    error: anyhow::Error,
+}
+
+impl ApiError {
+    fn with_status(status: StatusCode, message: impl std::fmt::Display) -> Self {
+        Self {
+            status,
+            error: anyhow::anyhow!("{message}"),
+        }
+    }
+
+    pub fn not_found(message: impl std::fmt::Display) -> Self {
+        Self::with_status(StatusCode::NOT_FOUND, message)
+    }
+
+    pub fn bad_request(message: impl std::fmt::Display) -> Self {
+        Self::with_status(StatusCode::BAD_REQUEST, message)
+    }
+
+    pub fn too_large(message: impl std::fmt::Display) -> Self {
+        Self::with_status(StatusCode::PAYLOAD_TOO_LARGE, message)
+    }
+}
 
 impl<E> From<E> for ApiError
 where
     E: Into<anyhow::Error>,
 {
     fn from(error: E) -> Self {
-        Self(error.into())
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            error: error.into(),
+        }
     }
 }
 
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
-        error!(error = %self.0, "api request failed");
+        if self.status.is_server_error() {
+            error!(status = %self.status, error = %self.error, "api request failed");
+        } else {
+            debug!(status = %self.status, error = %self.error, "api request rejected");
+        }
         let body = Json(serde_json::json!({
             "ok": false,
-            "error": self.0.to_string(),
+            "error": self.error.to_string(),
         }));
-        (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+        (self.status, body).into_response()
     }
 }
 

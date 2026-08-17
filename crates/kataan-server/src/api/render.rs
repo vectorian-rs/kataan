@@ -199,13 +199,13 @@ pub(super) fn highlight_to_html(
     theme_preference: Option<&str>,
 ) -> Result<String, ApiError> {
     let theme = lumis::themes::get(highlight_theme(theme_preference))
-        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+        .map_err(|source| ApiError::from(anyhow::anyhow!(source)))?;
     let formatter = lumis::HtmlInlineBuilder::new()
         .language(language)
         .theme(Some(theme))
         .pre_class(Some("highlight-preview".to_owned()))
         .build()
-        .map_err(|source| ApiError(anyhow::anyhow!(source)))?;
+        .map_err(|source| ApiError::from(anyhow::anyhow!(source)))?;
     Ok(normalize_lumis_line_html(&lumis::highlight(
         code.trim_end_matches(['\r', '\n']),
         formatter,
