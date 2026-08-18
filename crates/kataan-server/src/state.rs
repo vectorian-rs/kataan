@@ -60,10 +60,13 @@ impl AppState {
 
     /// The shared, pre-compiled `.gitignore` matcher for the vault.
     pub fn ignore(&self) -> Arc<VaultIgnore> {
-        self.ignore
+        // On poison, recover the last-good matcher rather than failing open to
+        // built-in-only ignores (which would silently stop honoring `.gitignore`).
+        let guard = self
+            .ignore
             .read()
-            .map(|guard| Arc::clone(&guard))
-            .unwrap_or_else(|_| Arc::new(VaultIgnore::empty(self.vault_path.as_ref())))
+            .unwrap_or_else(|poison| poison.into_inner());
+        Arc::clone(&guard)
     }
 }
 

@@ -100,12 +100,25 @@ fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
                     let ignore = state.ignore();
                     // Ignore-rule edits change which files count, so a stale
                     // incremental map could miss them: rescan fully in that case.
-                    if batch.iter().any(|path| affects_ignore_rules(path)) {
-                        fingerprint = VaultFingerprint::scan(&vault_path, &ignore)?;
+                    let updated = if batch.iter().any(|path| affects_ignore_rules(path)) {
+                        VaultFingerprint::scan(&vault_path, &ignore)
+                            .map(|scanned| fingerprint = scanned)
                     } else {
-                        fingerprint.apply(&vault_path, &ignore, &batch)?;
+                        fingerprint.apply(&vault_path, &ignore, &batch)
+                    };
+                    match updated {
+                        Ok(()) => process_change(&state, &mut fingerprint),
+                        // A transient IO error (e.g. a file removed mid-hash by an
+                        // editor's atomic save) must not kill the watcher thread; the
+                        // change that caused it is re-driven by a later event.
+                        Err(error) => {
+                            error!(error = %error, "failed to update vault fingerprint; retrying on next change");
+                            set_status(&state.watch, |status| {
+                                status.last_error = Some(error.to_string());
+                                status.revision += 1;
+                            });
+                        }
                     }
-                    process_change(&state, &mut fingerprint);
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -232,8 +245,8 @@ impl VaultFingerprint {
     }
 
     /// Update the map for the given changed paths: existing files are re-hashed,
-    /// new directories are (re)scanned, and removed paths — plus everything under
-    /// a removed directory — are dropped.
+    /// directories are reconciled (subtree dropped then rescanned), and removed
+    /// paths — plus everything under a removed directory — are dropped.
     fn apply(
         &mut self,
         root: &Path,
@@ -245,6 +258,10 @@ impl VaultFingerprint {
             if ignore.should_ignore_path(path) {
                 self.remove_subtree(&slug);
             } else if path.is_dir() {
+                // Reconcile the whole subtree: drop stale entries first, so a file
+                // deleted inside a directory reported only at directory granularity
+                // (e.g. coalesced FSEvents) is removed, not left as a ghost.
+                self.remove_subtree(&slug);
                 self.scan_dir(root, path, ignore)?;
             } else if path.is_file() {
                 self.hashes
@@ -374,6 +391,32 @@ mod tests {
             incremental.digest(),
             full.digest(),
             "incremental update must converge to a full rescan"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_reconciles_deletion_reported_at_directory_granularity() {
+        let root = temp_dir("dir-coalesce");
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::write(root.join("dir/a.md"), "a").unwrap();
+        std::fs::write(root.join("dir/b.md"), "b").unwrap();
+
+        let ignore = VaultIgnore::load(&root).unwrap();
+        let mut incremental = VaultFingerprint::scan(&root, &ignore).unwrap();
+
+        // Delete a file inside `dir`, but report only the still-existing parent
+        // directory as changed (as coalesced FSEvents can).
+        std::fs::remove_file(root.join("dir/a.md")).unwrap();
+        let changed: BTreeSet<PathBuf> = [root.join("dir")].into_iter().collect();
+        incremental.apply(&root, &ignore, &changed).unwrap();
+
+        let full = VaultFingerprint::scan(&root, &ignore).unwrap();
+        assert_eq!(
+            incremental.digest(),
+            full.digest(),
+            "a deletion inside a directory-granularity event must not leave a ghost"
         );
 
         let _ = std::fs::remove_dir_all(root);
