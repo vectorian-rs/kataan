@@ -357,11 +357,7 @@ pub(super) fn is_file_backed_folder(
     id: &kataan_core::id::CanonicalId,
 ) -> bool {
     let top = id.top_level_folder();
-    loaded
-        .index
-        .type_folders
-        .values()
-        .any(|folder| folder == top)
+    type_for_folder(loaded, top).is_some()
         && kataan_core::id::CanonicalId::parse(top)
             .is_ok_and(|top_id| !loaded.documents.contains_key(&top_id))
 }
