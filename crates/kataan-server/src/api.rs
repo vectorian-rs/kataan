@@ -242,13 +242,13 @@ pub async fn vault(
 
 pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersResponse>, ApiError> {
     let loaded = read_loaded_vault(&state)?;
+    let document_counts = document_counts_by_type_folder(&loaded);
     let mut folders = Vec::new();
 
     for (ty, folder) in &loaded.index.type_folders {
         let id = kataan_core::id::CanonicalId::parse(folder)
             .map_err(|source| ApiError::from(anyhow::anyhow!(source)))?;
         let record = loaded.documents.get(&id);
-        let document_count = recursive_document_count(&loaded, folder);
         folders.push(FolderSummaryResponse {
             r#type: ty.clone(),
             folder: folder.clone(),
@@ -262,7 +262,7 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
                 .definitions
                 .get(ty)
                 .and_then(|definition| definition.icon.clone()),
-            document_count,
+            document_count: document_counts.get(folder).copied().unwrap_or(0),
         });
     }
 

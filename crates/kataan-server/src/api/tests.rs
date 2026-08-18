@@ -65,6 +65,41 @@ async fn folders_endpoint_returns_folder_list() {
 }
 
 #[tokio::test]
+async fn folders_count_includes_nested_documents() {
+    let root = test_vault();
+    // A document nested two levels under the `projects` type folder.
+    fs::create_dir_all(root.join("projects/alpha")).unwrap();
+    fs::write(root.join("projects/alpha/index.md"), "# Alpha\n").unwrap();
+    fs::write(
+        root.join("projects/alpha/index.toml"),
+        "type = \"project\"\nname = \"Alpha\"\nmarkdown = \"index.md\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("projects/alpha/doc1.md"), "# Doc1\n").unwrap();
+    fs::write(
+        root.join("projects/alpha/doc1.toml"),
+        "type = \"project\"\nmarkdown = \"doc1.md\"\n",
+    )
+    .unwrap();
+    let app = test_app(&root);
+
+    let response = request(app, "GET", "/api/folders").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    let projects = body["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|folder| folder["folder"] == "projects")
+        .expect("projects folder present");
+    // The nested doc1 is attributed to the top-level `projects` folder
+    // (folder-index documents like alpha/index are not counted).
+    assert_eq!(projects["document_count"], 1);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn folder_endpoint_returns_folder_index() {
     let root = test_vault();
     let app = test_app(&root);

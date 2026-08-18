@@ -424,23 +424,41 @@ pub(super) fn read_loaded_vault(
         .map(|vault| std::sync::Arc::clone(&vault))
 }
 
-pub(super) fn recursive_document_count(
+/// Count non-folder-index documents under each declared type folder in a single
+/// pass. A document is attributed to every ancestor folder that is a type folder
+/// (matching the old per-folder `containing_folder == F || starts_with "F/"`),
+/// so this is O(documents) instead of O(type_folders × documents).
+pub(super) fn document_counts_by_type_folder(
     loaded: &kataan_core::vault::LoadedVault,
-    folder: &str,
-) -> usize {
-    let descendant_prefix = format!("{folder}/");
-    loaded
-        .documents
+) -> std::collections::BTreeMap<String, usize> {
+    let type_folders: std::collections::HashSet<&str> = loaded
+        .index
+        .type_folders
         .values()
-        .filter(|document| {
-            !document.is_folder_index
-                && (document.id.containing_folder() == folder
-                    || document
-                        .id
-                        .containing_folder()
-                        .starts_with(&descendant_prefix))
-        })
-        .count()
+        .map(String::as_str)
+        .collect();
+    let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for document in loaded.documents.values() {
+        if document.is_folder_index {
+            continue;
+        }
+        let mut prefix = String::new();
+        for segment in document
+            .id
+            .containing_folder()
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+        {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(segment);
+            if type_folders.contains(prefix.as_str()) {
+                *counts.entry(prefix.clone()).or_default() += 1;
+            }
+        }
+    }
+    counts
 }
 
 pub(super) fn direct_folders(
