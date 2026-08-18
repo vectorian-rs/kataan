@@ -154,6 +154,44 @@ fn status_reports_missing_and_indexed_database() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn reindex_rebuilds_a_stale_schema_index() {
+    let root = temp_dir("stale-schema");
+    kataan_core::init::init_vault(&root, "Search Test").unwrap();
+    write_note(
+        &root,
+        "note-a",
+        "# Note A\n",
+        "type = \"note\"\nstatus = \"active\"\nmarkdown = \"note-a.md\"\n",
+    );
+    let db_path = root.join("search.sqlite");
+
+    // Simulate an index built by an older extractor: search_items with the
+    // removed NOT NULL columns (checksum/extractor_version/indexed_at).
+    {
+        let connection = rusqlite::Connection::open(&db_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE search_items (
+                   item_key TEXT PRIMARY KEY, kind TEXT NOT NULL, id TEXT, path TEXT NOT NULL,
+                   title TEXT, type TEXT, status TEXT, extension TEXT, route_token TEXT,
+                   checksum TEXT NOT NULL, extractor_version TEXT NOT NULL, indexed_at TEXT NOT NULL
+                 );",
+            )
+            .unwrap();
+    }
+
+    let loaded = LoadedVault::load(&root).unwrap();
+    let index = SearchIndex::open(&db_path).unwrap();
+    // Reindex must succeed by rebuilding the schema, not fail inserting into the
+    // stale table's dropped NOT NULL columns.
+    let response = index.reindex_loaded(&loaded).unwrap();
+    assert!(response.document_count > 0);
+    assert!(index.status().unwrap().item_count > 0);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn write_note(root: &Path, slug: &str, markdown: &str, metadata: &str) {
     fs::write(root.join("notes").join(format!("{slug}.md")), markdown).unwrap();
     fs::write(root.join("notes").join(format!("{slug}.toml")), metadata).unwrap();

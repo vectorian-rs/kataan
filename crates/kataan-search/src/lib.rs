@@ -62,7 +62,6 @@ pub struct SearchStatus {
     pub item_count: usize,
     pub document_count: usize,
     pub folder_count: usize,
-    pub file_count: usize,
     pub last_indexed_at: Option<String>,
     pub extractor_version: Option<String>,
 }
@@ -74,7 +73,6 @@ pub struct ReindexResponse {
     pub item_count: usize,
     pub document_count: usize,
     pub folder_count: usize,
-    pub file_count: usize,
     pub indexed_at: String,
 }
 
@@ -128,7 +126,6 @@ impl SearchIndex {
                 item_count: 0,
                 document_count: 0,
                 folder_count: 0,
-                file_count: 0,
                 last_indexed_at: None,
                 extractor_version: None,
             });
@@ -147,12 +144,15 @@ impl SearchIndex {
         let indexed_at = kataan_core::time::unix_timestamp_string();
         let transaction = connection.transaction()?;
 
+        // Drop and recreate rather than DELETE, so an index built on an older
+        // schema is rebuilt with the current columns instead of failing inserts.
         transaction.execute_batch(
-            "DELETE FROM search_fts;
-             DELETE FROM search_facets;
-             DELETE FROM search_items;
-             DELETE FROM search_metadata;",
+            "DROP TABLE IF EXISTS search_fts;
+             DROP TABLE IF EXISTS search_facets;
+             DROP TABLE IF EXISTS search_items;
+             DROP TABLE IF EXISTS search_metadata;",
         )?;
+        create_schema(&transaction)?;
 
         let mut item_count = 0usize;
         let mut document_count = 0usize;
@@ -164,12 +164,11 @@ impl SearchIndex {
                 .with_context(|| format!("failed to read markdown for `{}`", record.id))?;
             let item = SearchItem::from_document_record(loaded, record, &markdown)?;
 
-            insert_item(&transaction, &item, &indexed_at)?;
+            insert_item(&transaction, &item)?;
             item_count += 1;
-            if item.kind == "folder" {
-                folder_count += 1;
-            } else if item.kind == "document" {
-                document_count += 1;
+            match item.kind {
+                Kind::Folder => folder_count += 1,
+                Kind::Document => document_count += 1,
             }
         }
 
@@ -190,7 +189,6 @@ impl SearchIndex {
             item_count,
             document_count,
             folder_count,
-            file_count: 0,
             indexed_at,
         })
     }
@@ -232,9 +230,8 @@ impl SearchIndex {
             index_path: self.path.display().to_string(),
             exists: true,
             item_count: counts.values().sum(),
-            document_count: count_of("document"),
-            folder_count: count_of("folder"),
-            file_count: count_of("file"),
+            document_count: count_of(Kind::Document.as_str()),
+            folder_count: count_of(Kind::Folder.as_str()),
             last_indexed_at: metadata_value(&connection, "last_indexed_at")?,
             extractor_version: metadata_value(&connection, "extractor_version")?,
         })
@@ -256,10 +253,27 @@ impl SearchIndex {
     }
 }
 
+/// The kind of thing an index item represents. Serializes to the exact wire
+/// strings the API and web UI depend on (`"folder"`/`"document"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Folder,
+    Document,
+}
+
+impl Kind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Kind::Folder => "folder",
+            Kind::Document => "document",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SearchItem {
     item_key: String,
-    kind: String,
+    kind: Kind,
     id: Option<String>,
     path: String,
     title: Option<String>,
@@ -267,7 +281,6 @@ struct SearchItem {
     status: Option<String>,
     extension: Option<String>,
     route_token: Option<String>,
-    checksum: String,
     aliases: String,
     facets: Vec<String>,
     metadata: String,
@@ -281,11 +294,10 @@ impl SearchItem {
         markdown: &str,
     ) -> Result<Self> {
         let kind = if record.is_folder_index {
-            "folder"
+            Kind::Folder
         } else {
-            "document"
-        }
-        .to_owned();
+            Kind::Document
+        };
         let id = record.id.as_str().to_owned();
         let path = kataan_core::walk::relative_slug(&loaded.root, &record.markdown_path);
         let title = document_title(record, markdown);
@@ -294,16 +306,11 @@ impl SearchItem {
             .extension()
             .and_then(|extension| extension.to_str())
             .map(str::to_owned);
-        let checksum = format!(
-            "markdown={} toml={}",
-            record.markdown_checksum.as_deref().unwrap_or_default(),
-            record.toml_checksum
-        );
         let aliases = record.metadata.aliases.join(" ");
         let metadata = metadata_text(record);
 
         Ok(Self {
-            item_key: format!("{kind}:{id}"),
+            item_key: format!("{}:{id}", kind.as_str()),
             kind,
             id: Some(id),
             path,
@@ -312,7 +319,6 @@ impl SearchItem {
             status: record.metadata.status.clone(),
             extension,
             route_token: Some(route_token_for_id(&record.id)),
-            checksum,
             aliases,
             facets: record.facets.clone(),
             metadata,
@@ -400,10 +406,7 @@ fn create_schema(connection: &Connection) -> Result<()> {
            type TEXT,
            status TEXT,
            extension TEXT,
-           route_token TEXT,
-           checksum TEXT NOT NULL,
-           extractor_version TEXT NOT NULL,
-           indexed_at TEXT NOT NULL
+           route_token TEXT
          );
 
          CREATE TABLE IF NOT EXISTS search_facets (
@@ -437,17 +440,16 @@ fn create_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn insert_item(connection: &Connection, item: &SearchItem, indexed_at: &str) -> Result<()> {
+fn insert_item(connection: &Connection, item: &SearchItem) -> Result<()> {
     connection
         .prepare_cached(
             "INSERT INTO search_items(
-               item_key, kind, id, path, title, type, status, extension, route_token,
-               checksum, extractor_version, indexed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+               item_key, kind, id, path, title, type, status, extension, route_token
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?
         .execute(params![
             &item.item_key,
-            &item.kind,
+            item.kind.as_str(),
             item.id.as_deref(),
             &item.path,
             item.title.as_deref(),
@@ -455,9 +457,6 @@ fn insert_item(connection: &Connection, item: &SearchItem, indexed_at: &str) -> 
             item.status.as_deref(),
             item.extension.as_deref(),
             item.route_token.as_deref(),
-            &item.checksum,
-            EXTRACTOR_VERSION,
-            indexed_at,
         ])?;
 
     let facet_text = item.facets.join(" ");

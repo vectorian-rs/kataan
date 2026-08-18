@@ -143,18 +143,18 @@ pdf_text = false
 ```sql
 CREATE TABLE search_items (
   item_key TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,          -- document, folder, file
+  kind TEXT NOT NULL,          -- document, folder (file reserved for future use)
   id TEXT,                     -- canonical document/folder ID when applicable
   path TEXT NOT NULL,
   title TEXT,
   type TEXT,
   status TEXT,
   extension TEXT,
-  route_token TEXT,
-  checksum TEXT NOT NULL,
-  extractor_version TEXT NOT NULL,
-  indexed_at TEXT NOT NULL
+  route_token TEXT
 );
+-- The extractor version and last-indexed timestamp live in a small
+-- search_metadata(key, value) table, not per row. Per-document checksums
+-- will be reintroduced when incremental indexing is implemented.
 
 CREATE TABLE search_facets (
   item_key TEXT NOT NULL,
@@ -314,7 +314,10 @@ For the first implementation, manual rebuild is acceptable.
 
 ### Incremental updates
 
-After the filesystem watcher exists, incremental search updates can use checksums:
+Not yet implemented — reindex is a full rebuild triggered manually via
+`POST /search/reindex`. The per-row checksum column that this design needs was
+removed as unused scaffolding and will be reintroduced when incremental indexing
+is built. The intended checksum-based flow:
 
 - unchanged checksum: skip
 - changed file: delete old item/chunks and reindex
