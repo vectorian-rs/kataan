@@ -553,10 +553,6 @@ body.column-resizing {
   color: var(--info);
 }
 
-.search-kind-file {
-  color: var(--warning);
-}
-
 .search-result-path {
   overflow: hidden;
   text-overflow: ellipsis;

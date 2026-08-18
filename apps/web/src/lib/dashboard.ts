@@ -426,15 +426,6 @@ async function openSearchResult(result: SearchResult) {
     for (const chainFolder of folderChain(result.id)) {
       await selectFolder(chainFolder, { selectFirst: false });
     }
-    return;
-  }
-
-  if (result.kind === 'file') {
-    await selectFile({
-      name: basenameFromId(result.path),
-      path: result.path,
-      extension: result.extension,
-    });
   }
 }
 

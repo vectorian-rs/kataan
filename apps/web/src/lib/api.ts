@@ -132,7 +132,7 @@ export type SearchResponse = {
 };
 
 export type SearchResult = {
-  kind: 'document' | 'folder' | 'file';
+  kind: 'document' | 'folder';
   id?: string;
   path: string;
   title?: string;
