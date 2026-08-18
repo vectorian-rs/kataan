@@ -169,7 +169,6 @@ searchInput.addEventListener('input', () => {
   }, 180);
 });
 
-
 window.addEventListener('kataan:theme-change', () => {
   if (selectedFile) {
     void runAction(() => selectFile(selectedFile as FolderFile));
@@ -274,14 +273,18 @@ async function runSearch(value: string) {
 function renderMissingSearchIndex(query: string) {
   folderTitle.textContent = 'Search';
   documentsEl.className = 'search-results-panel';
-  const message = emptyListNote(`Use Rebuild to build the search index before searching for “${query}”.`);
+  const message = emptyListNote(
+    `Use Rebuild to build the search index before searching for “${query}”.`,
+  );
   documentsEl.replaceChildren(listSection('Search index required', [message]));
 }
 
 function renderSearchLoading(query: string) {
   folderTitle.textContent = 'Search';
   documentsEl.className = 'search-results-panel';
-  documentsEl.replaceChildren(listSection('Searching', [emptyListNote(`Searching for “${query}”…`)]));
+  documentsEl.replaceChildren(
+    listSection('Searching', [emptyListNote(`Searching for “${query}”…`)]),
+  );
 }
 
 function renderSearchListError(error: unknown) {
@@ -300,9 +303,7 @@ function renderSearchResults(response: SearchResponse) {
 
   const rows = response.results.map(renderSearchResult);
   const summary = searchSummary(response);
-  const sections = [
-    listSection(summary, rows.length > 0 ? rows : [emptyListNote('No results.')]),
-  ];
+  const sections = [listSection(summary, rows.length > 0 ? rows : [emptyListNote('No results.')])];
 
   if (response.facets.length > 0) {
     sections.push(listSection('Result facets', [renderSearchFacetSummary(response.facets)]));
@@ -438,7 +439,13 @@ function renderFolderButton(folder: FolderSummary) {
 
   const icon = document.createElement('span');
   icon.className = `folder-icon ${folder.type}`;
-  icon.append(createElement(folderIcon(folder.icon ?? folder.type), { width: 18, height: 18, 'stroke-width': 2 }));
+  icon.append(
+    createElement(folderIcon(folder.icon ?? folder.type), {
+      width: 18,
+      height: 18,
+      'stroke-width': 2,
+    }),
+  );
 
   const name = document.createElement('span');
   name.textContent = folder.name ?? folder.folder;
@@ -516,7 +523,13 @@ function renderChildFolderButton(folder: FolderChild, depth: number) {
 
   const icon = document.createElement('span');
   icon.className = 'folder-icon';
-  icon.append(createElement(folderIcon(folder.id.split('/')[0] ?? ''), { width: 18, height: 18, 'stroke-width': 2 }));
+  icon.append(
+    createElement(folderIcon(folder.id.split('/')[0] ?? ''), {
+      width: 18,
+      height: 18,
+      'stroke-width': 2,
+    }),
+  );
 
   const name = document.createElement('span');
   name.textContent = folder.name;
@@ -547,11 +560,31 @@ function collapseFolder(folder: string) {
   }
 }
 
-function renderFolderContents(documents: FolderDocument[], files: FolderFile[], hasChildFolders: boolean) {
+function renderFolderContents(
+  documents: FolderDocument[],
+  files: FolderFile[],
+  hasChildFolders: boolean,
+) {
   const children: HTMLElement[] = [];
 
-  children.push(listSection('Documents', documents.length > 0 ? documents.map(renderDocumentButton) : [emptyListNote(hasChildFolders ? 'Select a nested folder or open a file.' : 'No documents.')]));
-  children.push(listSection('Files', files.length > 0 ? files.map(renderFileRow) : [emptyListNote('No files.')]));
+  children.push(
+    listSection(
+      'Documents',
+      documents.length > 0
+        ? documents.map(renderDocumentButton)
+        : [
+            emptyListNote(
+              hasChildFolders ? 'Select a nested folder or open a file.' : 'No documents.',
+            ),
+          ],
+    ),
+  );
+  children.push(
+    listSection(
+      'Files',
+      files.length > 0 ? files.map(renderFileRow) : [emptyListNote('No files.')],
+    ),
+  );
 
   documentsEl.className = 'folder-contents';
   documentsEl.replaceChildren(...children);
@@ -747,7 +780,11 @@ function initColumnResizing(column: ColumnResizeConfig) {
   });
 }
 
-function setColumnWidth(column: ColumnResizeConfig, width: number, options: { persist?: boolean } = {}) {
+function setColumnWidth(
+  column: ColumnResizeConfig,
+  width: number,
+  options: { persist?: boolean } = {},
+) {
   const nextWidth = clampColumnWidth(column, width);
   columnWidths.set(column.key, nextWidth);
   appShell.style.setProperty(column.cssProperty, `${nextWidth}px`);
@@ -964,7 +1001,12 @@ function requiredFields(schema: TomlSchemaResponse) {
 }
 
 function renderMetadata(vaultDocument: DocumentResponse) {
-  const { edges, markdown, markdown_checksum: markdownChecksum, ...properties } = vaultDocument.metadata;
+  const {
+    edges,
+    markdown,
+    markdown_checksum: markdownChecksum,
+    ...properties
+  } = vaultDocument.metadata;
   metadataPanel.className = 'metadata-sections';
   metadataPanel.replaceChildren(
     metadataSection('Properties', [

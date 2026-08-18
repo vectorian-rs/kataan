@@ -483,7 +483,6 @@ body.column-resizing {
   display: grid;
 }
 
-
 .folder-contents {
   display: grid;
 }
@@ -1096,7 +1095,10 @@ body.column-resizing {
 
 @media (width < 1100px) {
   .app-shell {
-    grid-template-columns: clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width)) minmax(0, 1fr);
+    /* prettier-ignore -- Prettier oscillates between two wrappings of this value */
+    grid-template-columns:
+      clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+      minmax(0, 1fr);
   }
 
   .list-panel,

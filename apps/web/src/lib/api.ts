@@ -199,7 +199,9 @@ export function getRawFileUrl(path: string) {
 }
 
 export async function resolveRoute(type: string, token: string) {
-  return getJson<ResolveResponse>(`/api/resolve?type=${encodeURIComponent(type)}&token=${encodeURIComponent(token)}`);
+  return getJson<ResolveResponse>(
+    `/api/resolve?type=${encodeURIComponent(type)}&token=${encodeURIComponent(token)}`,
+  );
 }
 
 export async function getSchema(kind: string) {
@@ -235,7 +237,11 @@ export async function reindexSearch() {
   return postJson<SearchReindexResponse>('/api/search/reindex');
 }
 
-function appendQueryParam(params: URLSearchParams, key: string, value: string | number | undefined) {
+function appendQueryParam(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | undefined,
+) {
   if (value === undefined || value === '') return;
   params.set(key, String(value));
 }

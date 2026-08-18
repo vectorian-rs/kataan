@@ -21,9 +21,24 @@ const { title = 'Kataan' } = Astro.props;
     <script is:inline>
       const appShell = document.getElementById('app-shell');
       [
-        { storageKey: 'kataan:sidebar-width', cssProperty: '--sidebar-width', minWidth: 160, maxWidth: 420 },
-        { storageKey: 'kataan:list-width', cssProperty: '--list-width', minWidth: 220, maxWidth: 560 },
-        { storageKey: 'kataan:properties-width', cssProperty: '--properties-width', minWidth: 220, maxWidth: 420 },
+        {
+          storageKey: 'kataan:sidebar-width',
+          cssProperty: '--sidebar-width',
+          minWidth: 160,
+          maxWidth: 420,
+        },
+        {
+          storageKey: 'kataan:list-width',
+          cssProperty: '--list-width',
+          minWidth: 220,
+          maxWidth: 560,
+        },
+        {
+          storageKey: 'kataan:properties-width',
+          cssProperty: '--properties-width',
+          minWidth: 220,
+          maxWidth: 420,
+        },
       ].forEach(({ storageKey, cssProperty, minWidth, maxWidth }) => {
         const savedWidth = Number.parseInt(localStorage.getItem(storageKey) ?? '', 10);
         if (Number.isFinite(savedWidth)) {
