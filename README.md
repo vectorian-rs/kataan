@@ -23,7 +23,7 @@ cargo run -p kataan-server -- --vault examples/vault
 bun run dev:web
 ```
 
-The web app runs on `http://127.0.0.1:3000` and proxies `/api` to the Rust backend at `http://127.0.0.1:3001`. If port `3000` is already in use, Astro exits instead of silently switching ports.
+The web app runs on `http://127.0.0.1:3003` (set by `KATAAN_WEB_PORT` in `mise.toml`; Astro defaults to `3000` when it is unset) and proxies `/api` to the Rust backend at `http://127.0.0.1:3001`. If the web port is already in use, Astro exits instead of silently switching ports.
 
 To use a different backend port:
 
@@ -34,13 +34,13 @@ KATAAN_API_PROXY_TARGET=http://127.0.0.1:3002 bun run dev:web
 To use a different web port:
 
 ```sh
-KATAAN_WEB_PORT=3003 bun run dev:web
+KATAAN_WEB_PORT=3005 bun run dev:web
 ```
 
 Both can be combined:
 
 ```sh
-KATAAN_WEB_PORT=3003 KATAAN_API_PROXY_TARGET=http://127.0.0.1:3002 bun run dev:web
+KATAAN_WEB_PORT=3005 KATAAN_API_PROXY_TARGET=http://127.0.0.1:3002 bun run dev:web
 ```
 
 ## Single binary (embedded UI)

@@ -213,10 +213,11 @@ Ranking should remain deterministic and explainable. Avoid learned ranking in v1
 Search should support:
 
 - free-text query
-- optional kind filter: `document`, `folder`, `file`
+- optional kind filter: `document`, `folder`
 - optional type filter
 - optional status filter
 - optional facet filter
+- optional path-prefix filter
 - result limit/offset
 - snippets for full-text matches
 - facet counts for narrowing results
@@ -236,10 +237,11 @@ POST /api/search/reindex
 Optional query params:
 
 ```txt
-kind=document|folder|file
+kind=document|folder
 type=project
 status=active
 facet=company-x
+path_prefix=projects/company-x
 limit=20
 offset=0
 ```
@@ -255,7 +257,7 @@ type SearchResponse = {
 };
 
 type SearchResult = {
-  kind: 'document' | 'folder' | 'file';
+  kind: 'document' | 'folder';
   id?: string;
   path: string;
   title?: string;
@@ -305,18 +307,19 @@ For the first implementation, manual rebuild is acceptable.
 
 ### Reindex command
 
-`POST /api/search/reindex` should:
+`POST /api/search/reindex` rebuilds the whole index in one transaction:
 
-1. Clear stale rows or build into a temporary database.
-2. Index documents from `LoadedVault`.
-3. Walk artifact files, respecting ignore rules.
-4. Swap/commit atomically.
-5. Return item counts and duration.
+1. Drop and recreate the tables (so the schema is always current).
+2. Index every document from `LoadedVault`.
+3. Write the `last_indexed_at` metadata and commit.
+
+It returns `ok`, `index_path`, item/document/folder counts, and `indexed_at`.
+(Artifact files are not indexed yet.)
 
 ### Incremental updates
 
 Not yet implemented — reindex is a full rebuild triggered manually via
-`POST /search/reindex`. The per-row checksum column that this design needs was
+`POST /api/search/reindex`. The per-row checksum column that this design needs was
 removed as unused scaffolding and will be reintroduced when incremental indexing
 is built. The intended checksum-based flow:
 

@@ -56,6 +56,16 @@ GET  /api/schema/edge-predicate
 
 File previews are size-limited: `/api/file` and `/api/file/highlight` serve text content up to 10 MB, and `/api/file/raw` serves binary content (SVG, PDF) up to 50 MB. Larger files return an error.
 
+Keyword full-text search:
+
+```txt
+GET  /api/search?q=<query>&kind=&type=&status=&facet=&path_prefix=&limit=&offset=
+GET  /api/search/status
+POST /api/search/reindex
+```
+
+The search index is built on demand — `POST /api/search/reindex` (re)builds it from the current vault. It is not updated automatically on edits, so reindex after changing content.
+
 Useful repair endpoints:
 
 ```txt
@@ -90,8 +100,13 @@ vault/
 ├── notes/               # note documents
 ├── topics/              # topic documents
 ├── type/                # type definitions
-└── code/                # artifacts/tools; usually not indexed as knowledge
+└── code/                # file-backed folder: raw code/tool files, no index.toml
 ```
+
+`code/` is a declared type folder that holds raw files instead of documents (it
+has no `index.toml`). The API serves any such index-less type folder as a
+"file-backed folder" — its subdirs and files are browsable via `/api/folder` and
+`/api/file`, but its contents are not indexed as knowledge documents.
 
 Read `kataan.toml` before creating files. Its `[type_folders]` table is authoritative: a document with `type = "project"` belongs under the mapped project folder, a document with `type = "topic"` belongs under the mapped topic folder, and so on.
 
