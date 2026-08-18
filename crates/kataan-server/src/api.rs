@@ -265,15 +265,6 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
             document_count,
         });
     }
-    push_code_folder_if_needed(
-        &state,
-        loaded
-            .index
-            .type_folders
-            .values()
-            .any(|folder| kataan_core::constants::is_code_folder(folder)),
-        &mut folders,
-    );
 
     Ok(Json(FoldersResponse { folders }))
 }
@@ -285,10 +276,10 @@ pub async fn folder(
     let loaded = read_loaded_vault(&state)?;
     let id = kataan_core::id::CanonicalId::parse(&folder).map_err(ApiError::bad_request)?;
     let Some(record) = loaded.documents.get(&id) else {
-        if kataan_core::constants::is_code_path(id.as_str()) {
+        if is_file_backed_folder(&loaded, &id) {
             return Ok(Json(FolderResponse {
                 folder,
-                index: empty_code_folder_index(id.as_str()),
+                index: file_backed_folder_index(&loaded, &id),
                 documents: Vec::new(),
             }));
         }

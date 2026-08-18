@@ -37,11 +37,3 @@ pub const CORE_TYPES: &[&str] = &[
     TYPE_CODE,
     TYPE_DEFINITION,
 ];
-
-pub fn is_code_folder(folder: &str) -> bool {
-    folder == CODE_FOLDER
-}
-
-pub fn is_code_path(path: &str) -> bool {
-    path == CODE_FOLDER || path.starts_with("code/")
-}

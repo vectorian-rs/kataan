@@ -142,6 +142,94 @@ markdown = "demo.md"
 }
 
 #[tokio::test]
+async fn folders_list_includes_the_file_backed_code_folder() {
+    let root = test_vault();
+    let app = test_app(&root);
+
+    let response = request(app, "GET", "/api/folders").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    let code = body["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|folder| folder["folder"] == "code")
+        .expect("code folder present");
+    assert_eq!(code["type"], "code");
+    assert_eq!(code["name"], "Code");
+    assert_eq!(code["icon"], "Code");
+    assert_eq!(code["document_count"], 0);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn folder_detail_of_code_is_a_file_backed_index() {
+    let root = test_vault();
+    let app = test_app(&root);
+
+    let response = request(app, "GET", "/api/folders/code").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    assert_eq!(body["index"]["name"], "Code");
+    assert_eq!(body["index"]["default_type"], "code");
+    assert!(body["documents"].as_array().unwrap().is_empty());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn canonical_code_folder_lists_raw_subdirs_and_files() {
+    let root = test_vault();
+    fs::create_dir_all(root.join("code/tools")).unwrap();
+    fs::write(root.join("code/run.sh"), "#!/bin/sh\n").unwrap();
+    fs::write(root.join("code/tools/lib.rs"), "// lib\n").unwrap();
+    let app = test_app(&root);
+
+    let response = request(app, "GET", "/api/folder?id=code").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    // File-backed folders carry no document metadata.
+    assert!(body["metadata"].is_null());
+    let child = body["folders"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|folder| folder["id"] == "code/tools")
+        .expect("code/tools subdir present");
+    // A raw subdir has no folder index.
+    assert_eq!(child["has_index"], false);
+    assert!(body["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| file["name"] == "run.sh"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn any_indexless_type_folder_is_file_backed_not_404() {
+    // Generalization: the file-backed behavior keys off "declared type folder
+    // with no folder-index document", not the literal "code".
+    let root = test_vault();
+    let mut config = fs::read_to_string(root.join("kataan.toml")).unwrap();
+    // `[type_folders]` is the last table in the generated config, so appending a
+    // mapping lands inside it.
+    config.push_str("assets = \"assets\"\n");
+    fs::write(root.join("kataan.toml"), config).unwrap();
+    fs::create_dir_all(root.join("assets")).unwrap();
+    let app = test_app(&root);
+
+    let response = request(app, "GET", "/api/folder?id=assets").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    assert!(body["metadata"].is_null());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn query_document_endpoint_returns_nested_document() {
     let root = test_vault();
     fs::create_dir_all(root.join("projects/snappy/sows/otp-travel")).unwrap();

@@ -257,12 +257,12 @@ pub(super) fn canonical_folder_response(
     let id = kataan_core::id::CanonicalId::parse(id).map_err(ApiError::bad_request)?;
     let loaded = read_loaded_vault(state)?;
     let Some(record) = loaded.documents.get(&id) else {
-        if kataan_core::constants::is_code_path(id.as_str()) {
+        if is_file_backed_folder(&loaded, &id) {
             return Ok(CanonicalFolderResponse {
                 id: id.as_str().to_owned(),
                 metadata: None,
                 markdown: None,
-                folders: direct_code_folders(state, id.as_str())?,
+                folders: direct_file_backed_folders(state, id.as_str())?,
                 documents: Vec::new(),
                 files: folder_files(state, &id, &[])?,
             });
@@ -349,36 +349,48 @@ pub(super) fn folder_files(
     Ok(files)
 }
 
-pub(super) fn push_code_folder_if_needed(
-    state: &AppState,
-    has_code_mapping: bool,
-    folders: &mut Vec<FolderSummaryResponse>,
-) {
-    if !has_code_mapping
-        && is_regular_dir(&state.vault_path.join(kataan_core::constants::CODE_FOLDER))
-    {
-        folders.push(FolderSummaryResponse {
-            r#type: kataan_core::constants::TYPE_CODE.to_owned(),
-            folder: kataan_core::constants::CODE_FOLDER.to_owned(),
-            name: Some("Code".to_owned()),
-            icon: Some("Code".to_owned()),
-            document_count: 0,
-        });
-    }
+/// A declared type-folder whose root has no folder-index document is served
+/// from the filesystem (raw files/subdirs), not from loaded documents — e.g.
+/// the `code/` folder, which has no `index.toml`.
+pub(super) fn is_file_backed_folder(
+    loaded: &kataan_core::vault::LoadedVault,
+    id: &kataan_core::id::CanonicalId,
+) -> bool {
+    let top = id.top_level_folder();
+    loaded
+        .index
+        .type_folders
+        .values()
+        .any(|folder| folder == top)
+        && kataan_core::id::CanonicalId::parse(top)
+            .is_ok_and(|top_id| !loaded.documents.contains_key(&top_id))
 }
 
-pub(super) fn empty_code_folder_index(id: &str) -> kataan_core::index::FolderIndex {
+/// The type whose `type_folders` mapping points at `folder`, if any.
+fn type_for_folder(loaded: &kataan_core::vault::LoadedVault, folder: &str) -> Option<String> {
+    loaded
+        .index
+        .type_folders
+        .iter()
+        .find(|(_, mapped)| mapped.as_str() == folder)
+        .map(|(ty, _)| ty.clone())
+}
+
+pub(super) fn file_backed_folder_index(
+    loaded: &kataan_core::vault::LoadedVault,
+    id: &kataan_core::id::CanonicalId,
+) -> kataan_core::index::FolderIndex {
     kataan_core::index::FolderIndex {
-        name: title_from_id(id),
-        description: Some("Agent tools and code assets.".to_owned()),
-        default_type: Some(kataan_core::constants::TYPE_CODE.to_owned()),
+        name: title_from_id(id.as_str()),
+        description: None,
+        default_type: type_for_folder(loaded, id.top_level_folder()),
         folder_checksum: None,
         documents: Vec::new(),
         subfolders: Vec::new(),
     }
 }
 
-pub(super) fn direct_code_folders(
+pub(super) fn direct_file_backed_folders(
     state: &AppState,
     id: &str,
 ) -> Result<Vec<FolderChildResponse>, ApiError> {
@@ -398,7 +410,8 @@ pub(super) fn direct_code_folders(
         folders.push(FolderChildResponse {
             id: format!("{id}/{name}"),
             name,
-            has_index: false,
+            has_index: is_regular_file(&path.join("index.md"))
+                && is_regular_file(&path.join("index.toml")),
         });
     }
     folders.sort_by(|left, right| left.id.cmp(&right.id));
