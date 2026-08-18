@@ -357,19 +357,9 @@ pub(super) fn is_file_backed_folder(
     id: &kataan_core::id::CanonicalId,
 ) -> bool {
     let top = id.top_level_folder();
-    type_for_folder(loaded, top).is_some()
+    loaded.index.type_for_folder(top).is_some()
         && kataan_core::id::CanonicalId::parse(top)
             .is_ok_and(|top_id| !loaded.documents.contains_key(&top_id))
-}
-
-/// The type whose `type_folders` mapping points at `folder`, if any.
-fn type_for_folder(loaded: &kataan_core::vault::LoadedVault, folder: &str) -> Option<String> {
-    loaded
-        .index
-        .type_folders
-        .iter()
-        .find(|(_, mapped)| mapped.as_str() == folder)
-        .map(|(ty, _)| ty.clone())
 }
 
 pub(super) fn file_backed_folder_index(
@@ -379,7 +369,10 @@ pub(super) fn file_backed_folder_index(
     kataan_core::index::FolderIndex {
         name: title_from_id(id.as_str()),
         description: None,
-        default_type: type_for_folder(loaded, id.top_level_folder()),
+        default_type: loaded
+            .index
+            .type_for_folder(id.top_level_folder())
+            .map(str::to_owned),
         folder_checksum: None,
         documents: Vec::new(),
         subfolders: Vec::new(),

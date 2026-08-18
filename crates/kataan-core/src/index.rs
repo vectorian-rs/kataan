@@ -29,6 +29,17 @@ pub struct VaultConfig {
     pub type_folders: std::collections::BTreeMap<String, String>,
 }
 
+impl VaultConfig {
+    /// The type whose `type_folders` mapping points at `folder` (the inverse of
+    /// the `type -> folder` map), if any.
+    pub fn type_for_folder(&self, folder: &str) -> Option<&str> {
+        self.type_folders
+            .iter()
+            .find(|(_, mapped)| mapped.as_str() == folder)
+            .map(|(ty, _)| ty.as_str())
+    }
+}
+
 /// Directory-scan ignore configuration (kataan.toml `[scan]`). Absent sections
 /// deserialize to the defaults, so legacy vaults keep parsing.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
