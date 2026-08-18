@@ -1,5 +1,7 @@
 # Kataan
 
+[![CI](https://github.com/vectorian-rs/kataan/actions/workflows/ci.yml/badge.svg)](https://github.com/vectorian-rs/kataan/actions/workflows/ci.yml)
+
 Filesystem-native Markdown/TOML knowledge workspace.
 
 ## Layout
