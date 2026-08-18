@@ -152,9 +152,10 @@ CREATE TABLE search_items (
   extension TEXT,
   route_token TEXT
 );
--- The extractor version and last-indexed timestamp live in a small
--- search_metadata(key, value) table, not per row. Per-document checksums
--- will be reintroduced when incremental indexing is implemented.
+-- The last-indexed timestamp lives in a small search_metadata(key, value)
+-- table, not per row. Per-document checksums (and an extractor-version stamp
+-- for cache invalidation) will be reintroduced when incremental indexing is
+-- implemented.
 
 CREATE TABLE search_facets (
   item_key TEXT NOT NULL,

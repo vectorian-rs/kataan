@@ -157,7 +157,6 @@ export type SearchStatus = {
   document_count: number;
   folder_count: number;
   last_indexed_at?: string | null;
-  extractor_version?: string | null;
 };
 
 export type SearchReindexResponse = {

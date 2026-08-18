@@ -149,7 +149,6 @@ fn status_reports_missing_and_indexed_database() {
     let status = index.status().unwrap();
     assert!(status.exists);
     assert!(status.item_count > 0);
-    assert_eq!(status.extractor_version.as_deref(), Some(EXTRACTOR_VERSION));
 
     fs::remove_dir_all(root).unwrap();
 }

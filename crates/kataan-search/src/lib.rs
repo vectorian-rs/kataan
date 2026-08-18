@@ -11,8 +11,6 @@ use kataan_core::{
 use rusqlite::{named_params, params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
-pub const EXTRACTOR_VERSION: &str = "search-v1";
-
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SearchQuery {
     pub q: Option<String>,
@@ -63,7 +61,6 @@ pub struct SearchStatus {
     pub document_count: usize,
     pub folder_count: usize,
     pub last_indexed_at: Option<String>,
-    pub extractor_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,7 +124,6 @@ impl SearchIndex {
                 document_count: 0,
                 folder_count: 0,
                 last_indexed_at: None,
-                extractor_version: None,
             });
         }
 
@@ -173,13 +169,8 @@ impl SearchIndex {
         }
 
         transaction.execute(
-            "INSERT OR REPLACE INTO search_metadata(key, value) VALUES (?1, ?2), (?3, ?4)",
-            params![
-                "extractor_version",
-                EXTRACTOR_VERSION,
-                "last_indexed_at",
-                indexed_at,
-            ],
+            "INSERT OR REPLACE INTO search_metadata(key, value) VALUES (?1, ?2)",
+            params!["last_indexed_at", indexed_at],
         )?;
         transaction.commit()?;
 
@@ -233,7 +224,6 @@ impl SearchIndex {
             document_count: count_of(Kind::Document.as_str()),
             folder_count: count_of(Kind::Folder.as_str()),
             last_indexed_at: metadata_value(&connection, "last_indexed_at")?,
-            extractor_version: metadata_value(&connection, "extractor_version")?,
         })
     }
 
