@@ -333,6 +333,40 @@ async fn file_endpoints_reject_symlink_files_and_intermediate_dirs() {
 }
 
 #[tokio::test]
+async fn resolve_route_maps_a_token_back_to_its_document() {
+    let root = test_vault();
+    let app = test_app(&root);
+
+    // `type/project` is a seeded type-definition document; the route token is
+    // derived from its canonical id, and `type` is its top-level folder.
+    let id = kataan_core::id::CanonicalId::parse("type/project").unwrap();
+    let token = kataan_core::vault::route_token_for_id(&id);
+    let uri = format!("/api/resolve?type=type&token={token}");
+
+    let response = request(app, "GET", &uri).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    assert_eq!(body["id"], "type/project");
+    assert_eq!(body["type_folder"], "type");
+    assert_eq!(body["folder"], "type");
+    assert_eq!(body["route_token"], token);
+    assert_eq!(body["is_folder_index"], false);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn resolve_route_returns_404_for_unknown_token() {
+    let root = test_vault();
+    let app = test_app(&root);
+
+    let response = request(app, "GET", "/api/resolve?type=type&token=deadbeef").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn document_endpoint_returns_document() {
     let root = test_vault();
     let app = test_app(&root);
