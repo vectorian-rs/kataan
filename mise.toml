@@ -71,12 +71,13 @@ run = [
 ]
 
 [tasks.check]
-description = "Run Rust format, tests, clippy, and web build"
+description = "Run Rust format/tests/clippy and web format/type checks + build"
 run = [
   "bun install",
   "cargo fmt --check",
   "cargo test",
   "cargo clippy --all-targets -- -D warnings",
+  "bun --filter @kataan/web format:check",
   "bun --filter @kataan/web check",
   "bun --filter @kataan/web build",
 ]
