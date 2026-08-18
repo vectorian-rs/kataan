@@ -140,7 +140,7 @@ impl SearchIndex {
     }
 
     pub fn reindex_loaded(&self, loaded: &LoadedVault) -> Result<ReindexResponse> {
-        let mut connection = self.connect()?;
+        let mut connection = self.open_connection()?;
         let indexed_at = kataan_core::time::unix_timestamp_string();
         let transaction = connection.transaction()?;
 
@@ -237,7 +237,9 @@ impl SearchIndex {
         })
     }
 
-    fn connect(&self) -> Result<Connection> {
+    /// Open the SQLite file (creating its directory) without touching the
+    /// schema. `reindex_loaded` uses this because it rebuilds the schema itself.
+    fn open_connection(&self) -> Result<Connection> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!(
@@ -246,8 +248,12 @@ impl SearchIndex {
                 )
             })?;
         }
-        let connection = Connection::open(&self.path)
-            .with_context(|| format!("failed to open search index `{}`", self.path.display()))?;
+        Connection::open(&self.path)
+            .with_context(|| format!("failed to open search index `{}`", self.path.display()))
+    }
+
+    fn connect(&self) -> Result<Connection> {
+        let connection = self.open_connection()?;
         create_schema(&connection)?;
         Ok(connection)
     }
