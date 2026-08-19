@@ -6,10 +6,14 @@ Kataan is a filesystem-native Markdown/TOML knowledge workspace. The filesystem 
 
 ```sh
 kataan init <vault-path> --name "My Knowledgebase"
-kataan validate <vault-path>
+kataan validate <vault-path>            # add --json for a machine-readable report
 kataan rebuild-indexes <vault-path>
 kataan guide
 ```
+
+Command results go to stdout (`validate` prints `valid` or the diagnostics, or a
+`{ "ok", "diagnostics": [...] }` object with `--json`); logs and confirmations go
+to stderr; the exit code signals success (`validate` exits non-zero when invalid).
 
 When running from this repository without an installed binary, use:
 

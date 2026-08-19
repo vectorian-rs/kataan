@@ -65,6 +65,46 @@ fn validate_reports_valid_on_stdout() {
 }
 
 #[test]
+fn validate_json_emits_a_structured_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    init_vault(&vault);
+
+    // Valid vault -> {"ok":true,"diagnostics":[]} on stdout, exit 0.
+    let output = kataan()
+        .args(["validate"])
+        .arg(&vault)
+        .arg("--json")
+        .output()
+        .expect("run");
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["diagnostics"].as_array().unwrap().len(), 0);
+
+    // Tampered vault -> ok:false with a diagnostic, exit non-zero, still valid JSON.
+    let doc = vault.join("type/note.md");
+    let mut content = std::fs::read_to_string(&doc).unwrap();
+    content.push_str("\ntampered\n");
+    std::fs::write(&doc, content).unwrap();
+
+    let output = kataan()
+        .args(["validate"])
+        .arg(&vault)
+        .arg("--json")
+        .output()
+        .expect("run");
+    assert!(!output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    assert_eq!(json["ok"], false);
+    assert!(json["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d["code"] == "checksum-mismatch" && d["severity"] == "error"));
+}
+
+#[test]
 fn validate_reports_diagnostics_on_stdout_and_exits_nonzero() {
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("vault");

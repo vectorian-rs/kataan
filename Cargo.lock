@@ -818,6 +818,9 @@ dependencies = [
  "anyhow",
  "clap",
  "kataan-core",
+ "serde",
+ "serde_json",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
 ]
@@ -865,6 +868,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "toml 0.8.23",
  "tower",

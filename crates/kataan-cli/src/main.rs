@@ -2,10 +2,36 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 const AGENT_GUIDE: &str = include_str!("../../../docs/kataan-agent-guide.md");
+
+#[derive(Serialize)]
+struct JsonReport {
+    ok: bool,
+    diagnostics: Vec<JsonDiagnostic>,
+}
+
+#[derive(Serialize)]
+struct JsonDiagnostic {
+    severity: String,
+    code: String,
+    message: String,
+    path: Option<String>,
+}
+
+impl From<&kataan_core::diagnostic::Diagnostic> for JsonDiagnostic {
+    fn from(diagnostic: &kataan_core::diagnostic::Diagnostic) -> Self {
+        Self {
+            severity: format!("{:?}", diagnostic.severity).to_lowercase(),
+            code: diagnostic.code.clone(),
+            message: diagnostic.message.clone(),
+            path: diagnostic.path.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "kataan-cli")]
@@ -24,6 +50,9 @@ enum Command {
     },
     Validate {
         path: PathBuf,
+        /// Emit the report as JSON on stdout instead of plain lines.
+        #[arg(long)]
+        json: bool,
     },
     RebuildIndexes {
         path: PathBuf,
@@ -42,11 +71,23 @@ fn main() -> Result<()> {
             kataan_core::init::init_vault(&path, &name)?;
             info!(path = %path.display(), "initialized vault");
         }
-        Command::Validate { path } => {
-            // Diagnostics are this command's result: print them to stdout (plain,
-            // greppable), keep operational logs on stderr, and signal via exit code.
+        Command::Validate { path, json } => {
+            // Diagnostics are this command's result: print them to stdout (plain
+            // lines, or JSON with --json), keep operational logs on stderr, and
+            // signal validity via the exit code.
             let report = kataan_core::validate::validate(path)?;
-            if report.is_ok() {
+            let ok = report.is_ok();
+            if json {
+                let out = JsonReport {
+                    ok,
+                    diagnostics: report
+                        .diagnostics
+                        .iter()
+                        .map(JsonDiagnostic::from)
+                        .collect(),
+                };
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if ok {
                 println!("valid");
             } else {
                 for issue in &report.diagnostics {
@@ -58,6 +99,8 @@ fn main() -> Result<()> {
                         None => println!("{severity} [{}]: {}", issue.code, issue.message),
                     }
                 }
+            }
+            if !ok {
                 std::process::exit(1);
             }
         }
