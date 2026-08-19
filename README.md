@@ -9,6 +9,7 @@ Filesystem-native Markdown/TOML knowledge workspace.
 - `crates/kataan-core` — vault model, checksums, validation, indexes
 - `crates/kataan-cli` — CLI entrypoint
 - `crates/kataan-server` — Rust HTTP API
+- `crates/kataan-mcp` — MCP server (agents read + write the vault over stdio)
 - `apps/web` — Astro frontend (static SPA; can be embedded into the server)
 - `packages/client` — shared TypeScript client/types
 - `examples/vault` — example vault
@@ -63,3 +64,40 @@ without installing. The feature is off by default, so `cargo build`/`test`/
 `clippy` don't require a prior web build. In debug builds the assets are read
 from `apps/web/dist` at runtime; release builds bake them into the binary. For
 UI development keep using `bun run dev:web` (hot reload, proxying to the API).
+
+## Use with an MCP client (agents)
+
+`kataan-mcp` exposes a vault to any [Model Context Protocol](https://modelcontextprotocol.io)
+client (Claude Desktop, IDE agents) as typed tools, so an agent can both **read**
+and **write** the vault. It speaks MCP directly over stdio — no extra runtime.
+
+```sh
+cargo install --path crates/kataan-mcp   # installs `kataan-mcp` into ~/.cargo/bin
+```
+
+Register it with your client. For Claude Desktop, add to
+`claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "kataan": {
+      "command": "kataan-mcp",
+      "args": ["--vault", "/path/to/vault"]
+    }
+  }
+}
+```
+
+Tools:
+
+- **Reads** — `search`, `get_document`, `list_folders`, `get_folder`, `resolve`,
+  `schema`, `vault_info` (return JSON).
+- **Writes** — `create_document`, `update_document`, `add_edge`. Writes go through
+  the validated mutation layer, so every change is well-formed (correct id,
+  sidecar, checksum, folder indexes, ontology-legal edges) and the search index is
+  refreshed. An illegal change (e.g. an edge your ontology forbids) is rejected
+  with an error instead of corrupting the vault.
+
+stdout carries only the JSON-RPC protocol; logs go to stderr (`RUST_LOG` controls
+verbosity).
