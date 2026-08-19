@@ -5,9 +5,6 @@ members = [
   "crates/kataan-server",
   "crates/kataan-search",
 ]
-# kataan-agent is unbuilt scaffolding, excluded from the workspace (not built,
-# tested, or published). Remove the directory to drop it entirely.
-exclude = ["crates/kataan-agent"]
 resolver = "2"
 
 [workspace.package]
