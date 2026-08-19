@@ -11,7 +11,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/your-org/kataan"
+repository = "https://github.com/vectorian-rs/kataan"
 
 [workspace.dependencies]
 anyhow = "1"
