@@ -12,6 +12,22 @@ pub fn relative_slug(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// True only for a real directory. Uses `symlink_metadata`, so a symbolic link
+/// reads as "not a directory" — vault walkers therefore never follow symlinks
+/// (no escaping the vault, and no infinite recursion through a symlink cycle).
+pub fn is_regular_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_dir())
+        .unwrap_or(false)
+}
+
+/// True only for a real file (a symlink reads as "not a file").
+pub fn is_regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_file())
+        .unwrap_or(false)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VaultEntry {
     FolderIndex {
@@ -70,7 +86,7 @@ fn walk_folder(
         let path = entry.path();
         let file_name = entry.file_name().to_string_lossy().to_string();
 
-        if path.is_dir() {
+        if is_regular_dir(&path) {
             if ignore.is_ignored(&path, true) {
                 continue;
             }
@@ -78,7 +94,7 @@ fn walk_folder(
             continue;
         }
 
-        if !path.is_file()
+        if !is_regular_file(&path)
             || path.extension().and_then(|extension| extension.to_str()) != Some("md")
             || file_name == "index.md"
         {

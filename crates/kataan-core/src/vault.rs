@@ -204,6 +204,15 @@ impl Vault {
 
         let toml_path = self.root.join(id.toml_path());
         let metadata = read_metadata(&toml_path)?;
+        // `markdown` is attacker-controllable TOML; it must be a plain filename
+        // inside the document's own folder, never a path that escapes the vault
+        // (e.g. "../../etc/passwd" or "/etc/passwd").
+        if !is_plain_filename(&metadata.markdown) {
+            return Err(Error::InvalidVaultStructure(format!(
+                "document `{id}` has an unsafe markdown path `{}`",
+                metadata.markdown
+            )));
+        }
         let markdown_path = self.root.join(id.folder()).join(&metadata.markdown);
         let entry = VaultEntry::Document {
             id: id.clone(),
@@ -252,6 +261,16 @@ fn read_metadata(path: &Path) -> Result<DocumentMetadata> {
         path: path.to_path_buf(),
         source,
     })
+}
+
+/// True if `name` is a single plain filename component — no separators, no
+/// `.`/`..`, not absolute — so joining it to a folder cannot escape that folder.
+fn is_plain_filename(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
 }
 
 pub fn route_token_for_id(id: &CanonicalId) -> String {
@@ -561,5 +580,74 @@ note = "notes"
 
     fn unique_temp_dir() -> PathBuf {
         crate::test_support::unique_temp_dir("vault")
+    }
+
+    #[test]
+    fn is_plain_filename_rejects_path_traversal() {
+        assert!(is_plain_filename("note.md"));
+        assert!(!is_plain_filename("../note.md"));
+        assert!(!is_plain_filename("../../etc/passwd"));
+        assert!(!is_plain_filename("/etc/passwd"));
+        assert!(!is_plain_filename(".."));
+        assert!(!is_plain_filename("."));
+        assert!(!is_plain_filename("sub/note.md"));
+        assert!(!is_plain_filename(""));
+    }
+
+    #[test]
+    fn load_document_record_rejects_unsafe_markdown() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+        fs::write(
+            root.join("projects/evil.toml"),
+            "type = \"project\"\nmarkdown = \"../../../../etc/passwd\"\n",
+        )
+        .unwrap();
+
+        let vault = Vault::open(&root).unwrap();
+        let id = CanonicalId::parse("projects/evil").unwrap();
+        assert!(
+            vault.load_document_record(&id).is_err(),
+            "a markdown path that escapes the folder must be rejected"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_skips_symlinked_directories() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("projects")).unwrap();
+        write_root_index(&root);
+        fs::write(root.join("projects/index.md"), "# Projects\n").unwrap();
+        fs::write(
+            root.join("projects/index.toml"),
+            "type = \"project\"\nname = \"Projects\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("projects/note.md"), "# Note\n").unwrap();
+        fs::write(
+            root.join("projects/note.toml"),
+            "type = \"project\"\nmarkdown = \"note.md\"\n",
+        )
+        .unwrap();
+        // A directory symlink cycle: projects/loop -> .. -> projects/loop -> ...
+        // If the walkers followed symlinks this would recurse until the stack
+        // overflows; the symlink guard makes it terminate and skip the link.
+        std::os::unix::fs::symlink("..", root.join("projects/loop")).unwrap();
+
+        let vault = Vault::open(&root).unwrap();
+        let documents = vault.load_documents().unwrap();
+
+        assert!(documents
+            .iter()
+            .any(|doc| doc.id.as_str() == "projects/note"));
+        assert!(documents
+            .iter()
+            .all(|doc| !doc.id.as_str().contains("loop")));
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

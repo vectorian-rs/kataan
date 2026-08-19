@@ -100,7 +100,7 @@ pub fn folder_checksum_from_files(folder_path: impl AsRef<Path>) -> Result<Strin
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
-        if path.is_dir() {
+        if crate::walk::is_regular_dir(&path) {
             if path.join("index.toml").exists() && path.join("index.md").exists() {
                 subfolders.push(SubfolderChecksum {
                     name,
@@ -110,7 +110,7 @@ pub fn folder_checksum_from_files(folder_path: impl AsRef<Path>) -> Result<Strin
             continue;
         }
 
-        if !path.is_file()
+        if !crate::walk::is_regular_file(&path)
             || path.extension().and_then(|extension| extension.to_str()) != Some("md")
             || name == "index.md"
         {

@@ -53,7 +53,7 @@ pub(super) fn validate_nested_folder_recursive(
         })?;
         let path = entry.path();
 
-        if path.is_dir() {
+        if crate::walk::is_regular_dir(&path) {
             if ignore.is_ignored(&path, true) {
                 continue;
             }
@@ -73,7 +73,7 @@ pub(super) fn validate_nested_folder_recursive(
             continue;
         }
 
-        if !path.is_file() {
+        if !crate::walk::is_regular_file(&path) {
             continue;
         }
 
@@ -527,7 +527,7 @@ fn actual_subfolders(folder_path: &Path, ignore: &ScanIgnore) -> Result<Vec<Fold
             source,
         })?;
         let path = entry.path();
-        if !path.is_dir()
+        if !crate::walk::is_regular_dir(&path)
             || ignore.is_ignored(&path, true)
             || !path.join("index.md").exists()
             || !path.join("index.toml").exists()

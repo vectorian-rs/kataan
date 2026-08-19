@@ -188,7 +188,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
             })?;
             let path = entry.path();
 
-            if path.is_dir() {
+            if crate::walk::is_regular_dir(&path) {
                 if ignore.is_ignored(&path, true) {
                     continue;
                 }
@@ -208,7 +208,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                 continue;
             }
 
-            if !path.is_file() {
+            if !crate::walk::is_regular_file(&path) {
                 continue;
             }
 

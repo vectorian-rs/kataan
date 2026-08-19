@@ -73,7 +73,7 @@ fn rebuild_folder_recursive(
             source,
         })?;
         let path = entry.path();
-        if !path.is_dir() || ignore.is_ignored(&path, true) {
+        if !crate::walk::is_regular_dir(&path) || ignore.is_ignored(&path, true) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -103,7 +103,7 @@ fn rebuild_folder_recursive(
             source,
         })?;
         let path = entry.path();
-        if !path.is_file()
+        if !crate::walk::is_regular_file(&path)
             || path.extension().and_then(|extension| extension.to_str()) != Some("md")
             || path.file_name().and_then(|name| name.to_str()) == Some("index.md")
         {
