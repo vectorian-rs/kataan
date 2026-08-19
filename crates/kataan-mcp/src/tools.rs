@@ -297,3 +297,124 @@ fn opt_str_vec(args: &Value, key: &str) -> Option<Vec<String>> {
 fn parse_id(args: &Value, key: &str) -> Result<CanonicalId> {
     CanonicalId::parse(str_arg(args, key)?).map_err(|error| anyhow!("invalid `{key}`: {error}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    /// A fresh initialized vault in a temp dir (auto-removed on drop).
+    fn temp_vault() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        kataan_core::init::init_vault(dir.path(), "Test").unwrap();
+        dir
+    }
+
+    /// Parse a read tool's JSON string result back into a Value.
+    fn json_result(vault: &Path, name: &str, args: Value) -> Value {
+        serde_json::from_str(&call(vault, name, &args).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn create_then_get_and_search_round_trips() {
+        let dir = temp_vault();
+        let vault = dir.path();
+
+        let created = json_result(
+            vault,
+            "create_document",
+            json!({ "type": "note", "title": "Round Trip", "body": "hello world", "status": "active" }),
+        );
+        assert_eq!(created["id"], "notes/round-trip");
+
+        // create_document reindexes, so the new doc is immediately searchable.
+        let search = json_result(vault, "search", json!({ "q": "hello" }));
+        let hits = search["results"].as_array().unwrap();
+        assert!(hits.iter().any(|hit| hit["id"] == "notes/round-trip"));
+
+        let document = json_result(vault, "get_document", json!({ "id": "notes/round-trip" }));
+        assert_eq!(document["markdown"], "hello world");
+        assert_eq!(document["metadata"]["type"], "note");
+    }
+
+    #[test]
+    fn update_document_changes_body() {
+        let dir = temp_vault();
+        let vault = dir.path();
+        call(
+            vault,
+            "create_document",
+            &json!({ "type": "note", "title": "Edit Me", "body": "before" }),
+        )
+        .unwrap();
+
+        call(
+            vault,
+            "update_document",
+            &json!({ "id": "notes/edit-me", "body": "after" }),
+        )
+        .unwrap();
+
+        let document = json_result(vault, "get_document", json!({ "id": "notes/edit-me" }));
+        assert_eq!(document["markdown"], "after");
+    }
+
+    #[test]
+    fn add_edge_accepts_legal_and_rejects_illegal() {
+        let dir = temp_vault();
+        let vault = dir.path();
+        call(
+            vault,
+            "create_document",
+            &json!({ "type": "note", "title": "A", "body": "a" }),
+        )
+        .unwrap();
+        call(
+            vault,
+            "create_document",
+            &json!({ "type": "topic", "title": "B", "body": "b" }),
+        )
+        .unwrap();
+
+        // related_to is from=* to=*, so note -> topic is legal.
+        assert!(call(
+            vault,
+            "add_edge",
+            &json!({ "source": "notes/a", "predicate": "related_to", "target": "topics/b" })
+        )
+        .is_ok());
+        // subtopic_of requires a topic source; a note source is rejected.
+        assert!(call(
+            vault,
+            "add_edge",
+            &json!({ "source": "notes/a", "predicate": "subtopic_of", "target": "topics/b" })
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn writes_keep_the_vault_valid() {
+        let dir = temp_vault();
+        let vault = dir.path();
+        call(
+            vault,
+            "create_document",
+            &json!({ "type": "note", "title": "Valid", "body": "x", "status": "active" }),
+        )
+        .unwrap();
+        assert!(kataan_core::validate::validate(vault).unwrap().is_ok());
+    }
+
+    #[test]
+    fn unknown_tool_errors() {
+        let dir = temp_vault();
+        assert!(call(dir.path(), "no_such_tool", &json!({})).is_err());
+    }
+
+    #[test]
+    fn get_document_on_missing_id_errors() {
+        let dir = temp_vault();
+        assert!(call(dir.path(), "get_document", &json!({ "id": "notes/nope" })).is_err());
+    }
+}

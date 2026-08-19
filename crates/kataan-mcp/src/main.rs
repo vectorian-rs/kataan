@@ -137,3 +137,94 @@ fn init_tracing() {
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // A path that never has to be read: the messages under test don't touch the
+    // vault (initialize, tools/list, notifications, unknown methods, and a
+    // tools/call that fails on tool lookup before any I/O).
+    fn no_vault() -> &'static Path {
+        Path::new("/nonexistent")
+    }
+
+    fn request(id: i64, method: &str, params: Value) -> Value {
+        json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
+    }
+
+    #[test]
+    fn initialize_echoes_protocol_version_and_advertises_tools() {
+        let message = request(1, "initialize", json!({ "protocolVersion": "2025-03-26" }));
+        let response = handle_message(no_vault(), &message).expect("initialize replies");
+
+        let result = &response["result"];
+        assert_eq!(result["protocolVersion"], "2025-03-26");
+        assert_eq!(result["capabilities"]["tools"], json!({}));
+        assert_eq!(result["serverInfo"]["name"], SERVER_NAME);
+        assert_eq!(response["id"], 1);
+    }
+
+    #[test]
+    fn initialize_falls_back_to_default_protocol_version() {
+        let message = request(1, "initialize", json!({}));
+        let response = handle_message(no_vault(), &message).unwrap();
+        assert_eq!(
+            response["result"]["protocolVersion"],
+            DEFAULT_PROTOCOL_VERSION
+        );
+    }
+
+    #[test]
+    fn notifications_get_no_reply() {
+        let message = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
+        assert!(handle_message(no_vault(), &message).is_none());
+    }
+
+    #[test]
+    fn tools_list_returns_the_full_catalogue() {
+        let message = request(2, "tools/list", Value::Null);
+        let response = handle_message(no_vault(), &message).unwrap();
+        let tools = response["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 10);
+        assert!(tools.iter().any(|tool| tool["name"] == "create_document"));
+    }
+
+    #[test]
+    fn ping_replies_empty() {
+        let response = handle_message(no_vault(), &request(3, "ping", Value::Null)).unwrap();
+        assert_eq!(response["result"], json!({}));
+    }
+
+    #[test]
+    fn unknown_method_is_a_jsonrpc_error() {
+        let response =
+            handle_message(no_vault(), &request(4, "does/not/exist", Value::Null)).unwrap();
+        assert_eq!(response["error"]["code"], -32601);
+        assert!(response.get("result").is_none());
+    }
+
+    #[test]
+    fn unknown_method_as_notification_is_silent() {
+        let message = json!({ "jsonrpc": "2.0", "method": "does/not/exist" });
+        assert!(handle_message(no_vault(), &message).is_none());
+    }
+
+    #[test]
+    fn failing_tool_call_is_an_iserror_result_not_a_protocol_error() {
+        // An unknown tool fails inside tools::call before any vault access, so
+        // this exercises the isError path without needing a real vault.
+        let message = request(
+            5,
+            "tools/call",
+            json!({ "name": "no_such_tool", "arguments": {} }),
+        );
+        let response = handle_message(no_vault(), &message).unwrap();
+        assert!(
+            response.get("error").is_none(),
+            "tool failures are results, not protocol errors"
+        );
+        assert_eq!(response["result"]["isError"], true);
+    }
+}
