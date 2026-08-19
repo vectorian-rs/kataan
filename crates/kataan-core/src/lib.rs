@@ -8,6 +8,7 @@ pub mod graph;
 pub mod id;
 pub mod index;
 pub mod init;
+pub mod mutate;
 pub mod ontology;
 pub mod rebuild;
 pub mod scan;
