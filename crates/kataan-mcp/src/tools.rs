@@ -212,7 +212,8 @@ fn create_document(vault: &Path, args: &Value) -> Result<String> {
         aliases: str_vec(args, "aliases"),
         labels: str_vec(args, "labels"),
         status: opt_str(args, "status"),
-        actor: opt_str(args, "actor"),
+        // Writes over MCP are always attributed to the agent actor.
+        actor: None,
     };
     let id = mutate::create_document(vault, request)?;
     reindex_search(vault)?;
@@ -223,9 +224,10 @@ fn update_document(vault: &Path, args: &Value) -> Result<String> {
     let id = parse_id(args, "id")?;
     let patch = DocumentPatch {
         status: opt_str(args, "status"),
-        aliases: args.get("aliases").map(|_| str_vec(args, "aliases")),
-        labels: args.get("labels").map(|_| str_vec(args, "labels")),
-        actor: opt_str(args, "actor"),
+        aliases: opt_str_vec(args, "aliases"),
+        labels: opt_str_vec(args, "labels"),
+        // Writes over MCP are always attributed to the agent actor.
+        actor: None,
     };
     mutate::update_document(vault, &id, opt_str(args, "body"), patch)?;
     reindex_search(vault)?;
@@ -284,6 +286,12 @@ fn str_vec(args: &Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// `Some(list)` only when `key` is present, so an omitted field leaves a patch
+/// field unchanged rather than clearing it.
+fn opt_str_vec(args: &Value, key: &str) -> Option<Vec<String>> {
+    args.get(key).map(|_| str_vec(args, key))
 }
 
 fn parse_id(args: &Value, key: &str) -> Result<CanonicalId> {

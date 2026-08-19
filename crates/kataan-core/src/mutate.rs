@@ -13,9 +13,10 @@ use crate::{
     constants::{ACTOR_AGENT, STATUS_VALUES},
     document::DocumentMetadata,
     id::CanonicalId,
-    ontology, rebuild,
+    ontology::{self, Ontology},
+    rebuild,
     title::slugify,
-    vault::{LoadedVault, Vault},
+    vault::Vault,
     write::atomic_write_string,
     Error, Result,
 };
@@ -55,19 +56,19 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
             .type_folders
             .get(&request.r#type)
             .cloned()
-            .ok_or_else(|| unknown(format!("unknown type `{}`", request.r#type)))?,
+            .ok_or_else(|| invalid_request(format!("unknown type `{}`", request.r#type)))?,
     };
     validate_status(request.status.as_deref())?;
 
     let slug = slugify(&request.title)
-        .ok_or_else(|| unknown(format!("title `{}` produces no slug", request.title)))?;
+        .ok_or_else(|| invalid_request(format!("title `{}` produces no slug", request.title)))?;
     let id = CanonicalId::parse(format!("{base_folder}/{slug}"))
-        .map_err(|error| unknown(format!("invalid document id: {error}")))?;
+        .map_err(|error| invalid_request(format!("invalid document id: {error}")))?;
 
     let markdown_path = root.join(id.markdown_path());
     let toml_path = root.join(id.toml_path());
     if toml_path.exists() || markdown_path.exists() {
-        return Err(unknown(format!("document `{id}` already exists")));
+        return Err(invalid_request(format!("document `{id}` already exists")));
     }
     if let Some(parent) = markdown_path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| Error::Io {
@@ -137,68 +138,57 @@ pub fn add_edge(
     target: &CanonicalId,
 ) -> Result<()> {
     let root = root.as_ref();
-    let loaded = LoadedVault::load(root)?;
+    let vault = Vault::open(root)?;
 
-    let edge = loaded
-        .ontology
+    // Validating one edge needs only the ontology and the two endpoints — not a
+    // full vault walk + graph build.
+    let ontology = Ontology::load(root)?;
+    let edge = ontology
         .edges
         .get(predicate)
-        .ok_or_else(|| unknown(format!("unknown predicate `{predicate}`")))?;
-    let source_record = loaded
-        .documents
-        .get(source)
-        .ok_or_else(|| unknown(format!("source document `{source}` does not exist")))?;
+        .ok_or_else(|| invalid_request(format!("unknown predicate `{predicate}`")))?;
+    let mut source_record = vault.load_document_record(source)?;
     if !ontology::type_allowed(&edge.from, &source_record.metadata.r#type) {
-        return Err(unknown(format!(
+        return Err(invalid_request(format!(
             "type `{}` cannot be the source of `{predicate}`",
             source_record.metadata.r#type
         )));
     }
-    let target_record = loaded
-        .documents
-        .get(target)
-        .ok_or_else(|| unknown(format!("target document `{target}` does not exist")))?;
-    if !ontology::type_allowed(&edge.to, &target_record.metadata.r#type) {
-        return Err(unknown(format!(
-            "type `{}` cannot be the target of `{predicate}`",
-            target_record.metadata.r#type
+    let target_type = vault.load_document_record(target)?.metadata.r#type;
+    if !ontology::type_allowed(&edge.to, &target_type) {
+        return Err(invalid_request(format!(
+            "type `{target_type}` cannot be the target of `{predicate}`"
         )));
     }
 
-    let mut metadata = source_record.metadata.clone();
-    let targets = metadata.edges.entry(predicate.to_owned()).or_default();
+    let targets = source_record
+        .metadata
+        .edges
+        .entry(predicate.to_owned())
+        .or_default();
     let target_id = target.as_str().to_owned();
     if !targets.contains(&target_id) {
         targets.push(target_id);
     }
     atomic_write_string(
-        &record_toml(&loaded, source)?,
-        &Sidecar::from(metadata).to_toml(),
+        &source_record.toml_path,
+        &Sidecar::from(source_record.metadata).to_toml(),
     )?;
     rebuild::rebuild_indexes(root)?;
     Ok(())
 }
 
-fn record_toml(loaded: &LoadedVault, id: &CanonicalId) -> Result<std::path::PathBuf> {
-    Ok(loaded
-        .documents
-        .get(id)
-        .expect("caller verified the document exists")
-        .toml_path
-        .clone())
-}
-
 fn validate_status(status: Option<&str>) -> Result<()> {
     match status {
         Some(status) if !STATUS_VALUES.contains(&status) => {
-            Err(unknown(format!("invalid status `{status}`")))
+            Err(invalid_request(format!("invalid status `{status}`")))
         }
         _ => Ok(()),
     }
 }
 
-fn unknown(message: String) -> Error {
-    Error::InvalidVaultStructure(message)
+fn invalid_request(message: String) -> Error {
+    Error::InvalidRequest(message)
 }
 
 /// A document sidecar rendered with scalars/arrays first and the `[edges]` table

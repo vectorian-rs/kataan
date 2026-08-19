@@ -29,4 +29,9 @@ pub enum Error {
 
     #[error("invalid vault structure: {0}")]
     InvalidVaultStructure(String),
+
+    /// A caller asked for something the vault won't allow (unknown type,
+    /// id collision, illegal edge, …) — a bad request, not on-disk corruption.
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
 }
