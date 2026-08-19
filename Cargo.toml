@@ -4,6 +4,7 @@ members = [
   "crates/kataan-cli",
   "crates/kataan-server",
   "crates/kataan-search",
+  "crates/kataan-mcp",
 ]
 resolver = "2"
 

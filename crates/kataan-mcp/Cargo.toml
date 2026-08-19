@@ -1,0 +1,23 @@
+[package]
+name = "kataan-mcp"
+version = "0.3.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "kataan-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+kataan-core = { path = "../kataan-core" }
+kataan-search = { path = "../kataan-search" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
