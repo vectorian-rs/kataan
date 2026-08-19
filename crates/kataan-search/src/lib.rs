@@ -91,6 +91,7 @@ impl SearchIndex {
         }
         let connection = Connection::open(&path)
             .with_context(|| format!("failed to open search index `{}`", path.display()))?;
+        configure_connection(&connection)?;
         create_schema(&connection)?;
         Ok(Self { path })
     }
@@ -238,8 +239,10 @@ impl SearchIndex {
                 )
             })?;
         }
-        Connection::open(&self.path)
-            .with_context(|| format!("failed to open search index `{}`", self.path.display()))
+        let connection = Connection::open(&self.path)
+            .with_context(|| format!("failed to open search index `{}`", self.path.display()))?;
+        configure_connection(&connection)?;
+        Ok(connection)
     }
 
     fn connect(&self) -> Result<Connection> {
@@ -247,6 +250,15 @@ impl SearchIndex {
         create_schema(&connection)?;
         Ok(connection)
     }
+}
+
+/// Pragmas for every freshly-opened connection: WAL so readers never block on
+/// the reindex writer, and a busy timeout so concurrent writers wait-and-retry
+/// instead of failing immediately with `SQLITE_BUSY`.
+fn configure_connection(connection: &Connection) -> Result<()> {
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    connection.query_row("PRAGMA journal_mode = WAL;", [], |_row| Ok(()))?;
+    Ok(())
 }
 
 /// The kind of thing an index item represents. Serializes to the exact wire

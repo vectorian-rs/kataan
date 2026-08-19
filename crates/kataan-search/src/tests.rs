@@ -3,6 +3,21 @@ use std::fs;
 use super::*;
 
 #[test]
+fn connections_use_wal_for_concurrent_read_and_reindex() {
+    let root = temp_dir("wal");
+    kataan_core::init::init_vault(&root, "Search Test").unwrap();
+    let index = SearchIndex::open(root.join("search.sqlite")).unwrap();
+
+    let connection = index.connect().unwrap();
+    let mode: String = connection
+        .query_row("PRAGMA journal_mode;", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode.to_lowercase(), "wal");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn indexes_and_searches_documents() {
     let root = temp_dir("documents");
     kataan_core::init::init_vault(&root, "Search Test").unwrap();
