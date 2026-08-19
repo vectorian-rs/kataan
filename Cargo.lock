@@ -802,7 +802,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "kataan-cli"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -816,7 +816,7 @@ dependencies = [
 
 [[package]]
 name = "kataan-core"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "ignore",
@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "kataan-mcp"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -845,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "kataan-search"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "kataan-server"
-version = "0.3.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
