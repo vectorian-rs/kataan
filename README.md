@@ -89,15 +89,26 @@ Register it with your client. For Claude Desktop, add to
 }
 ```
 
-Tools:
+Tools exposed by `kataan-mcp`:
 
-- **Reads** — `search`, `get_document`, `list_folders`, `get_folder`, `resolve`,
-  `schema`, `vault_info` (return JSON).
-- **Writes** — `create_document`, `update_document`, `add_edge`. Writes go through
-  the validated mutation layer, so every change is well-formed (correct id,
-  sidecar, checksum, folder indexes, ontology-legal edges) and the search index is
-  refreshed. An illegal change (e.g. an edge your ontology forbids) is rejected
-  with an error instead of corrupting the vault.
+| Tool | Kind | Arguments | Description |
+| --- | --- | --- | --- |
+| `search` | read | `q?`, `kind?`, `type?`, `status?`, `facet?`, `path_prefix?`, `limit?`, `offset?` | Full-text keyword search across the vault. All filters are optional. |
+| `get_document` | read | `id` | Fetch one document's metadata, Markdown body, ancestors, and facets by canonical id, e.g. `notes/my-note`. |
+| `list_folders` | read | none | Return the vault's type-to-folder mapping. |
+| `get_folder` | read | `id` | List direct child folders and documents under a folder id, e.g. `notes`. |
+| `resolve` | read | `type`, `token` | Resolve an alias or slug route token within a type folder to a canonical id. |
+| `schema` | read | `kind` | Return the TOML schema for a kind such as `document`, `ontology`, or `index`. |
+| `vault_info` | read | none | Return the vault configuration/index. |
+| `create_document` | write | `type`, `title`, `body`, `parent?`, `aliases?`, `labels?`, `status?` | Create a new document and return its canonical id. |
+| `update_document` | write | `id`, `body?`, `status?`, `aliases?`, `labels?` | Update an existing document's body and/or metadata. Omitted fields are left unchanged. |
+| `add_edge` | write | `source`, `predicate`, `target` | Add an ontology-validated edge from one document to another. |
+
+All tool results are JSON. Writes go through the validated mutation layer, so every
+change is well-formed (correct id, sidecar, checksum, folder indexes,
+ontology-legal edges) and the search index is refreshed. An illegal change (e.g.
+an edge your ontology forbids) is rejected with an error instead of corrupting the
+vault.
 
 stdout carries only the JSON-RPC protocol; logs go to stderr (`RUST_LOG` controls
 verbosity).
