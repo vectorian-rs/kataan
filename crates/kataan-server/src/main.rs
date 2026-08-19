@@ -48,8 +48,10 @@ async fn main() {
 }
 
 fn init_tracing() {
+    // Logs go to stderr (the conventional stream for diagnostics; still captured
+    // by container/systemd log collectors), matching the CLI.
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 }
