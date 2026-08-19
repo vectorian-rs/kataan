@@ -7,7 +7,6 @@ Kataan is a filesystem-native knowledge workspace. The source of truth is the re
 Read:
 
 - `docs/kataan-brief.md`
-- `docs/kataan-plan.md`
 - current implementation code
 - relevant CLI/server/test output
 
@@ -21,7 +20,7 @@ Use today’s date for `YYMMDD`.
 
 ## Required checks
 
-Compare implementation against the brief and plan. Be technical, skeptical, and specific.
+Compare implementation against the brief. Be technical, skeptical, and specific.
 
 Focus on:
 
@@ -34,10 +33,13 @@ Focus on:
 - ontology loading and validation
 - edge model and inverse/symmetric graph behavior
 - `LoadedVault` metadata-only discipline
+- validated mutation layer (`kataan_core::mutate`)
 - validation diagnostics
 - `rebuild-indexes`
 - `init`
+- full-text keyword search (`kataan-search`)
 - server boot/read-only-on-error behavior
+- MCP server (`kataan-mcp`) read/write tools
 - atomic writes and single-writer safety
 - filesystem watcher behavior
 - tests and CLI output
@@ -60,9 +62,10 @@ One terse paragraph describing actual current project state.
 | Validation   | ...    | ...   |
 | Rebuild      | ...    | ...   |
 | Init         | ...    | ...   |
+| Search       | ...    | ...   |
 | Server       | ...    | ...   |
 | UI           | ...    | ...   |
-| Agent        | ...    | ...   |
+| MCP          | ...    | ...   |
 | Tests        | ...    | ...   |
 
 Use status values:
@@ -87,7 +90,7 @@ Bullet list of planned behavior not found in code.
 
 ## Drift from spec
 
-List mismatches between implementation and `kataan-brief.md` / `kataan-plan.md`.
+List mismatches between implementation and `kataan-brief.md`.
 
 ## Test and command evidence
 
@@ -111,7 +114,3 @@ Numbered list, highest leverage first.
 - Keep the report concise but audit-grade.
 - Do not modify source code.
 - Do not create or edit any file except `docs/kataan-progress-status-YYMMDD.md`.
-
-```
-
-```

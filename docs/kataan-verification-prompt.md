@@ -28,10 +28,10 @@ Either the entire code or the recent changes. Ask back if the user did not defin
 ### 3. Safety
 - Atomic writes (tempfile-in-same-dir → fsync → rename; no torn TOML or Markdown)
 - Single-writer guarantee (mpsc command queue; no concurrent mutation paths around it)
-- Generation counter discipline (bumped on every write; stale-proposal rejection at apply-time)
-- Agent containment (proposals reviewable; no silent overwrite of human edits; destructive actions gated)
+- Write serialization (single-writer command queue; every write followed by index rebuild so state stays consistent)
+- Agent write path (writes go through the validated mutation layer; no silent overwrite of human edits; destructive file deletion is a human decision)
 - Edge mutation safety (ontology validated before commit; `add_edge`/`remove_edge`/`replace_edges_for_predicate` only)
-- MCP surface minimality (read + repair only; no write/edge tools exposed)
+- MCP surface (read + write tools; writes routed through the validated mutation layer; illegal requests rejected as `isError`, never written)
 - Read-only-on-error boot (validation failure degrades to diagnostics + rebuild, never partial writes)
 - Cross-process hazard posture (no file lock in v1; documented and reconcilable via watcher)
 - Filename preservation (no silent lowercasing; case-insensitive collision detection on case-sensitive FS)

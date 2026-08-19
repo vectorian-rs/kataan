@@ -88,7 +88,38 @@ curl -X POST http://127.0.0.1:3001/api/rebuild-indexes
 curl -X POST http://127.0.0.1:3001/api/validate
 ```
 
-The current HTTP API is primarily read/repair oriented. Create and update document files directly on disk or through a reviewed application workflow, then call `POST /api/rebuild-indexes` and `POST /api/validate`.
+The HTTP API is read/repair oriented — it has no write endpoints. To create or
+change content you have two options: edit the Markdown/TOML pairs directly on
+disk and then call `POST /api/rebuild-indexes` and `POST /api/validate`, or use
+the MCP server below, which validates each change for you.
+
+## MCP server (read + write)
+
+`kataan-mcp` exposes the vault to MCP clients (Claude Desktop, IDE agents) as
+typed tools over stdio, and is the recommended way for an agent to **write** the
+vault: every mutation goes through the validated mutation layer, so the result is
+always well-formed (correct id, sidecar, checksums, folder indexes, and
+ontology-legal edges), and the search index is refreshed after each write.
+
+```sh
+kataan-mcp --vault <vault-path>
+# or, from this repository:
+cargo run -p kataan-mcp -- --vault <vault-path>
+```
+
+Tools:
+
+- Reads — `search`, `get_document`, `list_folders`, `get_folder`, `resolve`,
+  `schema`, `vault_info` (return JSON).
+- Writes — `create_document` (type, title, body, optional parent/aliases/labels/
+  status), `update_document` (id, optional body/status/aliases/labels), and
+  `add_edge` (source, predicate, target). Illegal requests (unknown type, id
+  collision, ontology-forbidden edge, invalid status) are rejected rather than
+  written. Writes are attributed to the `agent` actor.
+
+Because the mutation tools rebuild indexes and reindex search themselves, you do
+**not** need to call `rebuild-indexes`/`validate` after an MCP write — that is
+only needed after editing files directly on disk.
 
 ## Vault structure
 

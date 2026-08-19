@@ -1,4 +1,15 @@
-# Kataan Search Plan
+# Kataan Search
+
+> **Status (1.0).** Keyword search is **shipped** in the `kataan-search` crate:
+> SQLite FTS5 / BM25 over Markdown documents and folder indexes (title, aliases,
+> labels, type/status, path ancestors, body) with the field weighting and
+> facets described below, exposed over the HTTP API and the MCP `search` tool.
+> The index is a rebuildable cache, not vault truth.
+>
+> **Not yet implemented (future):** artifact/PDF file indexing (only documents and
+> folder indexes are indexed today), the `[search]` config table, the dedicated
+> Web UI search surface, and semantic/vector search. Sections describing those
+> are design notes, not current behavior.
 
 ## Summary
 
@@ -27,7 +38,7 @@ Semantic/vector search can be added later as an optional sidecar using USearch a
 
 ## Architecture
 
-Add a dedicated search module/crate, preferably:
+Search lives in a dedicated crate:
 
 ```txt
 crates/kataan-search

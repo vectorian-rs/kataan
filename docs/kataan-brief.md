@@ -606,51 +606,26 @@ The agent should answer questions like:
 - What relationships should be recorded?
 - Should the intake source be preserved?
 
-## Agent runtime
+## Agent access
 
-Kataan includes a Rust-native `kataan-agent` crate for AI-assisted vault work. The first provider targets are API-key providers such as OpenAI and Anthropic. ChatGPT subscription / Codex-style OAuth is deferred behind the same provider-neutral trait.
+Kataan is designed to be operated by agents, not just read by them. Agents
+interact with a vault two ways:
 
-The agent should use the smallest useful context: vault and folder indexes first, metadata and graph summaries next, full Markdown only when needed. Tool calls are represented as provider-neutral JSON-schema-described actions, but v1 agent output remains proposal-first and human-reviewed.
+- **MCP server (`kataan-mcp`).** The primary write path. It exposes the vault to
+  MCP clients (Claude Desktop, IDE agents) as typed tools over stdio, backed by
+  the validated mutation layer (`kataan_core::mutate`): `create_document`,
+  `update_document`, and `add_edge` produce guaranteed-well-formed changes, and
+  ontology-illegal requests are rejected rather than written.
+- **Editing files + repair.** Agents can also edit the Markdown/TOML pairs
+  directly and then run `rebuild-indexes` + `validate` (or the equivalent server
+  endpoints).
 
-## Agent proposals
-
-Agents should propose changes before writing organized knowledge. A proposal is a reviewable set of actions.
-
-Example proposal shape:
-
-```toml
-source = "intake/pasted-chat-about-ai-kbs"
-confidence = 0.82
-rationale = "The input describes a project and mentions related knowledge-base topics."
-
-[[actions]]
-kind = "create"
-target = "projects/kataan-redesign"
-type = "project"
-
-[[actions]]
-kind = "update"
-target = "topics/knowledge-bases"
-operation = "append-summary"
-
-[[actions]]
-kind = "link"
-from = "projects/kataan-redesign"
-to = "topics/knowledge-bases"
-predicate = "related_to"
-```
-
-Initial action kinds:
-
-- `create`: create a new Markdown/TOML document pair.
-- `update`: change an existing document, such as appending a summary or editing metadata.
-- `merge`: combine one document into another and update references.
-- `link`: add an ontology-backed edge between documents.
-- `delete`: remove files from disk.
-
-Prefer `status = "archived"` for normal removal from active views. The `delete` action is reserved for actual file removal and requires explicit human approval. Destructive actions such as `delete`, `merge`, or large rewrites must be reviewable before execution.
-
-Future hardened proposal actions should include base checksums for each target so stale proposals can be detected before applying changes.
+Either way, the guidance is the same: use the smallest useful context (vault and
+folder indexes first, metadata and graph summaries next, full Markdown only when
+needed), make small non-destructive changes, and preserve human-authored content
+and raw intake. Removing a document from active views is a `status = "archived"`
+change; deleting files is a human decision. `docs/kataan-agent-guide.md` (shipped
+in the CLI via `kataan guide`) is the operational reference.
 
 ## Human and agent collaboration
 
@@ -662,7 +637,7 @@ Humans can:
 - edit Markdown directly
 - edit TOML metadata
 - reorganize folders
-- approve or reject agent proposals
+- review and revert agent changes
 - write original notes
 
 Agents can:
@@ -679,15 +654,13 @@ Agents can:
 
 The agent is a collaborator, not the owner.
 
-Agent changes should be diff-based and non-destructive. Agents should not silently overwrite human edits. Agent proposals include base content hashes for each edited document; if the current hash no longer matches, the proposal is stale and the agent must re-read or present a conflict for human review.
+Agent changes should be diff-based and non-destructive. Agents should not silently overwrite human edits: re-read a document before editing it, and preserve unknown TOML fields and human-authored Markdown.
 
 ## Concurrency and writes
 
 Kataan uses a single-writer model in the server. API writes are serialized through a command queue and then update an `Arc<RwLock<LoadedVault>>` metadata index. Reads take a short read lock and should avoid holding it while reading large Markdown bodies.
 
 `LoadedVault` is metadata-only: it stores config, ontology, type registry, document records, labels/facets, graph, checksums, diagnostics, and paths. It does not keep full Markdown bodies in memory. Markdown is read on demand from the file path in the document record.
-
-Conflict detection is content-hash based. In-flight agent proposals carry the base hashes of documents they intend to edit. Apply-time recomputes current hashes and refuses or asks for re-read/review when a hash no longer matches.
 
 Every Markdown and TOML write is atomic: write a temporary file in the same directory, fsync, then rename/persist. Rebuild operations are per-folder atomic so a crash mid-rebuild does not corrupt indexes.
 
@@ -710,14 +683,17 @@ The server checks folder depth on every write and rejects violations with `folde
 
 ## MCP surface
 
-MCP v1 is read + repair only:
+The `kataan-mcp` crate is a Model Context Protocol server speaking JSON-RPC over
+stdio (no SDK dependency). It is **read + write**:
 
-- `read_document(id)`
-- `list_folder(path)`
-- `validate()`
-- `rebuild_indexes()`
+- Reads: `search`, `get_document`, `list_folders`, `get_folder`, `resolve`,
+  `schema`, `vault_info` — returning JSON.
+- Writes: `create_document`, `update_document`, `add_edge` — routed through the
+  validated mutation layer, with the search index refreshed after each write.
 
-Writes and edge mutations go through proposal review or direct API calls from the UI, not direct MCP tool calls.
+Tool failures (unknown type, id collision, ontology-illegal edge, invalid status)
+surface as MCP `isError` results rather than corrupting the vault. Reads return
+JSON, never HTML — Markdown rendering lives only in `kataan-server`.
 
 ## Intake vs organized knowledge
 
@@ -822,10 +798,11 @@ Kataan should start small:
 - local vault folder
 - Markdown reader/writer
 - TOML metadata reader/writer
+- validated mutation layer for agent writes
+- full-text keyword search
 - intake input box
-- agent proposal flow
 - simple file browser
-- MCP read/repair surface
+- MCP read/write server
 - no complex database unless proven necessary
 
 ## Guiding principle
