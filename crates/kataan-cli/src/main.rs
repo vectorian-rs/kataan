@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use kataan_core::query::Direction;
 use serde::Serialize;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -57,8 +58,39 @@ enum Command {
     RebuildIndexes {
         path: PathBuf,
     },
+    /// Graph queries over the vault, emitted as JSON on stdout.
+    Graph {
+        #[command(subcommand)]
+        command: GraphCommand,
+    },
     #[command(alias = "quide")]
     Guide,
+}
+
+#[derive(Debug, Subcommand)]
+enum GraphCommand {
+    /// Export nodes and links. Output is deterministic, so it diffs cleanly
+    /// across runs and can be committed as a build artifact.
+    Export {
+        path: PathBuf,
+        /// Restrict to these document types (repeatable or comma-separated).
+        #[arg(long = "type", value_delimiter = ',')]
+        types: Vec<String>,
+        /// Restrict to these edge predicates (repeatable or comma-separated).
+        #[arg(long = "predicate", value_delimiter = ',')]
+        predicates: Vec<String>,
+    },
+    /// Show what a document is connected to, in either or both directions.
+    Neighbors {
+        path: PathBuf,
+        /// Canonical id, e.g. topics/rust.
+        id: String,
+        /// Restrict to one predicate.
+        #[arg(long)]
+        predicate: Option<String>,
+        #[arg(long, default_value = "both")]
+        direction: Direction,
+    },
 }
 
 fn main() -> Result<()> {
@@ -108,6 +140,29 @@ fn main() -> Result<()> {
             kataan_core::rebuild::rebuild_indexes(&path)?;
             info!(path = %path.display(), "rebuilt indexes");
         }
+        Command::Graph { command } => match command {
+            GraphCommand::Export {
+                path,
+                types,
+                predicates,
+            } => {
+                let vault = kataan_core::vault::LoadedVault::load(&path)?;
+                let graph = kataan_core::query::subgraph(&vault, &types, &predicates);
+                println!("{}", serde_json::to_string_pretty(&graph)?);
+            }
+            GraphCommand::Neighbors {
+                path,
+                id,
+                predicate,
+                direction,
+            } => {
+                let vault = kataan_core::vault::LoadedVault::load(&path)?;
+                let id = kataan_core::id::CanonicalId::parse(&id)?;
+                let result =
+                    kataan_core::query::neighbors(&vault, &id, predicate.as_deref(), direction)?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+        },
         Command::Guide => {
             print!("{AGENT_GUIDE}");
         }

@@ -187,8 +187,13 @@ mod tests {
         let message = request(2, "tools/list", Value::Null);
         let response = handle_message(no_vault(), &message).unwrap();
         let tools = response["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 10);
-        assert!(tools.iter().any(|tool| tool["name"] == "create_document"));
+        assert_eq!(tools.len(), 12);
+        for expected in ["create_document", "neighbors", "subgraph"] {
+            assert!(
+                tools.iter().any(|tool| tool["name"] == expected),
+                "`{expected}` missing from the catalogue"
+            );
+        }
     }
 
     #[test]

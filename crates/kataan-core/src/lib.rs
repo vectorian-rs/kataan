@@ -10,6 +10,7 @@ pub mod index;
 pub mod init;
 pub mod mutate;
 pub mod ontology;
+pub mod query;
 pub mod rebuild;
 pub mod scan;
 pub mod schema;

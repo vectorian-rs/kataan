@@ -125,6 +125,36 @@ pub struct IdQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct NeighborsQuery {
+    pub id: String,
+    pub predicate: Option<String>,
+    #[serde(default)]
+    pub direction: kataan_core::query::Direction,
+}
+
+/// `types` and `predicates` accept comma-separated lists; absent or empty means
+/// no filter on that axis.
+#[derive(Debug, Deserialize)]
+pub struct SubgraphQuery {
+    pub types: Option<String>,
+    pub predicates: Option<String>,
+}
+
+impl SubgraphQuery {
+    fn split(value: Option<&String>) -> Vec<String> {
+        value
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct FileQuery {
     pub path: String,
     pub theme: Option<String>,
@@ -172,6 +202,8 @@ pub fn router(state: AppState) -> Router {
         .route("/file/raw", get(raw_file_by_path))
         .route("/file/highlight", get(highlight_file_by_path))
         .route("/resolve", get(resolve_route))
+        .route("/graph/neighbors", get(neighbors))
+        .route("/graph/subgraph", get(subgraph))
         .route("/schema/:kind", get(schema))
         .route("/folders/:folder", get(folder))
         .route("/documents/*id", get(document))
@@ -374,6 +406,36 @@ pub async fn resolve_route(
         route_token: kataan_core::vault::route_token_for_id(&id),
         is_folder_index: document.is_folder_index,
     }))
+}
+
+pub async fn neighbors(
+    State(state): State<AppState>,
+    Query(query): Query<NeighborsQuery>,
+) -> Result<Json<kataan_core::query::Neighbors>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
+    let id = kataan_core::id::CanonicalId::parse(&query.id).map_err(ApiError::bad_request)?;
+    if !loaded.documents.contains_key(&id) {
+        return Err(ApiError::not_found(format!(
+            "document `{id}` does not exist"
+        )));
+    }
+    kataan_core::query::neighbors(&loaded, &id, query.predicate.as_deref(), query.direction)
+        .map(Json)
+        .map_err(ApiError::from)
+}
+
+pub async fn subgraph(
+    State(state): State<AppState>,
+    Query(query): Query<SubgraphQuery>,
+) -> Result<Json<kataan_core::query::Subgraph>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
+    let types = SubgraphQuery::split(query.types.as_ref());
+    let predicates = SubgraphQuery::split(query.predicates.as_ref());
+    Ok(Json(kataan_core::query::subgraph(
+        &loaded,
+        &types,
+        &predicates,
+    )))
 }
 
 pub async fn document(
