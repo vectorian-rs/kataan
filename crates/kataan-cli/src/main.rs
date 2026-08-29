@@ -63,6 +63,35 @@ enum Command {
         #[command(subcommand)]
         command: GraphCommand,
     },
+    /// List or batch-fetch documents as JSON on stdout.
+    Documents {
+        path: PathBuf,
+        /// Fetch these ids specifically (repeatable or comma-separated).
+        #[arg(long = "id", value_delimiter = ',')]
+        ids: Vec<String>,
+        #[arg(long = "type")]
+        r#type: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long = "label", value_delimiter = ',')]
+        labels: Vec<String>,
+        #[arg(long)]
+        path_prefix: Option<String>,
+        /// Restrict to documents with an edge to this id.
+        #[arg(long)]
+        linked_to: Option<String>,
+        #[arg(long)]
+        predicate: Option<String>,
+        #[arg(long, default_value = "both")]
+        direction: Direction,
+        /// Include Markdown bodies (one file read per document).
+        #[arg(long)]
+        markdown: bool,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
     #[command(alias = "quide")]
     Guide,
 }
@@ -163,6 +192,43 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         },
+        Command::Documents {
+            path,
+            ids,
+            r#type,
+            status,
+            labels,
+            path_prefix,
+            linked_to,
+            predicate,
+            direction,
+            markdown,
+            limit,
+            offset,
+        } => {
+            let vault = kataan_core::vault::LoadedVault::load(&path)?;
+            let query = kataan_core::query::DocumentQuery {
+                ids,
+                r#type,
+                status,
+                labels,
+                path_prefix,
+                linked_to: linked_to.map(|id| kataan_core::query::LinkedTo {
+                    id,
+                    predicate,
+                    direction,
+                }),
+                include: if markdown {
+                    kataan_core::query::Include::Markdown
+                } else {
+                    kataan_core::query::Include::Metadata
+                },
+                limit,
+                offset,
+            };
+            let page = kataan_core::query::documents(&vault, &query)?;
+            println!("{}", serde_json::to_string_pretty(&page)?);
+        }
         Command::Guide => {
             print!("{AGENT_GUIDE}");
         }

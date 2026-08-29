@@ -156,6 +156,18 @@ pub struct SubgraphQuery {
     pub predicates: Option<String>,
 }
 
+fn comma_separated(value: Option<&String>) -> Vec<String> {
+    value
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 impl SubgraphQuery {
     fn split(value: Option<&String>) -> Vec<String> {
         value
@@ -219,6 +231,7 @@ pub fn router(state: AppState) -> Router {
         .route("/file/highlight", get(highlight_file_by_path))
         .route("/resolve", get(resolve_route))
         .route("/resolve-path", get(resolve_path))
+        .route("/documents", get(documents))
         .route("/graph/neighbors", get(neighbors))
         .route("/graph/subgraph", get(subgraph))
         .route("/schema/:kind", get(schema))
@@ -450,6 +463,55 @@ pub async fn resolve_path(
         route_token: kataan_core::vault::route_token_for_id(&id),
         is_folder_index,
     }))
+}
+
+/// Filters arrive as a query string; `ids` and `labels` accept comma-separated
+/// lists.
+#[derive(Debug, Deserialize)]
+pub struct DocumentsQuery {
+    pub ids: Option<String>,
+    pub r#type: Option<String>,
+    pub status: Option<String>,
+    pub labels: Option<String>,
+    pub path_prefix: Option<String>,
+    pub linked_to: Option<String>,
+    pub predicate: Option<String>,
+    #[serde(default)]
+    pub direction: kataan_core::query::Direction,
+    #[serde(default)]
+    pub include: kataan_core::query::Include,
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: usize,
+}
+
+pub async fn documents(
+    State(state): State<AppState>,
+    Query(query): Query<DocumentsQuery>,
+) -> Result<Json<kataan_core::query::DocumentPage>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
+    let request = kataan_core::query::DocumentQuery {
+        ids: comma_separated(query.ids.as_ref()),
+        r#type: query.r#type,
+        status: query.status,
+        labels: comma_separated(query.labels.as_ref()),
+        path_prefix: query.path_prefix,
+        linked_to: query.linked_to.map(|id| kataan_core::query::LinkedTo {
+            id,
+            predicate: query.predicate,
+            direction: query.direction,
+        }),
+        include: query.include,
+        limit: query.limit,
+        offset: query.offset,
+    };
+    kataan_core::query::documents(&loaded, &request)
+        .map(Json)
+        .map_err(|error| match error {
+            // A bad filter or an over-limit result is the caller's mistake.
+            kataan_core::Error::InvalidRequest(message) => ApiError::bad_request(message),
+            other => ApiError::from(other),
+        })
 }
 
 pub async fn neighbors(

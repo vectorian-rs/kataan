@@ -86,6 +86,190 @@ pub struct Subgraph {
     pub links: Vec<Link>,
 }
 
+/// Default page size for [`documents`], and the ceiling on `limit`.
+pub const DEFAULT_DOCUMENT_LIMIT: usize = 100;
+pub const MAX_DOCUMENT_LIMIT: usize = 1000;
+
+/// How much of each document to return.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Include {
+    /// Summary only. The default: `LoadedVault` is metadata-only by design, so
+    /// anything more costs a filesystem read per document.
+    #[default]
+    Metadata,
+    /// Summary plus the Markdown body, read from disk per document.
+    Markdown,
+}
+
+/// Restrict results to documents with an edge to `id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LinkedTo {
+    pub id: String,
+    /// Restrict to one predicate; omit to match any edge.
+    #[serde(default)]
+    pub predicate: Option<String>,
+    #[serde(default)]
+    pub direction: Direction,
+}
+
+/// Filters for [`documents`]. Every field is optional; an empty query lists the
+/// vault, bounded by `limit`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentQuery {
+    /// Fetch these ids specifically. Order is preserved and unresolved ids are
+    /// reported in `missing` rather than failing the call.
+    #[serde(default)]
+    pub ids: Vec<String>,
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Documents carrying every one of these labels.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Documents whose id is this folder or below it.
+    #[serde(default)]
+    pub path_prefix: Option<String>,
+    #[serde(default)]
+    pub linked_to: Option<LinkedTo>,
+    #[serde(default)]
+    pub include: Include,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: usize,
+}
+
+/// A document with optionally its body, as returned by [`documents`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentEntry {
+    #[serde(flatten)]
+    pub summary: DocumentSummary,
+    /// Present only when the query asked for `include: markdown`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub markdown: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct DocumentPage {
+    pub documents: Vec<DocumentEntry>,
+    /// Requested ids that are not documents in this vault.
+    pub missing: Vec<String>,
+    /// Documents matching the filters before `offset`/`limit` were applied.
+    pub total: usize,
+}
+
+/// List or batch-fetch documents.
+///
+/// One call replaces the fetch-by-id-in-a-loop pattern that made rebuilding a
+/// graph artifact cost one round trip per document.
+///
+/// Matching more than `limit` is an error rather than a silent truncation: a
+/// consumer rebuilding a graph must not be able to mistake a partial answer for
+/// a complete one. Pass `offset` to page deliberately.
+pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentPage> {
+    let limit = query.limit.unwrap_or(DEFAULT_DOCUMENT_LIMIT);
+    if limit > MAX_DOCUMENT_LIMIT {
+        return Err(Error::InvalidRequest(format!(
+            "limit {limit} exceeds the maximum of {MAX_DOCUMENT_LIMIT}"
+        )));
+    }
+
+    // `linked_to` is resolved once, not per candidate.
+    let linked: Option<BTreeSet<CanonicalId>> = match &query.linked_to {
+        Some(link) => {
+            let id = CanonicalId::parse(&link.id).map_err(|error| {
+                Error::InvalidRequest(format!("invalid `linked_to.id`: {error}"))
+            })?;
+            let neighbors = neighbors(vault, &id, link.predicate.as_deref(), link.direction)?;
+            Some(
+                neighbors
+                    .out
+                    .values()
+                    .chain(neighbors.r#in.values())
+                    .flatten()
+                    .filter_map(|node| CanonicalId::parse(&node.id).ok())
+                    .collect(),
+            )
+        }
+        None => None,
+    };
+
+    let mut missing = Vec::new();
+    let candidates: Vec<&CanonicalId> = if query.ids.is_empty() {
+        vault.documents.keys().collect()
+    } else {
+        // Preserve request order, and report ids that do not exist rather than
+        // failing the whole batch.
+        let mut resolved = Vec::with_capacity(query.ids.len());
+        for raw in &query.ids {
+            match CanonicalId::parse(raw)
+                .ok()
+                .and_then(|id| vault.documents.get_key_value(&id))
+            {
+                Some((id, _)) => resolved.push(id),
+                None => missing.push(raw.clone()),
+            }
+        }
+        resolved
+    };
+
+    let matched: Vec<&CanonicalId> = candidates
+        .into_iter()
+        .filter(|id| {
+            let Some(record) = vault.documents.get(*id) else {
+                return false;
+            };
+            query
+                .r#type
+                .as_ref()
+                .is_none_or(|ty| &record.metadata.r#type == ty)
+                && query
+                    .status
+                    .as_ref()
+                    .is_none_or(|status| record.metadata.status.as_ref() == Some(status))
+                && query
+                    .labels
+                    .iter()
+                    .all(|label| record.metadata.labels.contains(label))
+                && query.path_prefix.as_ref().is_none_or(|prefix| {
+                    let id = id.as_str();
+                    id == prefix || id.starts_with(&format!("{prefix}/"))
+                })
+                && linked.as_ref().is_none_or(|allowed| allowed.contains(*id))
+        })
+        .collect();
+
+    let total = matched.len();
+    let page: Vec<&CanonicalId> = matched.into_iter().skip(query.offset).collect();
+    if page.len() > limit {
+        return Err(Error::InvalidRequest(format!(
+            "{} documents match (offset {}), which exceeds limit {limit}; narrow the query or page with offset",
+            page.len(),
+            query.offset
+        )));
+    }
+
+    let documents = page
+        .into_iter()
+        .filter_map(|id| {
+            let summary = summarize(vault, id)?;
+            let markdown = match query.include {
+                Include::Metadata => None,
+                Include::Markdown => Some(vault.read_markdown(id).ok()?),
+            };
+            Some(DocumentEntry { summary, markdown })
+        })
+        .collect();
+
+    Ok(DocumentPage {
+        documents,
+        missing,
+        total,
+    })
+}
+
 /// Build the display summary for a document id, or `None` if it is not in the
 /// vault (an edge may point at a document that was deleted).
 pub fn summarize(vault: &LoadedVault, id: &CanonicalId) -> Option<DocumentSummary> {
