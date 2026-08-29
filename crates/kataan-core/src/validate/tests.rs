@@ -672,3 +672,90 @@ type-definition = "type"
 fn unique_temp_dir() -> PathBuf {
     crate::test_support::unique_temp_dir("validate")
 }
+
+#[test]
+fn rejects_bad_timestamps_with_distinct_codes() {
+    let root = crate::test_support::unique_temp_dir("validate-timestamps");
+    crate::init::init_vault(&root, "Test").unwrap();
+
+    for (slug, value, expected) in [
+        ("epoch", "1788013953", codes::UNIX_EPOCH_TIMESTAMP),
+        ("zoneless", "2026-08-29T12:00:00", codes::ZONELESS_TIMESTAMP),
+        ("garbage", "not_applicable", codes::INVALID_TIMESTAMP),
+        ("impossible", "2026-02-30", codes::INVALID_TIMESTAMP),
+    ] {
+        fs::write(root.join(format!("notes/{slug}.md")), "# x\n").unwrap();
+        fs::write(
+            root.join(format!("notes/{slug}.toml")),
+            format!("type = \"note\"\nmarkdown = \"{slug}.md\"\noccurred_at = \"{value}\"\n"),
+        )
+        .unwrap();
+        // Rebuild first: an index-drift diagnostic would otherwise mask the
+        // per-document checks we are exercising here.
+        crate::rebuild::rebuild_indexes(&root).unwrap();
+
+        let report = validate(&root).unwrap();
+        assert!(
+            report.diagnostics.iter().any(|d| d.code == expected),
+            "`{value}` should report {expected}, got {:?}",
+            report
+                .diagnostics
+                .iter()
+                .map(|d| &d.code)
+                .collect::<Vec<_>>()
+        );
+        fs::remove_file(root.join(format!("notes/{slug}.md"))).unwrap();
+        fs::remove_file(root.join(format!("notes/{slug}.toml"))).unwrap();
+    }
+
+    // The same check must apply to nested documents, which a different walker
+    // validates. Before these were factored into one helper, only half the
+    // vault was covered.
+    fs::create_dir_all(root.join("notes/deep")).unwrap();
+    fs::write(root.join("notes/deep/index.md"), "# Deep\n").unwrap();
+    fs::write(
+        root.join("notes/deep/index.toml"),
+        "name = \"Deep\"\ntype = \"note\"\nmarkdown = \"index.md\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("notes/deep/nested.md"), "# Nested\n").unwrap();
+    fs::write(
+        root.join("notes/deep/nested.toml"),
+        "type = \"note\"\nmarkdown = \"nested.md\"\noccurred_at = \"1788013953\"\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+    let report = validate(&root).unwrap();
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == codes::UNIX_EPOCH_TIMESTAMP
+                && d.path.as_deref() == Some("notes/deep/nested.toml")),
+        "nested document not checked: {:?}",
+        report
+            .diagnostics
+            .iter()
+            .map(|d| (&d.code, &d.path))
+            .collect::<Vec<_>>()
+    );
+    fs::remove_dir_all(root.join("notes/deep")).unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+
+    // Every precision the vocabulary allows is accepted, unwidened.
+    for value in ["2006", "2006-05", "2006-05-18", "2026-08-29T12:00:00Z"] {
+        fs::write(root.join("notes/ok.md"), "# x\n").unwrap();
+        fs::write(
+            root.join("notes/ok.toml"),
+            format!("type = \"note\"\nmarkdown = \"ok.md\"\noccurred_at = \"{value}\"\n"),
+        )
+        .unwrap();
+        crate::rebuild::rebuild_indexes(&root).unwrap();
+        assert!(
+            validate(&root).unwrap().is_ok(),
+            "`{value}` should validate"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}

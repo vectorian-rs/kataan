@@ -284,6 +284,8 @@ fn validate_document_metadata(
         }
     }
 
+    validate_timestamps(issues, &metadata, relative_toml_path);
+
     for (field, actor) in [
         ("created_by", metadata.created_by.as_deref()),
         ("last_updated_by", metadata.last_updated_by.as_deref()),
@@ -545,4 +547,35 @@ fn actual_subfolders(folder_path: &Path, ignore: &ScanIgnore) -> Result<Vec<Fold
     }
     subfolders.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(subfolders)
+}
+
+/// Check the three first-class time fields, reporting a distinct code per
+/// failure mode.
+///
+/// Shared because documents directly in a type folder and documents in nested
+/// folders are validated by two different walkers; a check added to only one of
+/// them silently applies to half the vault.
+pub(super) fn validate_timestamps(
+    issues: &mut Vec<Diagnostic>,
+    metadata: &DocumentMetadata,
+    relative_toml_path: &str,
+) {
+    for (field, value) in [
+        ("occurred_at", metadata.occurred_at.as_deref()),
+        ("created_at", metadata.created_at.as_deref()),
+        ("updated_at", metadata.updated_at.as_deref()),
+    ] {
+        let Some(value) = value else { continue };
+        if let Err(error) = crate::time::Timestamp::parse(value) {
+            let code = match error {
+                crate::time::TimestampError::UnixEpoch(_) => codes::UNIX_EPOCH_TIMESTAMP,
+                crate::time::TimestampError::Zoneless(_) => codes::ZONELESS_TIMESTAMP,
+                crate::time::TimestampError::Unparseable(_) => codes::INVALID_TIMESTAMP,
+            };
+            issues.push(
+                Diagnostic::error(code, format!("`{field}`: {error}"))
+                    .with_path(relative_toml_path.to_owned()),
+            );
+        }
+    }
 }

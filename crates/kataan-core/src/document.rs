@@ -20,6 +20,13 @@ pub struct DocumentMetadata {
     pub created_by: Option<String>,
     pub last_updated_by: Option<String>,
 
+    /// When the thing this document describes happened (valid time). Author-set.
+    pub occurred_at: Option<String>,
+    /// When this record was first written (transaction time). Set by `mutate`.
+    pub created_at: Option<String>,
+    /// When this record last changed (transaction time). Set by `mutate`.
+    pub updated_at: Option<String>,
+
     /// Top-level sidecar keys kataan does not define, captured so a
     /// read-modify-write cycle preserves them and so consumers can read
     /// vault-specific fields (`linkedin`, `website`, ...) that would otherwise
