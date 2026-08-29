@@ -17,6 +17,7 @@ kataan-core = { path = "../kataan-core" }
 kataan-search = { path = "../kataan-search" }
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 

@@ -19,6 +19,18 @@ pub struct DocumentMetadata {
 
     pub created_by: Option<String>,
     pub last_updated_by: Option<String>,
+
+    /// Top-level sidecar keys kataan does not define, captured so a
+    /// read-modify-write cycle preserves them and so consumers can read
+    /// vault-specific fields (`linkedin`, `website`, ...) that would otherwise
+    /// be invisible. Serialized flat, as the author wrote them.
+    ///
+    /// `toml::Value` has no `JsonSchema` impl, so the schema describes these as
+    /// free-form JSON — accurate enough, since the point is that kataan does
+    /// not constrain their shape.
+    #[serde(flatten, default)]
+    #[schemars(with = "BTreeMap<String, serde_json::Value>")]
+    pub extra: BTreeMap<String, toml::Value>,
 }
 
 /// The human display name derived from a document's metadata: the first alias,

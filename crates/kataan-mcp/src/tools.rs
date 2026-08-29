@@ -87,7 +87,11 @@ pub fn list() -> Value {
                     "parent": { "type": "string", "description": "Folder id to place under; defaults to the type's folder." },
                     "aliases": { "type": "array", "items": { "type": "string" } },
                     "labels": { "type": "array", "items": { "type": "string" } },
-                    "status": { "type": "string", "description": "One of the allowed status values." }
+                    "status": { "type": "string", "description": "One of the allowed status values." },
+                    "fields": {
+                        "type": "object",
+                        "description": "Extra top-level sidecar keys to write, e.g. {\"linkedin\": \"https://...\"}. Keys kataan defines (type, status, markdown, aliases, labels, edges, ...) are rejected."
+                    }
                 },
                 "required": ["type", "title", "body"]
             }),
@@ -214,6 +218,7 @@ fn create_document(vault: &Path, args: &Value) -> Result<String> {
         status: opt_str(args, "status"),
         // Writes over MCP are always attributed to the agent actor.
         actor: None,
+        extra: extra_fields(args, "fields"),
     };
     let id = mutate::create_document(vault, request)?;
     reindex_search(vault)?;
@@ -292,6 +297,41 @@ fn str_vec(args: &Value, key: &str) -> Vec<String> {
 /// field unchanged rather than clearing it.
 fn opt_str_vec(args: &Value, key: &str) -> Option<Vec<String>> {
     args.get(key).map(|_| str_vec(args, key))
+}
+
+/// Extra sidecar fields from an object-valued argument. `mutate` rejects any
+/// key kataan defines, so no filtering is needed here.
+fn extra_fields(args: &Value, key: &str) -> std::collections::BTreeMap<String, toml::Value> {
+    args.get(key)
+        .and_then(Value::as_object)
+        .map(|fields| {
+            fields
+                .iter()
+                .filter_map(|(name, value)| Some((name.clone(), json_to_toml(value)?)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Convert a JSON tool argument to TOML. JSON null has no TOML representation,
+/// so null-valued entries are dropped rather than written as something else.
+fn json_to_toml(value: &Value) -> Option<toml::Value> {
+    Some(match value {
+        Value::Null => return None,
+        Value::Bool(value) => toml::Value::Boolean(*value),
+        Value::Number(number) => match number.as_i64() {
+            Some(integer) => toml::Value::Integer(integer),
+            None => toml::Value::Float(number.as_f64()?),
+        },
+        Value::String(value) => toml::Value::String(value.clone()),
+        Value::Array(items) => toml::Value::Array(items.iter().filter_map(json_to_toml).collect()),
+        Value::Object(fields) => toml::Value::Table(
+            fields
+                .iter()
+                .filter_map(|(name, value)| Some((name.clone(), json_to_toml(value)?)))
+                .collect(),
+        ),
+    })
 }
 
 fn parse_id(args: &Value, key: &str) -> Result<CanonicalId> {
@@ -404,6 +444,72 @@ mod tests {
         )
         .unwrap();
         assert!(kataan_core::validate::validate(vault).unwrap().is_ok());
+    }
+
+    #[test]
+    fn custom_fields_survive_a_create_update_edge_cycle() {
+        let dir = temp_vault();
+        let vault = dir.path();
+
+        call(
+            vault,
+            "create_document",
+            &json!({
+                "type": "note", "title": "Jane", "body": "hello",
+                "fields": { "linkedin": "https://example.com/in/jane", "emails": ["jane@example.com"] }
+            }),
+        )
+        .unwrap();
+        call(
+            vault,
+            "create_document",
+            &json!({ "type": "topic", "title": "Rust", "body": "r" }),
+        )
+        .unwrap();
+
+        // The fields are readable back through get_document...
+        let document = json_result(vault, "get_document", json!({ "id": "notes/jane" }));
+        assert_eq!(
+            document["metadata"]["linkedin"],
+            "https://example.com/in/jane"
+        );
+        assert_eq!(document["metadata"]["emails"][0], "jane@example.com");
+
+        // ...and survive both write paths that used to drop them.
+        call(
+            vault,
+            "update_document",
+            &json!({ "id": "notes/jane", "body": "changed", "status": "active" }),
+        )
+        .unwrap();
+        call(
+            vault,
+            "add_edge",
+            &json!({ "source": "notes/jane", "predicate": "related_to", "target": "topics/rust" }),
+        )
+        .unwrap();
+
+        let document = json_result(vault, "get_document", json!({ "id": "notes/jane" }));
+        assert_eq!(
+            document["metadata"]["linkedin"], "https://example.com/in/jane",
+            "custom key lost across update_document/add_edge"
+        );
+        assert_eq!(document["metadata"]["emails"][0], "jane@example.com");
+        assert!(kataan_core::validate::validate(vault).unwrap().is_ok());
+    }
+
+    #[test]
+    fn create_document_rejects_reserved_custom_fields() {
+        let dir = temp_vault();
+        assert!(call(
+            dir.path(),
+            "create_document",
+            &json!({
+                "type": "note", "title": "Bad", "body": "x",
+                "fields": { "type": "person" }
+            })
+        )
+        .is_err());
     }
 
     #[test]
