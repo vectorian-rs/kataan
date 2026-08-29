@@ -250,6 +250,7 @@ mod tests {
     fn ontology() -> Ontology {
         Ontology {
             schema_version: "0.1.0".to_owned(),
+            nodes: BTreeMap::new(),
             edges: BTreeMap::from([
                 (
                     "owned_by".to_owned(),
