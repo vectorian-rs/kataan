@@ -235,9 +235,13 @@ fn update_root_updated_at(path: &Path, text: &str) -> Result<()> {
         source,
     })?;
     let table = value.as_table_mut().expect("vault TOML root must be table");
+    // Strict write: whatever the file carried (older vaults wrote a bare Unix
+    // epoch here), the value we emit is ISO-8601. Reads stay lenient, so an
+    // un-rebuilt vault still loads — the format heals on the next rebuild
+    // rather than needing a migration.
     table.insert(
         "updated_at".to_owned(),
-        toml::Value::String(crate::time::unix_timestamp_string()),
+        toml::Value::String(crate::time::iso8601_utc_now()),
     );
     let updated = toml::to_string_pretty(&value).expect("serialize vault TOML");
     write::atomic_write_string(path, &updated)

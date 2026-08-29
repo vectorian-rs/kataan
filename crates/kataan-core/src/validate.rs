@@ -311,6 +311,8 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                 }
             }
 
+            folder::validate_timestamps(&mut issues, &metadata, &relative_toml_path);
+
             for (field, actor) in [
                 ("created_by", metadata.created_by.as_deref()),
                 ("last_updated_by", metadata.last_updated_by.as_deref()),

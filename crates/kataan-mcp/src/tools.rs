@@ -144,6 +144,7 @@ pub fn list() -> Value {
                     "aliases": { "type": "array", "items": { "type": "string" } },
                     "labels": { "type": "array", "items": { "type": "string" } },
                     "status": { "type": "string", "description": "One of the allowed status values." },
+                    "occurred_at": { "type": "string", "description": "When the thing this document describes happened. ISO-8601 UTC (2026-08-29T12:00:00Z), or a less precise 2026 / 2026-08 / 2026-08-29 when that is all that is known — precision is preserved, never widened." },
                     "fields": {
                         "type": "object",
                         "description": "Extra top-level sidecar keys to write, e.g. {\"linkedin\": \"https://...\"}. Keys kataan defines (type, status, markdown, aliases, labels, edges, ...) are rejected."
@@ -161,6 +162,7 @@ pub fn list() -> Value {
                     "id": { "type": "string", "description": "Canonical id of the document to update." },
                     "body": { "type": "string", "description": "New Markdown body (omit to keep)." },
                     "status": { "type": "string" },
+                    "occurred_at": { "type": "string", "description": "When the thing this document describes happened. ISO-8601 UTC (2026-08-29T12:00:00Z), or a less precise 2026 / 2026-08 / 2026-08-29 when that is all that is known — precision is preserved, never widened." },
                     "aliases": { "type": "array", "items": { "type": "string" } },
                     "labels": { "type": "array", "items": { "type": "string" } }
                 },
@@ -351,6 +353,7 @@ fn create_document(vault: &Path, args: &Value) -> Result<String> {
         status: opt_str(args, "status"),
         // Writes over MCP are always attributed to the agent actor.
         actor: None,
+        occurred_at: opt_str(args, "occurred_at"),
         extra: extra_fields(args, "fields"),
     };
     let id = mutate::create_document(vault, request)?;
@@ -362,6 +365,7 @@ fn update_document(vault: &Path, args: &Value) -> Result<String> {
     let id = parse_id(args, "id")?;
     let patch = DocumentPatch {
         status: opt_str(args, "status"),
+        occurred_at: opt_str(args, "occurred_at"),
         aliases: opt_str_vec(args, "aliases"),
         labels: opt_str_vec(args, "labels"),
         // Writes over MCP are always attributed to the agent actor.
@@ -677,6 +681,46 @@ mod tests {
                 "`{bad}` must not resolve"
             );
         }
+    }
+
+    #[test]
+    fn occurred_at_is_settable_and_validated() {
+        let dir = temp_vault();
+        let vault = dir.path();
+
+        // Precision is the author's to choose and is preserved verbatim.
+        for (title, value) in [("Year Only", "2006"), ("Exact", "2026-08-29T12:00:00Z")] {
+            call(
+                vault,
+                "create_document",
+                &json!({ "type": "note", "title": title, "body": "x", "occurred_at": value }),
+            )
+            .unwrap();
+        }
+        let doc = json_result(vault, "get_document", json!({ "id": "notes/year-only" }));
+        assert_eq!(doc["metadata"]["occurred_at"], "2006");
+        // Transaction time is stamped for us, in ISO-8601.
+        assert!(doc["metadata"]["created_at"]
+            .as_str()
+            .unwrap()
+            .ends_with('Z'));
+
+        // A Unix epoch is refused at the write boundary, not stored and
+        // reported later by validate.
+        assert!(call(
+            vault,
+            "create_document",
+            &json!({ "type": "note", "title": "Bad", "body": "x", "occurred_at": "1788013953" })
+        )
+        .is_err());
+        assert!(call(
+            vault,
+            "update_document",
+            &json!({ "id": "notes/year-only", "occurred_at": "2026-08-29T12:00:00" })
+        )
+        .is_err());
+
+        assert!(kataan_core::validate::validate(vault).unwrap().is_ok());
     }
 
     #[test]

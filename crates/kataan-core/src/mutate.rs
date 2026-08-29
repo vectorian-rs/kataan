@@ -32,6 +32,9 @@ pub struct NewDocument {
     pub labels: Vec<String>,
     pub status: Option<String>,
     pub actor: Option<String>,
+    /// When the thing this document describes happened. Validated on write, so
+    /// a malformed value is rejected rather than stored.
+    pub occurred_at: Option<String>,
     /// Extra top-level sidecar keys to write alongside the ones kataan defines.
     /// Rejected if they collide with a reserved key (see [`RESERVED_KEYS`]).
     pub extra: BTreeMap<String, toml::Value>,
@@ -48,6 +51,9 @@ const RESERVED_KEYS: &[&str] = &[
     "labels",
     "created_by",
     "last_updated_by",
+    "occurred_at",
+    "created_at",
+    "updated_at",
     "edges",
 ];
 
@@ -55,6 +61,7 @@ const RESERVED_KEYS: &[&str] = &[
 #[derive(Debug, Clone, Default)]
 pub struct DocumentPatch {
     pub status: Option<String>,
+    pub occurred_at: Option<String>,
     pub aliases: Option<Vec<String>>,
     pub labels: Option<Vec<String>>,
     pub actor: Option<String>,
@@ -75,6 +82,7 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
             .ok_or_else(|| invalid_request(format!("unknown type `{}`", request.r#type)))?,
     };
     validate_status(request.status.as_deref())?;
+    validate_timestamp(request.occurred_at.as_deref())?;
     if let Some(reserved) = request
         .extra
         .keys()
@@ -103,6 +111,7 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
     }
 
     let actor = request.actor.unwrap_or_else(|| ACTOR_AGENT.to_owned());
+    let now = crate::time::iso8601_utc_now();
     let sidecar = Sidecar {
         r#type: request.r#type,
         status: request.status,
@@ -111,6 +120,11 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
         labels: request.labels,
         created_by: Some(actor.clone()),
         last_updated_by: Some(actor),
+        // Transaction time: when this record was written. `occurred_at` is
+        // valid time and stays the author's to set.
+        occurred_at: request.occurred_at,
+        created_at: Some(now.clone()),
+        updated_at: Some(now),
         extra: request.extra,
         edges: BTreeMap::new(),
     };
@@ -136,6 +150,7 @@ pub fn update_document(
     // `DocumentMetadata`: keys kataan does not define survive untouched, in
     // their original positions, instead of being dropped by the projection.
     let mut sidecar = read_sidecar_table(&record.toml_path)?;
+    let before = sidecar.clone();
 
     if let Some(status) = patch.status {
         validate_status(Some(&status))?;
@@ -147,14 +162,42 @@ pub fn update_document(
     if let Some(labels) = patch.labels {
         sidecar.insert("labels".to_owned(), string_array(labels));
     }
+    if let Some(occurred_at) = patch.occurred_at {
+        validate_timestamp(Some(&occurred_at))?;
+        sidecar.insert("occurred_at".to_owned(), toml::Value::String(occurred_at));
+    }
     sidecar.insert(
         "last_updated_by".to_owned(),
         toml::Value::String(patch.actor.unwrap_or_else(|| ACTOR_AGENT.to_owned())),
     );
 
-    if let Some(body) = body {
-        atomic_write_string(&record.markdown_path, &body)?;
+    // Only rewrite the body when it actually differs, so a caller that resends
+    // the text it already has does not dirty the file.
+    let body_changed = match &body {
+        Some(body) => {
+            std::fs::read_to_string(&record.markdown_path)
+                .ok()
+                .as_deref()
+                != Some(body.as_str())
+        }
+        None => false,
+    };
+    if body_changed {
+        atomic_write_string(&record.markdown_path, body.as_deref().unwrap_or_default())?;
     }
+
+    // `updated_at` records when the record changed, so a call that changes
+    // nothing must not move it. Otherwise a no-op update would dirty the file
+    // on every invocation — the same git churn the sidecar rewrite avoids.
+    if body_changed || sidecar != before {
+        sidecar.insert(
+            "updated_at".to_owned(),
+            toml::Value::String(crate::time::iso8601_utc_now()),
+        );
+    } else {
+        return Ok(());
+    }
+
     write_sidecar_table(&record.toml_path, &sidecar)?;
     rebuild::rebuild_indexes(root)?;
     Ok(())
@@ -224,6 +267,17 @@ pub fn add_edge(
     Ok(())
 }
 
+/// Reject a malformed timestamp at the write boundary, so `validate` never has
+/// to report one kataan itself wrote.
+fn validate_timestamp(value: Option<&str>) -> Result<()> {
+    match value {
+        Some(value) => crate::time::Timestamp::parse(value)
+            .map(|_| ())
+            .map_err(|error| invalid_request(error.to_string())),
+        None => Ok(()),
+    }
+}
+
 fn validate_status(status: Option<&str>) -> Result<()> {
     match status {
         Some(status) if !STATUS_VALUES.contains(&status) => {
@@ -255,6 +309,12 @@ struct Sidecar {
     created_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_updated_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    occurred_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_at: Option<String>,
     #[serde(flatten)]
     extra: BTreeMap<String, toml::Value>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -596,6 +656,90 @@ mod tests {
         assert_eq!(once, twice);
         assert_custom_keys_intact(&root, &id);
         assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn writes_stamp_transaction_time_in_iso8601() {
+        let root = temp_vault("time-stamps");
+        let id = create_document(&root, note("Stamped", "before")).unwrap();
+
+        let created = read_sidecar_table(&root.join(id.toml_path())).unwrap();
+        let created_at = created["created_at"].as_str().unwrap().to_owned();
+        assert_eq!(created["updated_at"].as_str(), Some(created_at.as_str()));
+        // ISO-8601 UTC, never the bare epoch the old helper produced.
+        assert!(
+            crate::time::Timestamp::parse(&created_at).is_ok(),
+            "{created_at}"
+        );
+        assert!(created_at.ends_with('Z'), "{created_at}");
+
+        update_document(
+            &root,
+            &id,
+            Some("after".to_owned()),
+            DocumentPatch::default(),
+        )
+        .unwrap();
+        let updated = read_sidecar_table(&root.join(id.toml_path())).unwrap();
+        // created_at is immutable; updated_at moves.
+        assert_eq!(updated["created_at"].as_str(), Some(created_at.as_str()));
+        assert!(crate::time::Timestamp::parse(updated["updated_at"].as_str().unwrap()).is_ok());
+        assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resending_identical_content_is_not_a_change() {
+        let root = temp_vault("time-noop-body");
+        let id = create_document(&root, note("Same", "identical")).unwrap();
+        let path = root.join(id.toml_path());
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        // A caller resending the body it already has must not move updated_at.
+        update_document(
+            &root,
+            &id,
+            Some("identical".to_owned()),
+            DocumentPatch::default(),
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_legacy_epoch_in_kataan_toml_loads_then_heals_on_rebuild() {
+        let root = temp_vault("time-migration");
+        // Recreate the pre-1.0 shape: `updated_at` written as a bare epoch.
+        let config_path = root.join(crate::constants::VAULT_CONFIG_FILE);
+        let legacy = std::fs::read_to_string(&config_path).unwrap().replace(
+            &format!("updated_at = \"{}\"", crate::time::iso8601_utc_now()),
+            "",
+        );
+        let mut table: toml::Table = legacy.parse().unwrap();
+        table.insert(
+            "updated_at".to_owned(),
+            toml::Value::String("1788013953".to_owned()),
+        );
+        write_sidecar_table(&config_path, &table).unwrap();
+
+        // Lenient read: the vault still loads and validates with the old value.
+        assert!(Vault::open(&root).is_ok());
+        assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+        // Strict write: the next rebuild replaces it with ISO-8601.
+        rebuild::rebuild_indexes(&root).unwrap();
+        let healed = read_sidecar_table(&config_path).unwrap();
+        let value = healed["updated_at"].as_str().unwrap();
+        assert!(
+            crate::time::Timestamp::parse(value).is_ok(),
+            "epoch was not healed: {value}"
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }
