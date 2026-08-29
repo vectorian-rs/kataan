@@ -113,6 +113,22 @@ pub struct ResolveResponse {
     pub is_folder_index: bool,
 }
 
+/// The canonical id a filesystem path belongs to, plus enough context to fetch
+/// or route to it without a second lookup.
+#[derive(Debug, Serialize)]
+pub struct ResolvePathResponse {
+    pub id: String,
+    pub folder: String,
+    pub type_folder: String,
+    pub route_token: String,
+    pub is_folder_index: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PathQuery {
+    pub path: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ValidateResponse {
     pub ok: bool,
@@ -202,6 +218,7 @@ pub fn router(state: AppState) -> Router {
         .route("/file/raw", get(raw_file_by_path))
         .route("/file/highlight", get(highlight_file_by_path))
         .route("/resolve", get(resolve_route))
+        .route("/resolve-path", get(resolve_path))
         .route("/graph/neighbors", get(neighbors))
         .route("/graph/subgraph", get(subgraph))
         .route("/schema/:kind", get(schema))
@@ -405,6 +422,33 @@ pub async fn resolve_route(
         type_folder: id.top_level_folder().to_owned(),
         route_token: kataan_core::vault::route_token_for_id(&id),
         is_folder_index: document.is_folder_index,
+    }))
+}
+
+pub async fn resolve_path(
+    State(state): State<AppState>,
+    Query(query): Query<PathQuery>,
+) -> Result<Json<ResolvePathResponse>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
+    let id = loaded
+        .resolve_path(&query.path)
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "path `{}` does not resolve to a document in this vault",
+                query.path
+            ))
+        })?
+        .clone();
+    let is_folder_index = loaded
+        .documents
+        .get(&id)
+        .is_some_and(|record| record.is_folder_index);
+    Ok(Json(ResolvePathResponse {
+        id: id.as_str().to_owned(),
+        folder: id.containing_folder().to_owned(),
+        type_folder: id.top_level_folder().to_owned(),
+        route_token: kataan_core::vault::route_token_for_id(&id),
+        is_folder_index,
     }))
 }
 

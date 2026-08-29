@@ -70,6 +70,14 @@ pub fn list() -> Value {
             ),
         ),
         tool(
+            "resolve_path",
+            "Resolve a filesystem path to a canonical document id. Accepts either file of a document pair (notes/x.md, notes/x.toml), a folder's index (resolves to the folder id), or the extensionless form. Use when you have a path from outside kataan and need an id for the other tools.",
+            object(
+                &[("path", "string", "Vault-relative or absolute path, e.g. notes/my-note.md.")],
+                &["path"],
+            ),
+        ),
+        tool(
             "schema",
             "Return the TOML schema for a document kind (e.g. document, ontology, index).",
             object(&[("kind", "string", "Schema kind to describe.")], &["kind"]),
@@ -162,6 +170,7 @@ pub fn call(vault: &Path, name: &str, args: &Value) -> Result<String> {
         "list_folders" => list_folders(vault),
         "get_folder" => get_folder(vault, args),
         "resolve" => resolve(vault, args),
+        "resolve_path" => resolve_path(vault, args),
         "schema" => schema(vault, args),
         "vault_info" => vault_info(vault),
         "neighbors" => neighbors(vault, args),
@@ -223,6 +232,21 @@ fn resolve(vault: &Path, args: &Value) -> Result<String> {
         .resolve_route_token(&type_folder, &token)
         .ok_or_else(|| anyhow!("`{token}` does not resolve within `{type_folder}`"))?;
     to_pretty(&json!({ "id": id.as_str() }))
+}
+
+fn resolve_path(vault: &Path, args: &Value) -> Result<String> {
+    let path = str_arg(args, "path")?;
+    let loaded = LoadedVault::load(vault)?;
+    let id = loaded
+        .resolve_path(&path)
+        .ok_or_else(|| anyhow!("`{path}` does not resolve to a document in this vault"))?;
+    to_pretty(&json!({
+        "id": id.as_str(),
+        "is_folder_index": loaded
+            .documents
+            .get(id)
+            .is_some_and(|record| record.is_folder_index),
+    }))
 }
 
 fn schema(vault: &Path, args: &Value) -> Result<String> {
@@ -566,6 +590,40 @@ mod tests {
             })
         )
         .is_err());
+    }
+
+    #[test]
+    fn resolve_path_maps_paths_to_ids() {
+        let dir = temp_vault();
+        let vault = dir.path();
+        call(
+            vault,
+            "create_document",
+            &json!({ "type": "note", "title": "Field Notes", "body": "x" }),
+        )
+        .unwrap();
+
+        for spelling in [
+            "notes/field-notes.md",
+            "notes/field-notes.toml",
+            "notes/field-notes",
+        ] {
+            let resolved = json_result(vault, "resolve_path", json!({ "path": spelling }));
+            assert_eq!(resolved["id"], "notes/field-notes", "failed on {spelling}");
+        }
+
+        // A folder index resolves to the folder id.
+        let folder = json_result(vault, "resolve_path", json!({ "path": "notes/index.toml" }));
+        assert_eq!(folder["id"], "notes");
+        assert_eq!(folder["is_folder_index"], true);
+
+        // Escapes and misses are errors, not dangling ids.
+        for bad in ["../secrets.md", "notes/nope.md", "/etc/passwd"] {
+            assert!(
+                call(vault, "resolve_path", &json!({ "path": bad })).is_err(),
+                "`{bad}` must not resolve"
+            );
+        }
     }
 
     #[test]
