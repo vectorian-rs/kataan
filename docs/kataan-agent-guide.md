@@ -9,7 +9,18 @@ kataan init <vault-path> --name "My Knowledgebase"
 kataan validate <vault-path>            # add --json for a machine-readable report
 kataan rebuild-indexes <vault-path>
 kataan guide
+
+kataan documents <vault-path> [--type T] [--status S] [--label L] [--id ID]
+                              [--path-prefix P] [--linked-to ID] [--predicate P]
+                              [--markdown] [--limit N] [--offset N]
+kataan graph export <vault-path> [--type T] [--predicate P]
+kataan graph neighbors <vault-path> <id> [--predicate P] [--direction out|in|both]
 ```
+
+`documents` and `graph` print JSON on stdout. `graph export` is deterministic, so
+its output diffs cleanly across runs and can be committed as a build artifact —
+which is the intended way to rebuild a graph file from inside the vault repo,
+without running a server.
 
 Command results go to stdout (`validate` prints `valid` or the diagnostics, or a
 `{ "ok", "diagnostics": [...] }` object with `--json`); logs and confirmations go
@@ -50,6 +61,10 @@ GET  /api/file?path=<vault-relative-file-path>
 GET  /api/file/highlight?path=<vault-relative-file-path>&theme=<theme>
 GET  /api/file/raw?path=<vault-relative-file-path>
 GET  /api/resolve?type=<type-folder>&token=<route-token>
+GET  /api/resolve-path?path=<vault-relative-or-absolute-path>
+GET  /api/documents?type=&status=&labels=&ids=&path_prefix=&linked_to=&predicate=&direction=&include=&limit=&offset=
+GET  /api/graph/neighbors?id=<canonical-id>&predicate=<predicate>&direction=out|in|both
+GET  /api/graph/subgraph?types=<comma-separated>&predicates=<comma-separated>
 GET  /api/schema/document
 GET  /api/schema/folder-index
 GET  /api/schema/vault
@@ -109,13 +124,34 @@ cargo run -p kataan-mcp -- --vault <vault-path>
 
 Tools:
 
-- Reads — `search`, `get_document`, `list_folders`, `get_folder`, `resolve`,
-  `schema`, `vault_info` (return JSON).
+- Reads — `search`, `get_document`, `documents`, `list_folders`, `get_folder`,
+  `resolve`, `resolve_path`, `neighbors`, `subgraph`, `schema`, `vault_info`
+  (return JSON).
 - Writes — `create_document` (type, title, body, optional parent/aliases/labels/
-  status), `update_document` (id, optional body/status/aliases/labels), and
-  `add_edge` (source, predicate, target). Illegal requests (unknown type, id
-  collision, ontology-forbidden edge, invalid status) are rejected rather than
-  written. Writes are attributed to the `agent` actor.
+  status/occurred_at/fields), `update_document` (id, optional body/status/
+  aliases/labels/occurred_at), and `add_edge` (source, predicate, target).
+  Illegal requests (unknown type, id collision, ontology-forbidden edge, invalid
+  status, malformed timestamp) are rejected rather than written. Writes are
+  attributed to the `agent` actor.
+
+Choosing a read tool:
+
+- One document by id — `get_document`.
+- Many documents, or every document of a type — `documents`. It takes `ids` for a
+  batch fetch and filters (`type`, `status`, `labels`, `path_prefix`,
+  `linked_to`) for a listing. Returns metadata only unless you ask for
+  `include: "markdown"`, because each body is a separate file read. Matching more
+  than `limit` is an error rather than a silent truncation, so a partial result
+  can never be mistaken for a complete one.
+- What one document is connected to — `neighbors`. **This is the only way to see
+  incoming edges.** `get_document` returns the raw `edges` table, which is
+  outgoing-only, so "who works at this organization" is unanswerable from it: the
+  `works_at` edge is declared on each person, and the inverse exists only in the
+  graph. `neighbors` returns both directions, grouped by predicate, with each
+  neighbour's type and title already filled in.
+- A whole graph — `subgraph`. Each edge appears once, in the direction it was
+  authored. It can be large; filter by `types`/`predicates`.
+- A filesystem path rather than an id — `resolve_path`, then `get_document`.
 
 Because the mutation tools rebuild indexes and reindex search themselves, you do
 **not** need to call `rebuild-indexes`/`validate` after an MCP write — that is
@@ -211,6 +247,7 @@ markdown = "example-note.md"
 labels = ["example"]
 created_by = "agent"
 last_updated_by = "agent"
+occurred_at = "2026-08-29"
 
 [edges]
 related_to = ["topics/example-topic"]
@@ -224,6 +261,30 @@ Notes:
 - `status`, when used, should be `draft`, `active`, `paused`, `done`, or `archived`.
 - `created_by` and `last_updated_by` should be `human`, `agent`, or `system`.
 - Do not hand-compute `markdown_checksum`; run `kataan rebuild-indexes`.
+- Any other top-level key is yours to use. Kataan preserves keys it does not
+  model and returns them to consumers; it does not invent or delete them.
+
+### Time
+
+Three optional time fields are validated:
+
+- `occurred_at` — when the thing the document describes happened. **Yours to
+  set.**
+- `created_at`, `updated_at` — when the record was written and last changed.
+  Stamped automatically by the mutation layer; do not hand-write them.
+
+**Never widen precision.** Record only what you know:
+
+| You know | Write |
+| --- | --- |
+| the year | `2006` |
+| the month | `2006-05` |
+| the day | `2006-05-18` |
+| the moment | `2026-08-29T12:00:00Z` |
+
+Writing `2006-01-01` for a source that said `2006` asserts a day nobody knows,
+so kataan keeps each value exactly as written. Bare Unix epochs, datetimes
+without a timezone, and impossible dates like `2026-02-30` are rejected.
 
 ## Folder knowledge nodes
 
@@ -324,6 +385,43 @@ To add a custom type such as `article`:
 
 4. Create the `articles/` folder.
 5. Run `kataan rebuild-indexes <vault-path>` and `kataan validate <vault-path>`.
+
+## Field schemas
+
+`ontology.toml` can describe what documents of a type carry, alongside the
+`[edges.*]` definitions it already holds:
+
+```toml
+[nodes.person]
+required = ["name"]
+
+[nodes.person.fields]
+name       = { type = "string" }
+emails     = { type = "array", items = "string" }
+born       = { type = "date" }
+employment = { type = "array", items = "interval" }
+mentor     = { type = "reference", to = ["person"] }
+```
+
+Types: `string`, `integer`, `number`, `boolean`, `date`, `instant`, `interval`,
+`reference`, `array`, `table`.
+
+- `date` accepts any precision; `instant` requires a full timestamp.
+- `interval` is a table with `from` and an optional `to`. **Leaving `to` out is
+  legal** — an open interval means "still true", not missing data.
+- `reference` is another document's canonical id, optionally restricted by `to`.
+
+Two rules worth remembering:
+
+- **Schemas constrain what they declare, never what they do not.** An undeclared
+  key still validates. A type with no schema is entirely unconstrained, so a
+  vault can adopt schemas one type at a time.
+- **Only top-level keys can be constrained.** A value nested inside a table
+  (`[rate_card]` → `effective_date`) can be required and checked as a `table`,
+  but its interior is not reachable.
+
+Schemas live in the vault, not in kataan, so they version in the same git
+timeline as the documents they describe.
 
 ## Agent safety rules
 

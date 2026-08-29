@@ -677,19 +677,31 @@ Server boot:
 3. Detect drift vs. stored checksums in folder indexes.
 4. Validate structure, references, depth, and type-folder mapping.
 5. If errors exist, serve read-only API plus diagnostics and expose rebuild.
-6. If clean, enable the full read/write API.
+6. If clean, enable the full API.
 
-The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`. Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate`; each mutation validates against `ontology.toml` before commit.
+The HTTP API is read-only apart from maintenance operations (`validate`,
+`rebuild-indexes`). Document and edge writes are available over MCP and by
+editing files directly; an HTTP write path is not implemented (see issue #21).
+The single-writer design described below is the intended shape for it.
+
+The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`. Edge writes support `add_edge`, which validates against `ontology.toml` before commit. Edges are currently append-only: `remove_edge` and `replace_edges_for_predicate` are not implemented (see issue #20).
 
 ## MCP surface
 
 The `kataan-mcp` crate is a Model Context Protocol server speaking JSON-RPC over
 stdio (no SDK dependency). It is **read + write**:
 
-- Reads: `search`, `get_document`, `list_folders`, `get_folder`, `resolve`,
-  `schema`, `vault_info` — returning JSON.
+- Reads: `search`, `get_document`, `documents`, `list_folders`, `get_folder`,
+  `resolve`, `resolve_path`, `neighbors`, `subgraph`, `schema`, `vault_info` —
+  returning JSON.
 - Writes: `create_document`, `update_document`, `add_edge` — routed through the
   validated mutation layer, with the search index refreshed after each write.
+
+Graph and bulk reads are shared with the HTTP API and the CLI over one
+implementation in `kataan_core::query`, so all three answer identically.
+`neighbors` is the only way to read incoming edges: `get_document` returns the
+raw `edges` table, which is outgoing-only, so the inverse and symmetric
+predicates declared in `ontology.toml` are invisible to it.
 
 Tool failures (unknown type, id collision, ontology-illegal edge, invalid status)
 surface as MCP `isError` results rather than corrupting the vault. Reads return

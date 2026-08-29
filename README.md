@@ -113,9 +113,18 @@ Tools exposed by `kataan-mcp`:
 | `resolve` | read | `type`, `token` | Resolve an alias or slug route token within a type folder to a canonical id. |
 | `schema` | read | `kind` | Return the TOML schema for a kind such as `document`, `ontology`, or `index`. |
 | `vault_info` | read | none | Return the vault configuration/index. |
-| `create_document` | write | `type`, `title`, `body`, `parent?`, `aliases?`, `labels?`, `status?` | Create a new document and return its canonical id. |
-| `update_document` | write | `id`, `body?`, `status?`, `aliases?`, `labels?` | Update an existing document's body and/or metadata. Omitted fields are left unchanged. |
+| `resolve_path` | read | `path` | Resolve a filesystem path to a canonical id. Accepts either file of a pair (`notes/x.md`, `notes/x.toml`), a folder's `index`, or the extensionless form. |
+| `documents` | read | `ids?`, `type?`, `status?`, `labels?`, `path_prefix?`, `linked_to?`, `predicate?`, `direction?`, `include?`, `limit?`, `offset?` | List or batch-fetch documents in one call. Metadata only unless `include: "markdown"`. Matching more than `limit` is an error, not a truncation. |
+| `neighbors` | read | `id`, `predicate?`, `direction?` | What a document is connected to, grouped by predicate and hydrated with each neighbour's type/title/status. Incoming edges use the ontology's inverse predicate. |
+| `subgraph` | read | `types?`, `predicates?` | Export `{nodes, links}` for the vault. Each edge appears once, in the direction it was authored. |
+| `create_document` | write | `type`, `title`, `body`, `parent?`, `aliases?`, `labels?`, `status?`, `occurred_at?`, `fields?` | Create a new document and return its canonical id. `fields` writes extra top-level sidecar keys. |
+| `update_document` | write | `id`, `body?`, `status?`, `aliases?`, `labels?`, `occurred_at?` | Update an existing document's body and/or metadata. Omitted fields are left unchanged. |
 | `add_edge` | write | `source`, `predicate`, `target` | Add an ontology-validated edge from one document to another. |
+
+`neighbors` answers questions `get_document` cannot: it returns raw outgoing edges
+only, so "who works at this organization" is unanswerable from it — that edge is
+declared on each person, and the inverse exists only in the graph. Prefer
+`neighbors` for one document and `subgraph` for a whole graph.
 
 All tool results are JSON. Writes go through the validated mutation layer, so every
 change is well-formed (correct id, sidecar, checksum, folder indexes,
