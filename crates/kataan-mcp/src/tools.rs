@@ -52,6 +52,26 @@ pub fn list() -> Value {
             object(&[("id", "string", "Canonical id, e.g. notes/my-note.")], &["id"]),
         ),
         tool(
+            "documents",
+            "List or batch-fetch documents. Replaces fetching ids one at a time. All filters optional; an empty query lists the vault. Returns metadata by default — ask for markdown only when you need bodies, since each one is a file read. Matching more documents than `limit` is an error, not a truncation: narrow the query or page with `offset`.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "ids": { "type": "array", "items": { "type": "string" }, "description": "Fetch these ids; order preserved, unknown ids returned in `missing`." },
+                    "type": { "type": "string", "description": "Restrict to a document type." },
+                    "status": { "type": "string", "description": "Restrict to a status." },
+                    "labels": { "type": "array", "items": { "type": "string" }, "description": "Documents carrying every one of these labels." },
+                    "path_prefix": { "type": "string", "description": "Restrict to ids under this folder." },
+                    "linked_to": { "type": "string", "description": "Restrict to documents with an edge to this id." },
+                    "predicate": { "type": "string", "description": "With linked_to: restrict to one predicate." },
+                    "direction": { "type": "string", "enum": ["out", "in", "both"], "description": "With linked_to: which direction to follow." },
+                    "include": { "type": "string", "enum": ["metadata", "markdown"], "description": "Default metadata." },
+                    "limit": { "type": "integer", "minimum": 1 },
+                    "offset": { "type": "integer", "minimum": 0 }
+                }
+            }),
+        ),
+        tool(
             "list_folders",
             "List the vault's type-to-folder mapping.",
             object(&[], &[]),
@@ -167,6 +187,7 @@ pub fn call(vault: &Path, name: &str, args: &Value) -> Result<String> {
     match name {
         "search" => search(vault, args),
         "get_document" => get_document(vault, args),
+        "documents" => documents(vault, args),
         "list_folders" => list_folders(vault),
         "get_folder" => get_folder(vault, args),
         "resolve" => resolve(vault, args),
@@ -199,6 +220,38 @@ fn get_document(vault: &Path, args: &Value) -> Result<String> {
         "ancestors": document.ancestors,
         "facets": document.facets,
     }))
+}
+
+fn documents(vault: &Path, args: &Value) -> Result<String> {
+    let direction = match opt_str(args, "direction") {
+        Some(value) => value.parse().map_err(|error: String| anyhow!(error))?,
+        None => kataan_core::query::Direction::Both,
+    };
+    let include = match opt_str(args, "include").as_deref() {
+        Some("markdown") => kataan_core::query::Include::Markdown,
+        Some("metadata") | None => kataan_core::query::Include::Metadata,
+        Some(other) => return Err(anyhow!("invalid include `{other}`")),
+    };
+    let query = kataan_core::query::DocumentQuery {
+        ids: str_vec(args, "ids"),
+        r#type: opt_str(args, "type"),
+        status: opt_str(args, "status"),
+        labels: str_vec(args, "labels"),
+        path_prefix: opt_str(args, "path_prefix"),
+        linked_to: opt_str(args, "linked_to").map(|id| kataan_core::query::LinkedTo {
+            id,
+            predicate: opt_str(args, "predicate"),
+            direction,
+        }),
+        include,
+        limit: args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|n| n as usize),
+        offset: args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize,
+    };
+    let loaded = LoadedVault::load(vault)?;
+    to_pretty(&kataan_core::query::documents(&loaded, &query)?)
 }
 
 fn list_folders(vault: &Path) -> Result<String> {

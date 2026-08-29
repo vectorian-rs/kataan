@@ -205,3 +205,176 @@ fn neighbors_of_an_unknown_document_errors() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// --- documents() -----------------------------------------------------------
+
+fn q(query: DocumentQuery) -> DocumentQuery {
+    query
+}
+
+#[test]
+fn batch_fetch_preserves_order_and_reports_misses() {
+    let root = vault_with_edges("documents-batch");
+    let vault = LoadedVault::load(&root).unwrap();
+
+    let page = documents(
+        &vault,
+        &q(DocumentQuery {
+            ids: vec![
+                "topics/systems".to_owned(),
+                "notes/does-not-exist".to_owned(),
+                "topics/rust".to_owned(),
+            ],
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+
+    // Request order, not vault order — `systems` sorts after `rust`.
+    let ids: Vec<&str> = page
+        .documents
+        .iter()
+        .map(|d| d.summary.id.as_str())
+        .collect();
+    assert_eq!(ids, ["topics/systems", "topics/rust"]);
+    // A missing id is reported, not fatal to the batch.
+    assert_eq!(page.missing, ["notes/does-not-exist"]);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn filters_narrow_the_listing() {
+    let root = vault_with_edges("documents-filters");
+    let vault = LoadedVault::load(&root).unwrap();
+
+    let topics = documents(
+        &vault,
+        &q(DocumentQuery {
+            r#type: Some("topic".to_owned()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(topics.documents.iter().all(|d| d.summary.r#type == "topic"));
+    assert!(topics.documents.len() >= 2);
+
+    // No text query needed, unlike search.
+    let under_topics = documents(
+        &vault,
+        &q(DocumentQuery {
+            path_prefix: Some("topics".to_owned()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(under_topics
+        .documents
+        .iter()
+        .all(|d| d.summary.id.starts_with("topics")));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn linked_to_agrees_with_neighbors() {
+    let root = vault_with_edges("documents-linked");
+    let vault = LoadedVault::load(&root).unwrap();
+    let systems = CanonicalId::parse("topics/systems").unwrap();
+
+    let via_documents = documents(
+        &vault,
+        &q(DocumentQuery {
+            linked_to: Some(LinkedTo {
+                id: "topics/systems".to_owned(),
+                predicate: Some("has_subtopic".to_owned()),
+                direction: Direction::In,
+            }),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+
+    let via_neighbors = neighbors(&vault, &systems, Some("has_subtopic"), Direction::In).unwrap();
+
+    let a: Vec<&str> = via_documents
+        .documents
+        .iter()
+        .map(|d| d.summary.id.as_str())
+        .collect();
+    let b: Vec<&str> = via_neighbors.r#in["has_subtopic"]
+        .iter()
+        .map(|n| n.id.as_str())
+        .collect();
+    assert_eq!(a, b);
+    assert_eq!(a, ["topics/rust"]);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bodies_are_opt_in() {
+    let root = vault_with_edges("documents-include");
+    let vault = LoadedVault::load(&root).unwrap();
+
+    let bare = documents(&vault, &q(DocumentQuery::default())).unwrap();
+    assert!(bare.documents.iter().all(|d| d.markdown.is_none()));
+
+    let full = documents(
+        &vault,
+        &q(DocumentQuery {
+            include: Include::Markdown,
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(full.documents.iter().all(|d| d.markdown.is_some()));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn exceeding_the_limit_errors_instead_of_truncating() {
+    let root = vault_with_edges("documents-limit");
+    let vault = LoadedVault::load(&root).unwrap();
+
+    let total = documents(&vault, &q(DocumentQuery::default()))
+        .unwrap()
+        .total;
+    assert!(total > 1);
+
+    // A partial answer must never look like a complete one.
+    let err = documents(
+        &vault,
+        &q(DocumentQuery {
+            limit: Some(1),
+            ..Default::default()
+        }),
+    );
+    assert!(err.is_err(), "over-limit query silently truncated");
+
+    // Paging deliberately is fine, and `total` still reports the full count.
+    let page = documents(
+        &vault,
+        &q(DocumentQuery {
+            limit: Some(1),
+            offset: total - 1,
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert_eq!(page.documents.len(), 1);
+    assert_eq!(page.total, total);
+
+    // A limit above the hard ceiling is rejected outright.
+    assert!(documents(
+        &vault,
+        &q(DocumentQuery {
+            limit: Some(MAX_DOCUMENT_LIMIT + 1),
+            ..Default::default()
+        })
+    )
+    .is_err());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
