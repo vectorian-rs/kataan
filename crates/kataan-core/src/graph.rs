@@ -249,6 +249,7 @@ mod tests {
                 edges: Default::default(),
                 created_by: None,
                 last_updated_by: None,
+                extra: Default::default(),
             },
             markdown_path: id.markdown_path(),
             toml_path: id.toml_path(),
