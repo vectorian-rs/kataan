@@ -83,6 +83,52 @@ impl LoadedVault {
         self.route_tokens
             .get(&(type_folder.to_owned(), token.to_owned()))
     }
+
+    /// Resolve a filesystem path to the canonical id of the document it belongs
+    /// to, for consumers that reference vault files by path rather than by id.
+    ///
+    /// Accepts either side of a document pair (`notes/x.md`, `notes/x.toml`), a
+    /// folder's `index` pair (which resolves to the folder id), and the
+    /// extensionless form (`notes/x`). The path may be vault-relative or
+    /// absolute inside the vault root.
+    ///
+    /// Returns `None` unless the result is a document already loaded in this
+    /// vault, so a path outside the root, or one naming a deleted or ignored
+    /// file, cannot resolve. Traversal is rejected before the lookup:
+    /// [`CanonicalId::parse`] refuses any segment containing `.`.
+    pub fn resolve_path(&self, path: impl AsRef<Path>) -> Option<&CanonicalId> {
+        let path = path.as_ref();
+        let relative = if path.is_absolute() {
+            strip_vault_root(&self.root, path)?
+        } else {
+            path
+        };
+
+        // `./a/b` and `a/b` name the same document.
+        let cleaned: PathBuf = relative
+            .components()
+            .filter(|component| !matches!(component, std::path::Component::CurDir))
+            .collect();
+        if cleaned.as_os_str().is_empty() {
+            return None;
+        }
+
+        // Documents are addressed by either file of the pair; ids themselves
+        // carry no extension, so fall back to parsing the path as an id.
+        let id = CanonicalId::from_document_path(&cleaned)
+            .or_else(|_| CanonicalId::parse(cleaned.to_string_lossy()))
+            .ok()?;
+        self.documents.get_key_value(&id).map(|(id, _)| id)
+    }
+}
+
+/// Make an absolute path vault-relative, tolerating a root that is stored
+/// uncanonicalized while the caller passes a resolved path (or vice versa).
+fn strip_vault_root<'a>(root: &Path, path: &'a Path) -> Option<&'a Path> {
+    if let Ok(relative) = path.strip_prefix(root) {
+        return Some(relative);
+    }
+    path.strip_prefix(root.canonicalize().ok()?).ok()
 }
 
 impl Vault {
@@ -647,6 +693,102 @@ note = "notes"
         assert!(documents
             .iter()
             .all(|doc| !doc.id.as_str().contains("loop")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A vault with a leaf document and a nested folder-index document, so both
+    /// addressing shapes are covered.
+    fn vault_with_documents(name: &str) -> std::path::PathBuf {
+        let root = crate::test_support::unique_temp_dir(name);
+        crate::init::init_vault(&root, "Test").unwrap();
+        crate::mutate::create_document(
+            &root,
+            crate::mutate::NewDocument {
+                r#type: "note".to_owned(),
+                title: "Field Notes".to_owned(),
+                body: "hello".to_owned(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn resolve_path_accepts_every_spelling_of_one_document() {
+        let root = vault_with_documents("resolve-path-forms");
+        let vault = LoadedVault::load(&root).unwrap();
+        let expected = CanonicalId::parse("notes/field-notes").unwrap();
+
+        for spelling in [
+            "notes/field-notes.md",
+            "notes/field-notes.toml",
+            "notes/field-notes",
+            "./notes/field-notes.md",
+        ] {
+            assert_eq!(
+                vault.resolve_path(spelling),
+                Some(&expected),
+                "`{spelling}` did not resolve"
+            );
+        }
+
+        // Absolute paths inside the vault resolve too: consumers building
+        // `path.join(REPO, relative)` hand us one of these.
+        assert_eq!(
+            vault.resolve_path(root.join("notes/field-notes.md")),
+            Some(&expected)
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolve_path_maps_a_folder_index_to_its_folder_id() {
+        let root = vault_with_documents("resolve-path-folder");
+        let vault = LoadedVault::load(&root).unwrap();
+        let notes = CanonicalId::parse("notes").unwrap();
+
+        assert_eq!(vault.resolve_path("notes/index.toml"), Some(&notes));
+        assert_eq!(vault.resolve_path("notes/index.md"), Some(&notes));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolve_path_refuses_anything_outside_the_vault() {
+        let root = vault_with_documents("resolve-path-escape");
+        let vault = LoadedVault::load(&root).unwrap();
+
+        for hostile in [
+            "../secrets.md",
+            "notes/../../secrets.md",
+            "/etc/passwd",
+            "",
+            ".",
+        ] {
+            assert_eq!(
+                vault.resolve_path(hostile),
+                None,
+                "`{hostile}` must not resolve"
+            );
+        }
+        // An absolute path outside the root is rejected even if it exists.
+        assert_eq!(vault.resolve_path("/tmp"), None);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolve_path_returns_none_for_a_wellformed_path_to_nothing() {
+        let root = vault_with_documents("resolve-path-missing");
+        let vault = LoadedVault::load(&root).unwrap();
+
+        // Shaped like a document id, but no such document — must not hand back
+        // a dangling id that later lookups would fail on.
+        assert_eq!(vault.resolve_path("notes/does-not-exist.md"), None);
+        assert_eq!(vault.resolve_path("notes/does-not-exist"), None);
 
         fs::remove_dir_all(root).unwrap();
     }
