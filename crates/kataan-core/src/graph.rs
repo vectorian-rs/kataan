@@ -2,12 +2,27 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{id::CanonicalId, ontology::Ontology, vault::LoadedDocument, Result};
 
+/// One edge exactly as an author wrote it: `source --predicate--> target`.
+/// Inverse and symmetric edges are derived into the direction indexes, so this
+/// is the only view where each edge appears once.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Edge {
+    pub source: CanonicalId,
+    pub predicate: String,
+    pub target: CanonicalId,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct VaultGraph {
     pub documents: BTreeMap<CanonicalId, LoadedDocument>,
     outgoing_edges: BTreeMap<CanonicalId, BTreeMap<String, BTreeSet<CanonicalId>>>,
     incoming_edges: BTreeMap<CanonicalId, BTreeMap<String, BTreeSet<CanonicalId>>>,
     path_children: BTreeMap<CanonicalId, BTreeSet<CanonicalId>>,
+    /// Authored edges, in `documents` order. Recorded during the build because
+    /// the direction is not recoverable afterwards: a symmetric predicate lands
+    /// in `outgoing_edges` from both endpoints, so a later reader cannot tell
+    /// which side wrote it and would emit the edge twice.
+    authored_edges: Vec<Edge>,
 }
 
 impl VaultGraph {
@@ -51,6 +66,11 @@ impl VaultGraph {
 
                 for target in targets {
                     let target = CanonicalId::parse(target)?;
+                    graph.authored_edges.push(Edge {
+                        source: source.clone(),
+                        predicate: predicate_name.clone(),
+                        target: target.clone(),
+                    });
                     graph
                         .outgoing_edges
                         .entry(source.clone())
@@ -107,6 +127,27 @@ impl VaultGraph {
 
     pub fn children_of(&self, id: &CanonicalId) -> BTreeSet<CanonicalId> {
         self.path_children.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Every outgoing edge of `id`, grouped by predicate. Use when the caller
+    /// does not know which predicates to ask for.
+    pub fn outgoing_all(&self, id: &CanonicalId) -> BTreeMap<String, BTreeSet<CanonicalId>> {
+        self.outgoing_edges.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Every incoming edge of `id`, grouped by predicate. Predicates here are
+    /// the ontology's inverse names (`works_at` outgoing appears as the
+    /// declared inverse incoming), which is what makes "who works at this org"
+    /// answerable without scanning every person.
+    pub fn incoming_all(&self, id: &CanonicalId) -> BTreeMap<String, BTreeSet<CanonicalId>> {
+        self.incoming_edges.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Authored edges, each appearing exactly once in the direction it was
+    /// written. This is the correct source for exporting a link set; iterating
+    /// `outgoing_edges` would double symmetric edges and re-emit every inverse.
+    pub fn edges(&self) -> impl Iterator<Item = &Edge> {
+        self.authored_edges.iter()
     }
 
     fn build_path_children(&mut self) {

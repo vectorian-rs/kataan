@@ -76,6 +76,34 @@ pub fn list() -> Value {
         ),
         tool("vault_info", "Return the vault configuration (index).", object(&[], &[])),
         tool(
+            "neighbors",
+            "What a document is connected to, grouped by predicate and hydrated with each neighbor's type/title/status. Incoming edges use the ontology's inverse predicate, so this answers questions `get_document` cannot, e.g. \"who works at this organization\". Prefer this over `subgraph` for a single document.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Canonical id, e.g. organizations/bull." },
+                    "predicate": { "type": "string", "description": "Restrict to one predicate; omit for all." },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["out", "in", "both"],
+                        "description": "`out` = edges this document declares, `in` = edges pointing at it, `both` (default)."
+                    }
+                },
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "subgraph",
+            "Export nodes and links for the whole vault in one call. Each edge appears once, in the direction it was authored. Can be large — filter by types/predicates, and prefer `neighbors` when you only need one document's connections.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "types": { "type": "array", "items": { "type": "string" }, "description": "Restrict to these document types; omit for all." },
+                    "predicates": { "type": "array", "items": { "type": "string" }, "description": "Restrict to these edge predicates; omit for all." }
+                }
+            }),
+        ),
+        tool(
             "create_document",
             "Create a new document. Returns its canonical id. The vault is revalidated and reindexed.",
             json!({
@@ -136,6 +164,8 @@ pub fn call(vault: &Path, name: &str, args: &Value) -> Result<String> {
         "resolve" => resolve(vault, args),
         "schema" => schema(vault, args),
         "vault_info" => vault_info(vault),
+        "neighbors" => neighbors(vault, args),
+        "subgraph" => subgraph(vault, args),
         "create_document" => create_document(vault, args),
         "update_document" => update_document(vault, args),
         "add_edge" => add_edge(vault, args),
@@ -205,6 +235,32 @@ fn schema(vault: &Path, args: &Value) -> Result<String> {
 
 fn vault_info(vault: &Path) -> Result<String> {
     to_pretty(&Vault::open(vault)?.index)
+}
+
+fn neighbors(vault: &Path, args: &Value) -> Result<String> {
+    let id = parse_id(args, "id")?;
+    let direction = match opt_str(args, "direction") {
+        Some(value) => value.parse().map_err(|error: String| anyhow!(error))?,
+        None => kataan_core::query::Direction::Both,
+    };
+    let loaded = LoadedVault::load(vault)?;
+    let result = kataan_core::query::neighbors(
+        &loaded,
+        &id,
+        opt_str(args, "predicate").as_deref(),
+        direction,
+    )?;
+    to_pretty(&result)
+}
+
+fn subgraph(vault: &Path, args: &Value) -> Result<String> {
+    let loaded = LoadedVault::load(vault)?;
+    let graph = kataan_core::query::subgraph(
+        &loaded,
+        &str_vec(args, "types"),
+        &str_vec(args, "predicates"),
+    );
+    to_pretty(&graph)
 }
 
 fn create_document(vault: &Path, args: &Value) -> Result<String> {
