@@ -43,7 +43,15 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&cli.bind)
         .await
         .expect("bind server");
-    info!(bind = %cli.bind, "kataan-server listening");
+    info!(bind = %cli.bind, api = %format!("http://{}", cli.bind), "kataan-server API listening");
+    #[cfg(feature = "embed-ui")]
+    info!(url = %format!("http://{}", cli.bind), "embedded web UI available");
+    #[cfg(not(feature = "embed-ui"))]
+    info!(
+        default_url = "http://127.0.0.1:3003",
+        command = "bun run dev:web",
+        "web UI is not embedded in this binary; run the web dev server separately"
+    );
     axum::serve(listener, app).await.expect("serve");
 }
 

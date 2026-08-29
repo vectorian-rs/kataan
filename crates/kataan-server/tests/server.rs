@@ -61,6 +61,22 @@ fn server_binary_boots_and_serves_the_api() {
     };
     assert!(health.contains("200 OK"), "health status: {health}");
     assert!(health.contains("\"ok\":true"), "health body: {health}");
+    #[cfg(feature = "embed-ui")]
+    {
+        let root = http_get(addr, "/").expect("root request");
+        assert!(root.contains("200 OK"), "root status: {root}");
+        assert!(root.contains("<html"), "root body: {root}");
+    }
+
+    #[cfg(not(feature = "embed-ui"))]
+    {
+        let root = http_get(addr, "/").expect("root request");
+        assert!(root.contains("200 OK"), "root status: {root}");
+        assert!(
+            root.contains("API server is running"),
+            "api-only root body: {root}"
+        );
+    }
 
     // A read endpoint served from the loaded vault.
     let folders = http_get(addr, "/api/folders").expect("folders request");

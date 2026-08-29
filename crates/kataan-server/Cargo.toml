@@ -7,8 +7,9 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-# Embed the built web UI (apps/web/dist) into the binary and serve it. Off by
-# default so `cargo build`/`test`/`clippy` don't require a prior web build.
+# Embed the built web UI (apps/web/dist) into the binary and serve it by
+# default. Use `--no-default-features` for an API-only build.
+default = ["embed-ui"]
 embed-ui = ["dep:rust-embed", "dep:percent-encoding"]
 
 [dependencies]

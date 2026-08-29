@@ -47,43 +47,54 @@ run = [
 ]
 
 [tasks.test]
-description = "Run all Rust tests"
-run = "cargo test"
-
-[tasks.build-release]
-description = "Build all Rust binaries in release mode"
-run = "cargo build --workspace --release --bins"
-
-[tasks.build-app]
-description = "Build the web UI and the server with the UI embedded (single binary)"
+description = "Build the web UI, then run all Rust tests"
+# The server test boots the binary and asserts `/` serves the SPA, which the
+# default `embed-ui` feature reads from apps/web/dist (gitignored). Without a
+# prior web build that fails as "no HTML" rather than "you forgot to build".
 run = [
   "bun install",
   "bun --filter @kataan/web build",
-  "cargo build -p kataan-server --release --features embed-ui",
+  "cargo test",
+]
+
+[tasks.build-release]
+description = "Build the web UI, then all Rust binaries in release mode"
+run = [
+  "bun install",
+  "bun --filter @kataan/web build",
+  "cargo build --workspace --release --bins",
+]
+
+[tasks.build-app]
+description = "Build the web UI and the single kataan-server binary"
+run = [
+  "bun install",
+  "bun --filter @kataan/web build",
+  "cargo build -p kataan-server --release",
 ]
 
 [tasks.install-server]
-description = "Build the UI and install kataan-server (UI embedded) into ~/.cargo/bin"
+description = "Build the UI and install kataan-server into ~/.cargo/bin"
 run = [
   "bun install",
   "bun --filter @kataan/web build",
-  "cargo install --path crates/kataan-server --features embed-ui --force",
+  "cargo install --path crates/kataan-server --force",
 ]
 
 [tasks.check]
 description = "Run Rust format/tests/clippy and web format/type checks + build"
 run = [
   "bun install",
+  "bun --filter @kataan/web build",
   "cargo fmt --check",
   "cargo test",
   "cargo clippy --all-targets -- -D warnings",
   "bun --filter @kataan/web format:check",
   "bun --filter @kataan/web check",
-  "bun --filter @kataan/web build",
 ]
 
 [tasks.server]
-description = "Run the Kataan API server. Usage: mise run server -- --vault /path/to/vault"
+description = "Run Kataan with embedded UI. Usage: mise run server -- --vault /path/to/vault"
 run = "cargo run -p kataan-server --"
 
 [tasks.cli]

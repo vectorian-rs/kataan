@@ -19,12 +19,26 @@ Filesystem-native Markdown/TOML knowledge workspace.
 ```sh
 mise install
 bun install
+bun --filter @kataan/web build
 cargo run -p kataan-cli -- validate examples/vault
 cargo run -p kataan-server -- --vault examples/vault
+```
+
+The default `kataan-server` build embeds the web UI. Open
+`http://127.0.0.1:3001` to use the app; the API is under `/api`, for example
+`http://127.0.0.1:3001/api/health`.
+
+For UI development with hot reload, keep the server running and start Astro in a
+second terminal:
+
+```sh
 bun run dev:web
 ```
 
-The web app runs on `http://127.0.0.1:3003` (set by `KATAAN_WEB_PORT` in `mise.toml`; Astro defaults to `3000` when it is unset) and proxies `/api` to the Rust backend at `http://127.0.0.1:3001`. If the web port is already in use, Astro exits instead of silently switching ports.
+The dev web app runs on `http://127.0.0.1:3003` (set by `KATAAN_WEB_PORT` in
+`mise.toml`; Astro defaults to `3000` when it is unset) and proxies `/api` to the
+Rust backend at `http://127.0.0.1:3001`. If the web port is already in use, Astro
+exits instead of silently switching ports.
 
 To use a different backend port:
 
@@ -47,9 +61,9 @@ KATAAN_WEB_PORT=3005 KATAAN_API_PROXY_TARGET=http://127.0.0.1:3002 bun run dev:w
 ## Single binary (embedded UI)
 
 `apps/web` is a client-routed SPA that talks to the server over `/api`, so the
-static build can be embedded directly into `kataan-server`. Built with the
-`embed-ui` feature, one binary serves both the API and the UI on a single port —
-no separate web process, and nothing run from the repo at runtime.
+static build is embedded directly into `kataan-server` by default. One binary
+serves both the API and the UI on a single port — no separate web process, and
+nothing run from the repo at runtime.
 
 ```sh
 # Build the UI, then install the server with the UI embedded into ~/.cargo/bin
@@ -60,10 +74,9 @@ kataan-server --vault /path/to/vault
 ```
 
 `mise run build-app` produces the same binary at `target/release/kataan-server`
-without installing. The feature is off by default, so `cargo build`/`test`/
-`clippy` don't require a prior web build. In debug builds the assets are read
-from `apps/web/dist` at runtime; release builds bake them into the binary. For
-UI development keep using `bun run dev:web` (hot reload, proxying to the API).
+without installing. In debug builds the assets are read from `apps/web/dist` at
+runtime; release builds bake them into the binary. For an API-only server, build
+or run with `--no-default-features`.
 
 ## Use with an MCP client (agents)
 

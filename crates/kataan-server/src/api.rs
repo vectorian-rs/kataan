@@ -183,11 +183,21 @@ pub fn router(state: AppState) -> Router {
 
     let app = Router::new().nest("/api", api).with_state(state);
 
+    // In the default API-only build, make `/` explain why the UI is not here
+    // instead of returning an opaque 404. The embedded-UI build owns `/` via the
+    // SPA fallback below.
+    #[cfg(not(feature = "embed-ui"))]
+    let app = app.route("/", get(api_only_root));
     // With `--features embed-ui`, serve the embedded SPA for any non-API path.
     #[cfg(feature = "embed-ui")]
     let app = app.fallback(crate::ui::serve);
 
     app
+}
+
+#[cfg(not(feature = "embed-ui"))]
+async fn api_only_root() -> &'static str {
+    "Kataan API server is running.\n\nThis binary was built without the embedded web UI, so `/` is not the app.\nUse `/api/health` for the API, run `bun run dev:web` for the web UI (default http://127.0.0.1:3003), or build/install `kataan-server` with the `embed-ui` feature.\n"
 }
 
 pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
