@@ -6,7 +6,6 @@ import {
   getFolder,
   getHighlightedFile,
   getFolders,
-  getRawFileUrl,
   getSchema,
   getSearchStatus,
   getVault,
@@ -19,7 +18,6 @@ import {
   type DocumentResponse,
   type FolderChild,
   type FolderDocument,
-  type FileResponse,
   type FolderFile,
   type FolderSummary,
   type SearchResponse,
@@ -29,6 +27,13 @@ import {
 } from './api';
 
 import {
+  RESIZABLE_COLUMNS,
+  initColumnResizing,
+  readSavedColumnWidth,
+  setColumnWidth,
+} from './dashboard/columns';
+import { clickableRow, emptyListNote, listSection } from './dashboard/dom';
+import {
   appShell,
   breadcrumb,
   diagnosticsEl,
@@ -37,37 +42,25 @@ import {
   documentsEl,
   folderTitle,
   foldersEl,
+  metadataPanel,
   propertiesToggle,
   rebuildButton,
   searchForm,
   searchInput,
-  searchStatusEl,
   validateButton,
   vaultSummary,
 } from './dashboard/elements';
-
+import { currentTheme, renderFileBody, renderHighlightedFile } from './dashboard/file-preview';
 import {
   basenameFromId,
-  clickableRow,
   cssEscape,
   depthFor,
-  emptyListNote,
   fileExtensionClass,
-  folderIcon,
   folderTitleFromResponse,
   isHighlightableFile,
-  listSection,
 } from './dashboard/format';
-
+import { folderIcon } from './dashboard/icons';
 import { renderMetadata, renderSchema } from './dashboard/panels';
-
-import {
-  RESIZABLE_COLUMNS,
-  initColumnResizing,
-  readSavedColumnWidth,
-  setColumnWidth,
-} from './dashboard/columns';
-
 import {
   appendSafeSnippet,
   renderMissingSearchIndex,
@@ -130,6 +123,16 @@ searchInput.addEventListener('input', () => {
   }, 180);
 });
 
+// Edge targets are re-rendered wholesale on every document, so the listener
+// lives on the panel rather than on each button.
+metadataPanel.addEventListener('click', (event) => {
+  const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-edge]');
+  const id = target?.dataset.edge;
+  if (id) {
+    void runAction(() => selectDocument(id));
+  }
+});
+
 window.addEventListener('kataan:theme-change', () => {
   if (selectedFile) {
     void runAction(() => selectFile(selectedFile as FolderFile));
@@ -183,7 +186,7 @@ async function refreshSearchStatus() {
   } catch (error) {
     searchStatus = null;
     const message = error instanceof Error ? error.message : String(error);
-    searchStatusEl.textContent = `Search unavailable: ${message}`;
+    setSearchStatusMessage(`Search unavailable: ${message}`);
   }
 }
 
@@ -553,10 +556,6 @@ async function selectFile(file: FolderFile) {
   renderFileBody(vaultFile);
 }
 
-function currentTheme() {
-  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-}
-
 function setPropertiesVisible(visible: boolean, options: { persist?: boolean } = {}) {
   propertiesVisible = visible;
   appShell.classList.toggle('properties-hidden', !visible);
@@ -580,77 +579,6 @@ function setPropertiesVisible(visible: boolean, options: { persist?: boolean } =
   }
 }
 
-function renderHighlightedFile(html: string) {
-  documentBody.className = 'reader-body file-reader-body';
-  documentBody.innerHTML = html;
-}
-
-function renderFileBody(file: FileResponse) {
-  documentBody.className = 'reader-body';
-  documentBody.innerHTML = '';
-
-  if (file.kind === 'json') {
-    const pre = document.createElement('pre');
-    pre.className = 'file-preview json-preview';
-    try {
-      pre.textContent = JSON.stringify(JSON.parse(file.content), null, 2);
-    } catch {
-      pre.textContent = file.content;
-    }
-    documentBody.append(pre);
-    return;
-  }
-
-  if (file.kind === 'html') {
-    documentBody.className = 'reader-body file-reader-body html-reader-body';
-    const frame = document.createElement('iframe');
-    frame.className = 'html-preview';
-    frame.title = file.name;
-    frame.setAttribute('sandbox', 'allow-scripts');
-    frame.srcdoc = file.content;
-    documentBody.append(frame);
-    return;
-  }
-
-  if (file.kind === 'text') {
-    const pre = document.createElement('pre');
-    pre.className = 'file-preview';
-    pre.textContent = file.content;
-    documentBody.append(pre);
-    return;
-  }
-
-  if (file.kind === 'pdf') {
-    documentBody.className = 'reader-body file-reader-body pdf-reader-body';
-    const frame = document.createElement('iframe');
-    frame.className = 'pdf-preview';
-    frame.title = file.name;
-    frame.src = `${getRawFileUrl(file.path)}#toolbar=0&navpanes=0&scrollbar=0`;
-    documentBody.append(frame);
-    return;
-  }
-
-  if (file.kind === 'image') {
-    documentBody.className = 'reader-body file-reader-body image-reader-body';
-    const preview = document.createElement('img');
-    preview.className = 'image-preview';
-    preview.src = getRawFileUrl(file.path);
-    preview.alt = file.name;
-    documentBody.append(preview);
-    return;
-  }
-
-  documentBody.className = 'reader-body empty-state';
-  const card = document.createElement('div');
-  card.className = 'empty-card';
-  const title = document.createElement('strong');
-  title.textContent = 'Preview not available';
-  const detail = document.createElement('span');
-  detail.textContent = file.path;
-  card.append(title, detail);
-  documentBody.append(card);
-}
-
 async function selectDocument(id: string, options: { updateUrl?: boolean } = {}) {
   const updateUrl = options.updateUrl ?? true;
   selectedDocument = id;
@@ -664,7 +592,7 @@ async function selectDocument(id: string, options: { updateUrl?: boolean } = {})
     updateRouteUrl(vaultDocument);
   }
   renderDocumentBody(vaultDocument);
-  renderMetadata(vaultDocument, (id) => runAction(() => selectDocument(id)));
+  renderMetadata(vaultDocument);
   renderSchema(await getSchema('document'));
 }
 

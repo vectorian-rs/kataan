@@ -5,9 +5,9 @@ import {
   sidebarResizeHandle,
 } from './elements';
 
-export type ResizableColumn = 'sidebar' | 'list' | 'properties';
+type ResizableColumn = 'sidebar' | 'list' | 'properties';
 
-export type ColumnResizeConfig = {
+type ColumnResizeConfig = {
   key: ResizableColumn;
   handle: HTMLElement;
   cssProperty: string;
@@ -18,7 +18,7 @@ export type ColumnResizeConfig = {
   dragDirection: 1 | -1;
 };
 
-export const COLUMN_KEYBOARD_STEP = 10;
+const COLUMN_KEYBOARD_STEP = 10;
 
 export const RESIZABLE_COLUMNS: ColumnResizeConfig[] = [
   {
@@ -53,7 +53,7 @@ export const RESIZABLE_COLUMNS: ColumnResizeConfig[] = [
   },
 ];
 
-export const columnWidths = new Map<ResizableColumn, number>();
+const columnWidths = new Map<ResizableColumn, number>();
 
 export function initColumnResizing(column: ColumnResizeConfig) {
   let dragStartX = 0;
@@ -130,7 +130,7 @@ export function setColumnWidth(
   }
 }
 
-export function getColumnWidth(column: ColumnResizeConfig) {
+function getColumnWidth(column: ColumnResizeConfig) {
   return columnWidths.get(column.key) ?? column.defaultWidth;
 }
 
@@ -139,6 +139,6 @@ export function readSavedColumnWidth(column: ColumnResizeConfig) {
   return Number.isFinite(savedWidth) ? clampColumnWidth(column, savedWidth) : column.defaultWidth;
 }
 
-export function clampColumnWidth(column: ColumnResizeConfig, width: number) {
+function clampColumnWidth(column: ColumnResizeConfig, width: number) {
   return Math.min(column.maxWidth, Math.max(column.minWidth, Math.round(width)));
 }

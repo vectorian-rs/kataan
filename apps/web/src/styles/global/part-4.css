@@ -1,6 +1,8 @@
-/* Part 4 of the app stylesheet. Split for file size only — the
-   cascade depends on order, so these are sequential slices of the
-   original file and must stay imported in numeric order. */
+/* Part 4 of 4. These are SEQUENTIAL slices of one stylesheet, not
+   themes: the cascade is file order, so they must stay imported in
+   numeric sequence and rules must not move between them.
+
+   Selector families in this part: reader, file, image, html, pdf, highlight, empty, metadata, schema, property, edge, pill. */
 
 .reader-body img {
   display: block;

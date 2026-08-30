@@ -1,6 +1,6 @@
 @import "open-props/open-props.min.css";
 @import "./typography.css";
-@import "./global/1-base.css";
-@import "./global/2-layout.css";
-@import "./global/3-components.css";
-@import "./global/4-panels.css";
+@import "./global/part-1.css";
+@import "./global/part-2.css";
+@import "./global/part-3.css";
+@import "./global/part-4.css";
