@@ -334,37 +334,27 @@ fn bodies_are_opt_in() {
 }
 
 #[test]
-fn exceeding_the_limit_errors_instead_of_truncating() {
+fn an_unbounded_query_refuses_rather_than_truncating() {
     let root = vault_with_edges("documents-limit");
     let vault = LoadedVault::load(&root).unwrap();
 
     let total = documents(&vault, &q(DocumentQuery::default()))
         .unwrap()
         .total;
-    assert!(total > 1);
+    assert!(total > 2, "fixture too small to page");
 
-    // A partial answer must never look like a complete one.
-    let err = documents(
+    // No `limit` given: the caller has not thought about page size, so a
+    // partial answer must not be handed back as if it were complete.
+    let unbounded = documents(
         &vault,
         &q(DocumentQuery {
-            limit: Some(1),
+            limit: None,
             ..Default::default()
         }),
     );
-    assert!(err.is_err(), "over-limit query silently truncated");
-
-    // Paging deliberately is fine, and `total` still reports the full count.
-    let page = documents(
-        &vault,
-        &q(DocumentQuery {
-            limit: Some(1),
-            offset: total - 1,
-            ..Default::default()
-        }),
-    )
-    .unwrap();
-    assert_eq!(page.documents.len(), 1);
-    assert_eq!(page.total, total);
+    if total > DEFAULT_DOCUMENT_LIMIT {
+        assert!(unbounded.is_err(), "unbounded over-default query truncated");
+    }
 
     // A limit above the hard ceiling is rejected outright.
     assert!(documents(
@@ -375,6 +365,110 @@ fn exceeding_the_limit_errors_instead_of_truncating() {
         })
     )
     .is_err());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_explicit_limit_pages_from_the_first_document() {
+    let root = vault_with_edges("documents-paging");
+    let vault = LoadedVault::load(&root).unwrap();
+
+    let all = documents(
+        &vault,
+        &q(DocumentQuery {
+            limit: Some(MAX_DOCUMENT_LIMIT),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    let total = all.total;
+    assert!(total > 2, "fixture too small to page");
+
+    // Walk the whole vault one document at a time. Page 1 must be reachable —
+    // it was not: the guard compared `total - offset` against `limit`, so every
+    // offset but the last errored and only the tail was retrievable.
+    let mut seen = Vec::new();
+    for offset in 0..total {
+        let page = documents(
+            &vault,
+            &q(DocumentQuery {
+                limit: Some(1),
+                offset,
+                ..Default::default()
+            }),
+        )
+        .unwrap_or_else(|error| panic!("offset {offset} failed: {error}"));
+        assert_eq!(page.documents.len(), 1, "offset {offset}");
+        assert_eq!(page.total, total, "total must not depend on paging");
+        seen.push(page.documents[0].summary.id.clone());
+    }
+
+    let expected: Vec<String> = all.documents.iter().map(|d| d.summary.id.clone()).collect();
+    assert_eq!(seen, expected, "paging must cover every document, in order");
+
+    // Reading past the end is empty, not an error.
+    let past = documents(
+        &vault,
+        &q(DocumentQuery {
+            limit: Some(1),
+            offset: total + 10,
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(past.documents.is_empty());
+    assert_eq!(past.total, total);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_symmetric_peer_is_listed_once_not_in_both_directions() {
+    let root = vault_with_edges("symmetric-once");
+    let vault = LoadedVault::load(&root).unwrap();
+
+    // `notes/field-notes` authored `related_to -> topics/rust`. Seen from the
+    // non-authoring side the peer used to appear under BOTH `out` and `in`,
+    // so a consumer rendered it twice.
+    for id in ["topics/rust", "notes/field-notes"] {
+        let id = CanonicalId::parse(id).unwrap();
+        let result = neighbors(&vault, &id, Some("related_to"), Direction::Both).unwrap();
+        let occurrences: usize = result
+            .out
+            .values()
+            .chain(result.r#in.values())
+            .map(|peers| peers.len())
+            .sum();
+        assert_eq!(occurrences, 1, "`{id}` listed its symmetric peer twice");
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_reciprocally_declared_edge_exports_once() {
+    let root = vault_with_edges("reciprocal-once");
+    // Declare the same symmetric relationship from the other side too, which
+    // an author or agent may easily do.
+    let rust = CanonicalId::parse("topics/rust").unwrap();
+    let note = CanonicalId::parse("notes/field-notes").unwrap();
+    mutate::add_edge(&root, &rust, "related_to", &note).unwrap();
+
+    let vault = LoadedVault::load(&root).unwrap();
+    let graph = subgraph(&vault, &[], &[]);
+    let related: Vec<_> = graph
+        .links
+        .iter()
+        .filter(|link| link.predicate == "related_to")
+        .collect();
+
+    assert_eq!(
+        related.len(),
+        1,
+        "one relationship exported as {} links: {related:?}",
+        related.len()
+    );
 
     std::fs::remove_dir_all(root).unwrap();
 }

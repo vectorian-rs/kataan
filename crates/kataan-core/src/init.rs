@@ -46,12 +46,12 @@ pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {
         source,
     })?;
 
-    let now = "2026-04-28T12:00:00Z";
+    let now = crate::time::iso8601_utc_now();
     let config = VaultToml {
         schema_version: SCHEMA_VERSION,
         name,
-        created_at: now,
-        updated_at: now,
+        created_at: &now,
+        updated_at: &now,
         limits: VaultLimitsToml {
             max_folder_depth: DEFAULT_MAX_FOLDER_DEPTH,
         },

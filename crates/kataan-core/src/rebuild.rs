@@ -47,8 +47,16 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
 
     let ignore = ScanIgnore::load(root, &root_index.scan)?;
     for (document_type, folder) in &root_index.type_folders {
+        // Rebuild creates and rewrites files, so an unsafe type folder would
+        // mutate paths outside the vault. Refuse rather than skip: unlike a
+        // read, silently rebuilding part of a vault hides the problem.
+        if !crate::index::is_safe_type_folder(folder) {
+            return Err(Error::InvalidVaultStructure(format!(
+                "type folder `{folder}` must be a relative path inside the vault"
+            )));
+        }
         let folder_path = root.join(folder);
-        if folder_path.exists() {
+        if crate::walk::is_regular_dir(&folder_path) {
             rebuild_folder_recursive(&folder_path, document_type, &ignore)?;
         }
     }

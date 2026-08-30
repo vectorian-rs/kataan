@@ -169,8 +169,13 @@ impl Vault {
     ) -> Result<Vec<DocumentRecord>> {
         let mut documents = Vec::new();
         for folder in self.index.type_folders.values() {
+            // Untrusted: a cloned vault could point a type folder outside its
+            // own tree. `validate` reports this; loading simply skips it.
+            if !crate::index::is_safe_type_folder(folder) {
+                continue;
+            }
             let folder_path = self.root.join(folder);
-            if folder_path.exists() {
+            if crate::walk::is_regular_dir(&folder_path) {
                 for entry in walk_type_folder(&self.root, folder, ignore)? {
                     match self.load_entry(&entry) {
                         Ok(document) => documents.push(document),
@@ -239,7 +244,7 @@ impl Vault {
 
     pub fn load_document_record(&self, id: &CanonicalId) -> Result<DocumentRecord> {
         let folder_index_toml = self.root.join(id.folder_index_toml_path());
-        if folder_index_toml.exists() {
+        if crate::walk::is_regular_file(&folder_index_toml) {
             let entry = VaultEntry::FolderIndex {
                 id: id.clone(),
                 markdown_path: self.root.join(id.folder_index_markdown_path()),
@@ -277,7 +282,7 @@ impl Vault {
             .map(str::to_owned)
             .collect::<Vec<_>>();
         let facets = facets_for(&metadata, &ancestors);
-        let markdown_checksum = if entry.markdown_path().exists() {
+        let markdown_checksum = if crate::walk::is_regular_file(&entry.markdown_path()) {
             Some(checksum::blake3_file(entry.markdown_path())?)
         } else {
             None

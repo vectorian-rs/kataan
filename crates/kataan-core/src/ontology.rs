@@ -215,7 +215,6 @@ pub fn is_predicate_name(value: &str) -> bool {
         && !value.contains("__")
 }
 
-/// Where a schema violation was found, and what was wrong.
 impl FieldSchema {
     /// Check one value against this field's declared type. An empty `Vec` means
     /// the value is fine; entries are reference targets whose existence the
@@ -231,35 +230,20 @@ impl FieldSchema {
                 format!("`{field}` must be {expected}, found {}", value.type_str()),
             )
         };
-        let require = |ok: bool, expected: &str| -> std::result::Result<(), Diagnostic> {
+        let require = |ok: bool, expected: &str| -> std::result::Result<Vec<String>, Diagnostic> {
             if ok {
-                Ok(())
+                Ok(Vec::new())
             } else {
                 Err(mismatch(expected))
             }
         };
 
         Ok(match self.r#type {
-            FieldType::String => {
-                require(value.is_str(), "a string")?;
-                Vec::new()
-            }
-            FieldType::Integer => {
-                require(value.is_integer(), "an integer")?;
-                Vec::new()
-            }
-            FieldType::Number => {
-                require(value.is_float() || value.is_integer(), "a number")?;
-                Vec::new()
-            }
-            FieldType::Boolean => {
-                require(value.is_bool(), "a boolean")?;
-                Vec::new()
-            }
-            FieldType::Table => {
-                require(value.is_table(), "a table")?;
-                Vec::new()
-            }
+            FieldType::String => require(value.is_str(), "a string")?,
+            FieldType::Integer => require(value.is_integer(), "an integer")?,
+            FieldType::Number => require(value.is_float() || value.is_integer(), "a number")?,
+            FieldType::Boolean => require(value.is_bool(), "a boolean")?,
+            FieldType::Table => require(value.is_table(), "a table")?,
             FieldType::Date | FieldType::Instant => {
                 let raw = value
                     .as_str()
@@ -361,16 +345,23 @@ pub fn validate_node_fields(
     let Some(schema) = ontology.nodes.get(&metadata.r#type) else {
         return Vec::new();
     };
-    // Serialize once rather than hand-mapping field names: `DocumentMetadata`
-    // already flattens `extra`, so this is the document exactly as authored,
-    // and schemas can address kataan's own keys and the vault's alike.
-    let Ok(fields) = toml::Table::try_from(metadata) else {
-        return Vec::new();
+    // Serializing gives kataan's own keys without hand-maintaining a name map.
+    // It is not used for `extra`, because a bare TOML datetime round-trips
+    // through `Serialize` as a table rather than staying a datetime.
+    let own = match toml::Table::try_from(metadata) {
+        Ok(own) => own,
+        Err(error) => {
+            return vec![Diagnostic::warning(
+                codes::INVALID_ONTOLOGY_ENTRY,
+                format!("could not read fields of `{}`: {error}", metadata.r#type),
+            )]
+        }
     };
+    let field_value = |name: &String| metadata.extra.get(name).or_else(|| own.get(name));
     let mut diagnostics = Vec::new();
 
     for field in &schema.required {
-        if !fields.contains_key(field) {
+        if field_value(field).is_none() {
             diagnostics.push(Diagnostic::error(
                 codes::MISSING_REQUIRED_FIELD,
                 format!("type `{}` requires field `{field}`", metadata.r#type),
@@ -380,7 +371,7 @@ pub fn validate_node_fields(
 
     for (field, field_schema) in &schema.fields {
         // Absent is fine unless `required` said otherwise, handled above.
-        let Some(value) = fields.get(field) else {
+        let Some(value) = field_value(field) else {
             continue;
         };
         match field_schema.check(field, value) {

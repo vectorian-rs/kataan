@@ -66,11 +66,25 @@ impl VaultGraph {
 
                 for target in targets {
                     let target = CanonicalId::parse(target)?;
-                    graph.authored_edges.push(Edge {
+                    // Both endpoints may declare the same symmetric edge, and
+                    // both sides of an inverse pair may be written out. Either
+                    // way it is one relationship, so the export must hold one
+                    // link — `edges()` promises exactly that.
+                    let edge = Edge {
                         source: source.clone(),
                         predicate: predicate_name.clone(),
                         target: target.clone(),
-                    });
+                    };
+                    let reciprocal = Edge {
+                        source: target.clone(),
+                        predicate: predicate_name.clone(),
+                        target: source.clone(),
+                    };
+                    if !graph.authored_edges.contains(&edge)
+                        && !(is_symmetric && graph.authored_edges.contains(&reciprocal))
+                    {
+                        graph.authored_edges.push(edge);
+                    }
                     graph
                         .outgoing_edges
                         .entry(source.clone())
@@ -79,20 +93,24 @@ impl VaultGraph {
                         .or_default()
                         .insert(target.clone());
 
-                    graph
-                        .incoming_edges
-                        .entry(target.clone())
-                        .or_default()
-                        .entry(incoming_predicate.clone())
-                        .or_default()
-                        .insert(source.clone());
-
                     if is_symmetric {
+                        // Symmetric edges are reachable from both endpoints as
+                        // outgoing. Recording an incoming copy too would make
+                        // `neighbors(Both)` report the same peer under `out`
+                        // and `in`, so a consumer renders it twice.
                         graph
                             .outgoing_edges
                             .entry(target)
                             .or_default()
                             .entry(predicate_name.clone())
+                            .or_default()
+                            .insert(source.clone());
+                    } else {
+                        graph
+                            .incoming_edges
+                            .entry(target.clone())
+                            .or_default()
+                            .entry(incoming_predicate.clone())
                             .or_default()
                             .insert(source.clone());
                     }

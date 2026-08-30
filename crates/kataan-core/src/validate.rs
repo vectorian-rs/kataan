@@ -159,8 +159,21 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
     }
 
     for folder in vault.index.type_folders.values() {
+        if !crate::index::is_safe_type_folder(folder) {
+            issues.push(
+                Diagnostic::error(
+                    codes::UNSAFE_TYPE_FOLDER,
+                    format!(
+                        "type folder `{folder}` must be a relative path inside the vault; \
+                         an absolute path or `..` would read and write outside it"
+                    ),
+                )
+                .with_path(VAULT_CONFIG_FILE),
+            );
+            continue;
+        }
         let folder_path = vault.root.join(folder);
-        if !folder_path.exists() {
+        if !crate::walk::is_regular_dir(&folder_path) {
             issues.push(
                 Diagnostic::error(
                     codes::MISSING_REQUIRED_FOLDER,

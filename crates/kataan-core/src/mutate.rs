@@ -72,14 +72,26 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
     let root = root.as_ref();
     let vault = Vault::open(root)?;
 
+    // The type must be registered whether or not a parent was given: placing a
+    // document by hand is not a reason to skip the check that makes the result
+    // a well-formed vault.
+    let type_folder = vault
+        .index
+        .type_folders
+        .get(&request.r#type)
+        .cloned()
+        .ok_or_else(|| invalid_request(format!("unknown type `{}`", request.r#type)))?;
     let base_folder = match &request.parent {
-        Some(parent) => parent.clone(),
-        None => vault
-            .index
-            .type_folders
-            .get(&request.r#type)
-            .cloned()
-            .ok_or_else(|| invalid_request(format!("unknown type `{}`", request.r#type)))?,
+        Some(parent) => {
+            if parent != &type_folder && !parent.starts_with(&format!("{type_folder}/")) {
+                return Err(invalid_request(format!(
+                    "parent `{parent}` is outside `{type_folder}`, the folder for type `{}`",
+                    request.r#type
+                )));
+            }
+            parent.clone()
+        }
+        None => type_folder,
     };
     validate_status(request.status.as_deref())?;
     validate_timestamp(request.occurred_at.as_deref())?;
@@ -260,6 +272,15 @@ pub fn add_edge(
     {
         targets.push(toml::Value::String(target_id.to_owned()));
     }
+
+    sidecar.insert(
+        "last_updated_by".to_owned(),
+        toml::Value::String(ACTOR_AGENT.to_owned()),
+    );
+    sidecar.insert(
+        "updated_at".to_owned(),
+        toml::Value::String(crate::time::iso8601_utc_now()),
+    );
 
     write_sidecar_table(&source_record.toml_path, &sidecar)?;
     rebuild::rebuild_indexes(root)?;
@@ -739,6 +760,73 @@ mod tests {
             crate::time::Timestamp::parse(value).is_ok(),
             "epoch was not healed: {value}"
         );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parent_cannot_place_a_document_outside_its_type_folder() {
+        let root = temp_vault("parent-type");
+
+        // An unregistered type is refused whether or not a parent is given.
+        assert!(create_document(
+            &root,
+            NewDocument {
+                r#type: "not-a-type".to_owned(),
+                parent: Some("notes".to_owned()),
+                ..note("X", "x")
+            }
+        )
+        .is_err());
+
+        // A parent belonging to a different type would produce a document that
+        // `validate` then reports as a type-folder mismatch.
+        assert!(create_document(
+            &root,
+            NewDocument {
+                parent: Some("people".to_owned()),
+                ..note("Y", "y")
+            }
+        )
+        .is_err());
+
+        // A subfolder of the type's own folder is fine.
+        let id = create_document(
+            &root,
+            NewDocument {
+                parent: Some("notes".to_owned()),
+                ..note("Z", "z")
+            },
+        )
+        .unwrap();
+        assert_eq!(id.as_str(), "notes/z");
+        assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn add_edge_records_when_it_changed_the_document() {
+        let root = temp_vault("edge-provenance");
+        let source = create_document(&root, note("Src", "a")).unwrap();
+        let target = create_document(
+            &root,
+            NewDocument {
+                r#type: "topic".to_owned(),
+                ..note("Tgt", "b")
+            },
+        )
+        .unwrap();
+        let before = read_sidecar_table(&root.join(source.toml_path())).unwrap();
+
+        add_edge(&root, &source, "related_to", &target).unwrap();
+
+        let after = read_sidecar_table(&root.join(source.toml_path())).unwrap();
+        assert_ne!(
+            after["updated_at"], before["updated_at"],
+            "an edge write left updated_at pointing at an unrelated change"
+        );
+        assert!(crate::time::Timestamp::parse(after["updated_at"].as_str().unwrap()).is_ok());
 
         std::fs::remove_dir_all(root).unwrap();
     }

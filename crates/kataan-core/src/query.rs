@@ -165,10 +165,15 @@ pub struct DocumentPage {
 /// One call replaces the fetch-by-id-in-a-loop pattern that made rebuilding a
 /// graph artifact cost one round trip per document.
 ///
-/// Matching more than `limit` is an error rather than a silent truncation: a
-/// consumer rebuilding a graph must not be able to mistake a partial answer for
-/// a complete one. Pass `offset` to page deliberately.
+/// Omitting `limit` and matching more than the default is an error rather than
+/// a silent truncation: a consumer rebuilding a graph must not be able to
+/// mistake a partial answer for a complete one. Passing an explicit `limit` is
+/// how a caller opts into paging — it then gets at most `limit` documents, with
+/// `total` reporting the full match count so it knows how far to page.
 pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentPage> {
+    // A caller who passes `limit` has chosen a page size and gets one; a caller
+    // who passes none is protected from a silently truncated answer instead.
+    let chose_limit = query.limit.is_some();
     let limit = query.limit.unwrap_or(DEFAULT_DOCUMENT_LIMIT);
     if limit > MAX_DOCUMENT_LIMIT {
         return Err(Error::InvalidRequest(format!(
@@ -248,26 +253,35 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
         .collect();
 
     let total = matched.len();
-    let page_len = total.saturating_sub(query.offset);
-    if page_len > limit {
+    let remaining = total.saturating_sub(query.offset);
+    if !chose_limit && remaining > limit {
         return Err(Error::InvalidRequest(format!(
-            "{page_len} documents match (offset {}), which exceeds limit {limit}; narrow the query or page with offset",
+            "{remaining} documents match (offset {}), which exceeds the default limit of {limit}; \
+             pass an explicit `limit` to page, or narrow the query",
             query.offset
         )));
     }
 
-    let documents = matched
-        .into_iter()
-        .skip(query.offset)
-        .filter_map(|id| {
-            let summary = summarize(vault, id)?;
-            let markdown = match query.include {
-                Include::Metadata => None,
-                Include::Markdown => Some(vault.read_markdown(id).ok()?),
-            };
-            Some(DocumentEntry { summary, markdown })
-        })
-        .collect();
+    let mut documents = Vec::new();
+    for id in matched.into_iter().skip(query.offset).take(limit) {
+        let Some(summary) = summarize(vault, id) else {
+            continue;
+        };
+        // A body that cannot be read is reported, not silently dropped: the
+        // caller would otherwise get fewer documents than `total` implies with
+        // no signal, which is the failure the limit guard exists to prevent.
+        let markdown = match query.include {
+            Include::Metadata => None,
+            Include::Markdown => match vault.read_markdown(id) {
+                Ok(markdown) => Some(markdown),
+                Err(_) => {
+                    missing.push(id.as_str().to_owned());
+                    continue;
+                }
+            },
+        };
+        documents.push(DocumentEntry { summary, markdown });
+    }
 
     Ok(DocumentPage {
         documents,

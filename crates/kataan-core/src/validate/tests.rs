@@ -940,3 +940,54 @@ fn undeclared_fields_stay_legal() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn an_escaping_type_folder_is_refused_everywhere() {
+    let root = crate::test_support::unique_temp_dir("escape-type-folder");
+    crate::init::init_vault(&root, "Test").unwrap();
+
+    // A canary outside the vault: a cloned vault must not be able to touch it.
+    let outside = root.parent().unwrap().join("escape-canary");
+    fs::create_dir_all(&outside).unwrap();
+    let canary = outside.join("index.toml");
+
+    let config_path = root.join(crate::constants::VAULT_CONFIG_FILE);
+    let text = fs::read_to_string(&config_path).unwrap();
+    fs::write(
+        &config_path,
+        text.replace("note = \"notes\"", "note = \"../escape-canary\""),
+    )
+    .unwrap();
+
+    // validate names the problem rather than passing silently...
+    let report = validate(&root).unwrap();
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == codes::UNSAFE_TYPE_FOLDER),
+        "escape not reported: {:?}",
+        report
+            .diagnostics
+            .iter()
+            .map(|d| &d.code)
+            .collect::<Vec<_>>()
+    );
+
+    // ...rebuild refuses outright rather than writing outside the vault...
+    assert!(crate::rebuild::rebuild_indexes(&root).is_err());
+    assert!(!canary.exists(), "rebuild created a file outside the vault");
+
+    // ...and loading skips it rather than reading through it.
+    let loaded = crate::vault::LoadedVault::load(&root).unwrap();
+    assert!(
+        loaded
+            .documents
+            .keys()
+            .all(|id| !id.as_str().contains("escape-canary")),
+        "load pulled documents from outside the vault"
+    );
+
+    fs::remove_dir_all(&outside).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}

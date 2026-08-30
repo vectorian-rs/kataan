@@ -29,6 +29,20 @@ pub struct VaultConfig {
     pub type_folders: std::collections::BTreeMap<String, String>,
 }
 
+/// Whether a `type_folders` value is a plain relative path inside the vault.
+///
+/// Every walker and every rebuild joins these values to the vault root, so an
+/// absolute path (which `Path::join` substitutes wholesale) or a `..` segment
+/// would let a cloned vault direct reads *and writes* outside its own tree.
+/// Vaults are shared as git repositories, so the value is untrusted input.
+pub fn is_safe_type_folder(folder: &str) -> bool {
+    !folder.is_empty()
+        && !std::path::Path::new(folder).is_absolute()
+        && std::path::Path::new(folder)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
 impl VaultConfig {
     /// The type whose `type_folders` mapping points at `folder` (the inverse of
     /// the `type -> folder` map), if any.
