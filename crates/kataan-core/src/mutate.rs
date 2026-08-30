@@ -817,13 +817,24 @@ mod tests {
             },
         )
         .unwrap();
-        let before = read_sidecar_table(&root.join(source.toml_path())).unwrap();
+        // Back-date the stamp so the assertion cannot depend on wall-clock
+        // granularity: `iso8601_utc_now` is second-resolution, so a create and
+        // an edge write in the same second produce the same string.
+        let path = root.join(source.toml_path());
+        let stale = "2000-01-01T00:00:00Z";
+        let mut before = read_sidecar_table(&path).unwrap();
+        before.insert(
+            "updated_at".to_owned(),
+            toml::Value::String(stale.to_owned()),
+        );
+        write_sidecar_table(&path, &before).unwrap();
 
         add_edge(&root, &source, "related_to", &target).unwrap();
 
-        let after = read_sidecar_table(&root.join(source.toml_path())).unwrap();
+        let after = read_sidecar_table(&path).unwrap();
         assert_ne!(
-            after["updated_at"], before["updated_at"],
+            after["updated_at"].as_str(),
+            Some(stale),
             "an edge write left updated_at pointing at an unrelated change"
         );
         assert!(crate::time::Timestamp::parse(after["updated_at"].as_str().unwrap()).is_ok());
