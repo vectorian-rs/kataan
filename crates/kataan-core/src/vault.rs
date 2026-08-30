@@ -282,7 +282,7 @@ impl Vault {
             .map(str::to_owned)
             .collect::<Vec<_>>();
         let facets = facets_for(&metadata, &ancestors);
-        let markdown_checksum = if crate::walk::is_regular_file(&entry.markdown_path()) {
+        let markdown_checksum = if crate::walk::is_regular_file(entry.markdown_path()) {
             Some(checksum::blake3_file(entry.markdown_path())?)
         } else {
             None

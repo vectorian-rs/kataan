@@ -80,9 +80,9 @@ impl VaultGraph {
                         predicate: predicate_name.clone(),
                         target: source.clone(),
                     };
-                    if !graph.authored_edges.contains(&edge)
-                        && !(is_symmetric && graph.authored_edges.contains(&reciprocal))
-                    {
+                    let already_recorded = graph.authored_edges.contains(&edge)
+                        || (is_symmetric && graph.authored_edges.contains(&reciprocal));
+                    if !already_recorded {
                         graph.authored_edges.push(edge);
                     }
                     graph
