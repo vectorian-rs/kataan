@@ -1,0 +1,270 @@
+/* Part 1 of the app stylesheet. Split for file size only — the
+   cascade depends on order, so these are sequential slices of the
+   original file and must stay imported in numeric order. */
+
+:root {
+  color-scheme: light;
+  --surface-1: #fafaf8;
+  --surface-2: #f2f1ee;
+  --surface-3: #e8e6e1;
+  --text-1: #1a1916;
+  --text-2: #4a4844;
+  --text-3: #807c74;
+  --accent: #2d7a4f;
+  --accent-subtle: #e8f3ed;
+  --border: #dddbd5;
+  --danger: #b74343;
+  --warning: #a66520;
+  --info: #3469a6;
+  --top-bar-height: 64px;
+  --top-bar-padding-block: 14px;
+  --sidebar-width: 220px;
+  --sidebar-min-width: 160px;
+  --sidebar-max-width: 420px;
+  --list-width: 320px;
+  --list-min-width: 220px;
+  --list-max-width: 560px;
+  --properties-width: 260px;
+  --properties-min-width: 220px;
+  --properties-max-width: 420px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #141412;
+  --surface-2: #1e1d1a;
+  --surface-3: #272521;
+  --text-1: #f0ede8;
+  --text-2: #9b9790;
+  --text-3: #77726a;
+  --accent: #4caf78;
+  --accent-subtle: #1a2e22;
+  --border: #2e2c28;
+  --danger: #ff8a8a;
+  --warning: #e4a85f;
+  --info: #8ab4ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-block-size: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text-1);
+  background: var(--surface-1);
+  font-family: "DM Mono", var(--font-mono);
+  font-size: var(--font-size-1);
+  line-height: var(--font-lineheight-3);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  border: 0;
+  padding: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+    clamp(var(--list-min-width), var(--list-width), var(--list-max-width))
+    minmax(0, 1fr)
+    clamp(var(--properties-min-width), var(--properties-width), var(--properties-max-width));
+  block-size: 100vh;
+  overflow: hidden;
+  background: var(--surface-1);
+}
+
+.app-shell.properties-hidden {
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+    clamp(var(--list-min-width), var(--list-width), var(--list-max-width))
+    minmax(0, 1fr);
+}
+
+.app-shell.properties-hidden .properties-panel {
+  display: none;
+}
+
+.sidebar,
+.list-panel,
+.content-pane,
+.properties-panel {
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.sidebar,
+.list-panel,
+.content-pane {
+  border-inline-end: 1px solid var(--border);
+}
+
+.sidebar,
+.list-panel,
+.properties-panel {
+  background: var(--surface-1);
+}
+
+.sidebar,
+.list-panel,
+.properties-panel {
+  position: relative;
+}
+
+.column-resize-handle {
+  position: absolute;
+  inset-block: 0;
+  z-index: 2;
+  inline-size: 8px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.column-resize-handle.resize-inline-end {
+  inset-inline-end: 0;
+}
+
+.column-resize-handle.resize-inline-start {
+  inset-inline-start: 0;
+}
+
+.column-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inline-size: 2px;
+  background: transparent;
+}
+
+.column-resize-handle.resize-inline-end::after {
+  inset-inline-end: 0;
+}
+
+.column-resize-handle.resize-inline-start::after {
+  inset-inline-start: 0;
+}
+
+.column-resize-handle:hover::after,
+.column-resize-handle:focus-visible::after,
+.column-resize-handle.is-resizing::after {
+  background: var(--accent);
+}
+
+body.column-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.content-pane {
+  background: var(--surface-2);
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  block-size: var(--top-bar-height);
+  padding: var(--top-bar-padding-block) var(--size-4);
+  border-block-end: 1px solid var(--border);
+  min-inline-size: 0;
+}
+
+.panel-title {
+  margin: 0;
+  color: var(--text-1);
+  font-family: "DM Mono", var(--font-mono);
+  font-size: var(--font-size-2);
+  font-weight: var(--font-weight-7);
+  letter-spacing: -0.04em;
+}
+
+.app-header {
+  gap: var(--size-2);
+  padding-inline: var(--size-3);
+}
+
+.app-header > div {
+  min-inline-size: 0;
+}
+
+.app-header .icon-button {
+  flex: 0 0 auto;
+  margin-block-start: 1px;
+}
+
+.app-subtitle {
+  display: grid;
+  gap: var(--size-1);
+  min-inline-size: 0;
+  color: var(--text-1);
+  font-size: var(--font-size-1);
+  line-height: var(--font-lineheight-1);
+}
+
+.vault-title-line {
+  display: flex;
+  min-inline-size: 0;
+  color: var(--text-1);
+  font-size: var(--font-size-2);
+  font-weight: var(--font-weight-7);
+  letter-spacing: -0.04em;
+  line-height: var(--font-lineheight-1);
+  white-space: nowrap;
+}
+
+.vault-product {
+  flex: 0 0 auto;
+  color: var(--text-2);
+}
+
+.vault-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vault-schema {
+  color: var(--text-2);
+  font-size: var(--font-size-0);
+  text-transform: lowercase;
+}
+
+.muted {
+  color: var(--text-2);
+}
+
+.section {
+  padding: var(--size-4) var(--size-3);
+}

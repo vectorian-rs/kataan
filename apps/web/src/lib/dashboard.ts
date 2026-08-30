@@ -1,24 +1,4 @@
-import {
-  Archive,
-  Boxes,
-  Circle,
-  Code,
-  File,
-  FileText,
-  FolderKanban,
-  Inbox,
-  Lightbulb,
-  ListTodo,
-  Newspaper,
-  PanelRightClose,
-  PanelRightOpen,
-  Presentation,
-  ReceiptText,
-  BookOpen,
-  User,
-  createElement,
-  type IconNode,
-} from 'lucide';
+import { File, PanelRightClose, PanelRightOpen, createElement } from 'lucide';
 
 import {
   getDocument,
@@ -45,77 +25,59 @@ import {
   type SearchResponse,
   type SearchResult,
   type SearchStatus,
-  type TomlSchemaResponse,
   type ValidateResponse,
 } from './api';
 
-const appShell = requireElement<HTMLElement>('app-shell');
-const sidebarResizeHandle = requireElement<HTMLElement>('sidebar-resize-handle');
-const listResizeHandle = requireElement<HTMLElement>('list-resize-handle');
-const propertiesResizeHandle = requireElement<HTMLElement>('properties-resize-handle');
-const propertiesToggle = requireElement<HTMLButtonElement>('properties-toggle');
-const vaultSummary = requireElement<HTMLElement>('vault-summary');
-const foldersEl = requireElement<HTMLElement>('folders');
-const documentsEl = requireElement<HTMLElement>('documents');
-const diagnosticsEl = requireElement<HTMLElement>('diagnostics');
-const folderTitle = requireElement<HTMLElement>('folder-title');
-const breadcrumb = requireElement<HTMLElement>('breadcrumb');
-const documentTitle = requireElement<HTMLElement>('document-title');
-const documentBody = requireElement<HTMLElement>('document-body');
-const metadataPanel = requireElement<HTMLElement>('metadata-panel');
-const schemaPanel = requireElement<HTMLElement>('schema-panel');
-const validateButton = requireElement<HTMLButtonElement>('validate-button');
-const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
-const searchForm = requireElement<HTMLFormElement>('search-form');
-const searchInput = requireElement<HTMLInputElement>('search-input');
-const searchStatusEl = requireElement<HTMLElement>('search-status');
+import {
+  appShell,
+  breadcrumb,
+  diagnosticsEl,
+  documentBody,
+  documentTitle,
+  documentsEl,
+  folderTitle,
+  foldersEl,
+  propertiesToggle,
+  rebuildButton,
+  searchForm,
+  searchInput,
+  searchStatusEl,
+  validateButton,
+  vaultSummary,
+} from './dashboard/elements';
 
-type ResizableColumn = 'sidebar' | 'list' | 'properties';
+import {
+  basenameFromId,
+  clickableRow,
+  cssEscape,
+  depthFor,
+  emptyListNote,
+  fileExtensionClass,
+  folderIcon,
+  folderTitleFromResponse,
+  isHighlightableFile,
+  listSection,
+} from './dashboard/format';
 
-type ColumnResizeConfig = {
-  key: ResizableColumn;
-  handle: HTMLElement;
-  cssProperty: string;
-  storageKey: string;
-  defaultWidth: number;
-  minWidth: number;
-  maxWidth: number;
-  dragDirection: 1 | -1;
-};
+import { renderMetadata, renderSchema } from './dashboard/panels';
 
-const COLUMN_KEYBOARD_STEP = 10;
-const RESIZABLE_COLUMNS: ColumnResizeConfig[] = [
-  {
-    key: 'sidebar',
-    handle: sidebarResizeHandle,
-    cssProperty: '--sidebar-width',
-    storageKey: 'kataan:sidebar-width',
-    defaultWidth: 220,
-    minWidth: 160,
-    maxWidth: 420,
-    dragDirection: 1,
-  },
-  {
-    key: 'list',
-    handle: listResizeHandle,
-    cssProperty: '--list-width',
-    storageKey: 'kataan:list-width',
-    defaultWidth: 320,
-    minWidth: 220,
-    maxWidth: 560,
-    dragDirection: 1,
-  },
-  {
-    key: 'properties',
-    handle: propertiesResizeHandle,
-    cssProperty: '--properties-width',
-    storageKey: 'kataan:properties-width',
-    defaultWidth: 260,
-    minWidth: 220,
-    maxWidth: 420,
-    dragDirection: -1,
-  },
-];
+import {
+  RESIZABLE_COLUMNS,
+  initColumnResizing,
+  readSavedColumnWidth,
+  setColumnWidth,
+} from './dashboard/columns';
+
+import {
+  appendSafeSnippet,
+  renderMissingSearchIndex,
+  renderSearchListError,
+  renderSearchLoading,
+  renderSearchStatus,
+  searchMetaPill,
+  searchSummary,
+  setSearchStatusMessage,
+} from './dashboard/search-view';
 
 let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
@@ -124,7 +86,6 @@ let propertiesVisible = localStorage.getItem('kataan:properties-visible') === 't
 let searchStatus: SearchStatus | null = null;
 let searchDebounce: number | undefined;
 let activeSearchRequest = 0;
-const columnWidths = new Map<ResizableColumn, number>();
 const expandedFolderIds = new Set<string>();
 
 for (const column of RESIZABLE_COLUMNS) {
@@ -226,19 +187,6 @@ async function refreshSearchStatus() {
   }
 }
 
-function renderSearchStatus(status: SearchStatus) {
-  if (!status.exists || status.item_count === 0) {
-    searchStatusEl.textContent = 'Search index not built. Use Rebuild.';
-    return;
-  }
-
-  searchStatusEl.textContent = `Search ready · ${status.item_count} items`;
-}
-
-function setSearchStatusMessage(message: string) {
-  searchStatusEl.textContent = message;
-}
-
 async function runSearch(value: string) {
   const query = value.trim();
   const requestId = ++activeSearchRequest;
@@ -270,33 +218,6 @@ async function runSearch(value: string) {
   }
 }
 
-function renderMissingSearchIndex(query: string) {
-  folderTitle.textContent = 'Search';
-  documentsEl.className = 'search-results-panel';
-  const message = emptyListNote(
-    `Use Rebuild to build the search index before searching for “${query}”.`,
-  );
-  documentsEl.replaceChildren(listSection('Search index required', [message]));
-}
-
-function renderSearchLoading(query: string) {
-  folderTitle.textContent = 'Search';
-  documentsEl.className = 'search-results-panel';
-  documentsEl.replaceChildren(
-    listSection('Searching', [emptyListNote(`Searching for “${query}”…`)]),
-  );
-}
-
-function renderSearchListError(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  folderTitle.textContent = 'Search';
-  documentsEl.className = 'search-results-panel';
-  const note = document.createElement('div');
-  note.className = 'diagnostic error';
-  note.textContent = message;
-  documentsEl.replaceChildren(listSection('Search error', [note]));
-}
-
 function renderSearchResults(response: SearchResponse) {
   folderTitle.textContent = 'Search results';
   documentsEl.className = 'search-results-panel';
@@ -310,12 +231,6 @@ function renderSearchResults(response: SearchResponse) {
   }
 
   documentsEl.replaceChildren(...sections);
-}
-
-function searchSummary(response: SearchResponse) {
-  const count = response.results.length;
-  const suffix = count === 1 ? 'result' : 'results';
-  return `${count} ${suffix} for “${response.query}”`;
 }
 
 function renderSearchResult(result: SearchResult) {
@@ -382,32 +297,6 @@ async function runSearchWithFacet(facet: string) {
     renderSearchResults(await searchVault({ q: query, facet, limit: 50 }));
   } catch (error) {
     renderSearchListError(error);
-  }
-}
-
-function searchMetaPill(value: string) {
-  const pill = document.createElement('span');
-  pill.className = 'pill search-meta-pill';
-  pill.textContent = value;
-  return pill;
-}
-
-function appendSafeSnippet(parent: HTMLElement, snippet: string) {
-  const parts = snippet.split(/(<mark>|<\/mark>)/);
-  let mark: HTMLElement | null = null;
-  for (const part of parts) {
-    if (part === '<mark>') {
-      mark = document.createElement('mark');
-      parent.append(mark);
-      continue;
-    }
-    if (part === '</mark>') {
-      mark = null;
-      continue;
-    }
-    if (part.length > 0) {
-      (mark ?? parent).append(document.createTextNode(part));
-    }
   }
 }
 
@@ -590,29 +479,6 @@ function renderFolderContents(
   documentsEl.replaceChildren(...children);
 }
 
-function listSection(title: string, rows: HTMLElement[]) {
-  const section = document.createElement('section');
-  section.className = 'content-list-section';
-
-  const heading = document.createElement('h3');
-  heading.className = 'section-heading';
-  heading.textContent = title;
-
-  const list = document.createElement('div');
-  list.className = 'list';
-  list.replaceChildren(...rows);
-
-  section.append(heading, list);
-  return section;
-}
-
-function emptyListNote(text: string) {
-  const note = document.createElement('div');
-  note.className = 'muted empty-list-note';
-  note.textContent = text;
-  return note;
-}
-
 function renderDocumentButton(vaultDocument: FolderDocument) {
   const button = clickableRow('document-row');
   button.dataset.document = vaultDocument.id;
@@ -664,11 +530,6 @@ function renderFileRow(file: FolderFile) {
   return row;
 }
 
-function fileExtensionClass(extension: string | undefined) {
-  const normalized = extension?.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-  return normalized ? `file-ext-${normalized}` : 'file-ext-none';
-}
-
 async function selectFile(file: FolderFile) {
   selectedDocument = null;
   selectedFile = file;
@@ -692,121 +553,8 @@ async function selectFile(file: FolderFile) {
   renderFileBody(vaultFile);
 }
 
-function isHighlightableFile(file: FolderFile) {
-  return new Set([
-    'bash',
-    'c',
-    'cc',
-    'cpp',
-    'cxx',
-    'h',
-    'hpp',
-    'hs',
-    'hxx',
-    'js',
-    'json',
-    'md',
-    'py',
-    'rs',
-    'sh',
-    'toml',
-    'ts',
-    'txt',
-    'yaml',
-    'yml',
-  ]).has(file.extension?.toLowerCase() ?? '');
-}
-
 function currentTheme() {
   return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-}
-
-function initColumnResizing(column: ColumnResizeConfig) {
-  let dragStartX = 0;
-  let dragStartWidth = getColumnWidth(column);
-  let isDragging = false;
-
-  const moveColumn = (event: PointerEvent) => {
-    if (!isDragging) return;
-    setColumnWidth(column, dragStartWidth + (event.clientX - dragStartX) * column.dragDirection);
-  };
-
-  const stopDragging = () => {
-    if (!isDragging) return;
-    isDragging = false;
-    document.body.classList.remove('column-resizing');
-    column.handle.classList.remove('is-resizing');
-    window.removeEventListener('pointermove', moveColumn);
-    window.removeEventListener('pointerup', stopDragging);
-    window.removeEventListener('pointercancel', stopDragging);
-  };
-
-  column.handle.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    isDragging = true;
-    dragStartX = event.clientX;
-    dragStartWidth = getColumnWidth(column);
-    document.body.classList.add('column-resizing');
-    column.handle.classList.add('is-resizing');
-    column.handle.setPointerCapture?.(event.pointerId);
-    window.addEventListener('pointermove', moveColumn);
-    window.addEventListener('pointerup', stopDragging);
-    window.addEventListener('pointercancel', stopDragging);
-  });
-
-  column.handle.addEventListener('dblclick', () => {
-    setColumnWidth(column, column.defaultWidth);
-  });
-
-  column.handle.addEventListener('keydown', (event) => {
-    const step = event.shiftKey ? COLUMN_KEYBOARD_STEP * 4 : COLUMN_KEYBOARD_STEP;
-    if (event.key === 'ArrowLeft') {
-      event.preventDefault();
-      setColumnWidth(column, getColumnWidth(column) - step * column.dragDirection);
-    }
-    if (event.key === 'ArrowRight') {
-      event.preventDefault();
-      setColumnWidth(column, getColumnWidth(column) + step * column.dragDirection);
-    }
-    if (event.key === 'Home') {
-      event.preventDefault();
-      setColumnWidth(column, column.minWidth);
-    }
-    if (event.key === 'End') {
-      event.preventDefault();
-      setColumnWidth(column, column.maxWidth);
-    }
-  });
-}
-
-function setColumnWidth(
-  column: ColumnResizeConfig,
-  width: number,
-  options: { persist?: boolean } = {},
-) {
-  const nextWidth = clampColumnWidth(column, width);
-  columnWidths.set(column.key, nextWidth);
-  appShell.style.setProperty(column.cssProperty, `${nextWidth}px`);
-  column.handle.setAttribute('aria-valuemin', String(column.minWidth));
-  column.handle.setAttribute('aria-valuemax', String(column.maxWidth));
-  column.handle.setAttribute('aria-valuenow', String(nextWidth));
-  if (options.persist ?? true) {
-    localStorage.setItem(column.storageKey, String(nextWidth));
-  }
-}
-
-function getColumnWidth(column: ColumnResizeConfig) {
-  return columnWidths.get(column.key) ?? column.defaultWidth;
-}
-
-function readSavedColumnWidth(column: ColumnResizeConfig) {
-  const savedWidth = Number.parseInt(localStorage.getItem(column.storageKey) ?? '', 10);
-  return Number.isFinite(savedWidth) ? clampColumnWidth(column, savedWidth) : column.defaultWidth;
-}
-
-function clampColumnWidth(column: ColumnResizeConfig, width: number) {
-  return Math.min(column.maxWidth, Math.max(column.minWidth, Math.round(width)));
 }
 
 function setPropertiesVisible(visible: boolean, options: { persist?: boolean } = {}) {
@@ -916,7 +664,7 @@ async function selectDocument(id: string, options: { updateUrl?: boolean } = {})
     updateRouteUrl(vaultDocument);
   }
   renderDocumentBody(vaultDocument);
-  renderMetadata(vaultDocument);
+  renderMetadata(vaultDocument, (id) => runAction(() => selectDocument(id)));
   renderSchema(await getSchema('document'));
 }
 
@@ -960,144 +708,6 @@ function renderDocumentBody(vaultDocument: DocumentResponse) {
   documentBody.innerHTML = vaultDocument.html;
 }
 
-function renderSchema(schema: TomlSchemaResponse) {
-  schemaPanel.className = 'schema-content';
-
-  const templateLabel = document.createElement('div');
-  templateLabel.className = 'property-label';
-  templateLabel.textContent = 'minimum TOML';
-
-  const template = document.createElement('pre');
-  template.className = 'schema-template';
-  template.textContent = schema.toml_template.trim();
-
-  const details = document.createElement('div');
-  details.className = 'schema-details';
-  details.replaceChildren(
-    schemaLine('Required', requiredFields(schema).join(', ') || '—'),
-    schemaLine('Types', schema.constraints.allowed_types.join(', ') || '—'),
-    schemaLine('Status', schema.constraints.allowed_status.join(', ') || '—'),
-    schemaLine('Actors', schema.constraints.allowed_actors.join(', ') || '—'),
-    schemaLine('Edges', schema.constraints.allowed_edge_predicates.join(', ') || '—'),
-  );
-
-  schemaPanel.replaceChildren(templateLabel, template, details);
-}
-
-function schemaLine(label: string, value: string) {
-  const row = document.createElement('div');
-  row.className = 'schema-line';
-  const labelEl = document.createElement('span');
-  labelEl.textContent = label;
-  const valueEl = document.createElement('span');
-  valueEl.textContent = value;
-  row.append(labelEl, valueEl);
-  return row;
-}
-
-function requiredFields(schema: TomlSchemaResponse) {
-  const root = schema.schema as { schema?: { required?: string[] }; required?: string[] };
-  return root.schema?.required ?? root.required ?? [];
-}
-
-function renderMetadata(vaultDocument: DocumentResponse) {
-  const {
-    edges,
-    markdown,
-    markdown_checksum: markdownChecksum,
-    ...properties
-  } = vaultDocument.metadata;
-  metadataPanel.className = 'metadata-sections';
-  metadataPanel.replaceChildren(
-    metadataSection('Properties', [
-      property('ID', vaultDocument.id),
-      ...Object.entries(properties).map(([key, value]) => property(formatLabel(key), value)),
-    ]),
-    metadataSection('Edges', renderEdges(edges)),
-    metadataSection('Internal', [
-      property('Markdown', markdown),
-      property('Markdown checksum', markdownChecksum),
-      property('Route token', vaultDocument.route_token),
-    ]),
-  );
-}
-
-function metadataSection(title: string, children: HTMLElement[]) {
-  const section = document.createElement('section');
-  section.className = 'metadata-section';
-
-  const heading = document.createElement('h3');
-  heading.className = 'section-heading';
-  heading.textContent = title;
-
-  const body = document.createElement('div');
-  body.className = 'metadata-grid';
-  if (children.length === 0) {
-    body.replaceChildren(emptySectionNote('None.'));
-  } else {
-    body.replaceChildren(...children);
-  }
-
-  section.append(heading, body);
-  return section;
-}
-
-function emptySectionNote(text: string) {
-  const note = document.createElement('div');
-  note.className = 'empty-section-note muted';
-  note.textContent = text;
-  return note;
-}
-
-function renderEdges(edges: unknown) {
-  if (!edges || typeof edges !== 'object' || Array.isArray(edges)) {
-    return [];
-  }
-
-  return Object.entries(edges as Record<string, unknown>)
-    .filter(([, targets]) => Array.isArray(targets) && targets.length > 0)
-    .map(([predicate, targets]) => edgeGroup(predicate, targets as unknown[]));
-}
-
-function edgeGroup(predicate: string, targets: unknown[]) {
-  const wrapper = document.createElement('div');
-  wrapper.className = 'edge-group';
-
-  const label = document.createElement('div');
-  label.className = 'property-label';
-  label.textContent = formatLabel(predicate);
-
-  const list = document.createElement('div');
-  list.className = 'edge-list';
-  list.replaceChildren(...targets.map(edgeTarget));
-
-  wrapper.append(label, list);
-  return wrapper;
-}
-
-function edgeTarget(target: unknown) {
-  const item = document.createElement('button');
-  item.className = 'edge-target';
-  item.type = 'button';
-  item.textContent = String(target);
-  item.addEventListener('click', () => runAction(() => selectDocument(String(target))));
-  return item;
-}
-
-function property(label: string, value: unknown) {
-  const wrapper = document.createElement('div');
-  wrapper.className = 'property';
-
-  const labelEl = document.createElement('div');
-  labelEl.className = 'property-label';
-  labelEl.textContent = label;
-
-  const valueEl = renderPropertyValue(value);
-
-  wrapper.append(labelEl, valueEl);
-  return wrapper;
-}
-
 async function runAction(action: () => Promise<void>) {
   try {
     await action();
@@ -1138,20 +748,6 @@ function renderError(error: unknown) {
   documentBody.textContent = message;
 }
 
-function clickableRow(className: string) {
-  const row = document.createElement('div');
-  row.className = className;
-  row.role = 'button';
-  row.tabIndex = 0;
-  row.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      row.click();
-    }
-  });
-  return row;
-}
-
 function updateActiveRows() {
   document.querySelectorAll<HTMLElement>('[data-folder]').forEach((row) => {
     row.classList.toggle('active', row.dataset.folder === selectedFolder);
@@ -1160,115 +756,4 @@ function updateActiveRows() {
   document.querySelectorAll<HTMLElement>('[data-document]').forEach((row) => {
     row.classList.toggle('active', row.dataset.document === selectedDocument);
   });
-}
-
-function folderIcon(typeOrFolder: string): IconNode {
-  const key = normalizeFolderIconKey(typeOrFolder);
-  const icons: Record<string, IconNode> = {
-    code: Code,
-    note: FileText,
-    person: User,
-    project: FolderKanban,
-    intake: Inbox,
-    raw: Archive,
-    topic: Lightbulb,
-    'type-definition': Boxes,
-    Inbox,
-    Rocket: FolderKanban,
-    Newspaper,
-    Presentation,
-    BookOpen,
-    ReceiptText,
-    ListTodo,
-    FolderKanban,
-    FileText,
-    User,
-    Code,
-    Boxes,
-    Lightbulb,
-  };
-  return icons[key] ?? Circle;
-}
-
-function normalizeFolderIconKey(typeOrFolder: string) {
-  const aliases: Record<string, string> = {
-    intake: 'intake',
-    notes: 'note',
-    people: 'person',
-    projects: 'project',
-    topics: 'topic',
-    articles: 'Newspaper',
-    presentations: 'Presentation',
-    references: 'BookOpen',
-    finances: 'ReceiptText',
-    tasks: 'ListTodo',
-    type: 'type-definition',
-  };
-  return aliases[typeOrFolder] ?? typeOrFolder;
-}
-
-function folderTitleFromResponse(id: string, metadata?: Record<string, unknown>) {
-  const name = metadata?.name;
-  return typeof name === 'string' && name.length > 0 ? name : basenameFromId(id);
-}
-
-function depthFor(id: string) {
-  return Math.max(0, id.split('/').length - 1);
-}
-
-function cssEscape(value: string) {
-  return CSS.escape(value);
-}
-
-function basenameFromId(id: string) {
-  return id.split('/').at(-1) ?? id;
-}
-
-function formatLabel(label: string) {
-  return label.replaceAll('_', ' ');
-}
-
-function renderPropertyValue(value: unknown) {
-  const valueEl = document.createElement('div');
-  valueEl.className = 'property-value';
-
-  if (Array.isArray(value) && value.length > 0) {
-    valueEl.classList.add('pill-list');
-    valueEl.replaceChildren(...value.map(renderPill));
-    return valueEl;
-  }
-
-  valueEl.textContent = formatValue(value);
-  return valueEl;
-}
-
-function renderPill(value: unknown) {
-  const pill = document.createElement('span');
-  pill.className = 'pill';
-  pill.textContent = String(value);
-  return pill;
-}
-
-function formatValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.length === 0 ? '—' : value.join(', ');
-  }
-
-  if (value === null || value === undefined || value === '') {
-    return '—';
-  }
-
-  if (typeof value === 'object') {
-    return JSON.stringify(value, null, 2);
-  }
-
-  return String(value);
-}
-
-function requireElement<T extends HTMLElement>(id: string): T {
-  const element = document.getElementById(id);
-  if (!element) {
-    throw new Error(`Missing element #${id}`);
-  }
-  return element as T;
 }
