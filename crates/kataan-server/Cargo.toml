@@ -17,6 +17,7 @@ rust-embed = { version = "8", optional = true, features = ["mime-guess"] }
 percent-encoding = { version = "2", optional = true }
 anyhow.workspace = true
 axum.workspace = true
+ammonia = "4"
 clap.workspace = true
 ignore = "0.4"
 kataan-core = { path = "../kataan-core" }
@@ -27,11 +28,9 @@ pulldown-cmark = { version = "0.13" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-toml.workspace = true
-tower = "0.5"
-tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+tower = "0.5"
 tempfile.workspace = true

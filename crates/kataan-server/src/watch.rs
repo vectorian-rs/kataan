@@ -109,9 +109,13 @@ fn watch_loop(state: AppState, vault_path: PathBuf) -> anyhow::Result<()> {
                     match updated {
                         Ok(()) => process_change(&state, &mut fingerprint),
                         // A transient IO error (e.g. a file removed mid-hash by an
-                        // editor's atomic save) must not kill the watcher thread; the
-                        // change that caused it is re-driven by a later event.
+                        // editor's atomic save) must not kill the watcher thread.
+                        // Put the batch back rather than dropping it: `apply`
+                        // fails partway, so the paths it never reached would
+                        // otherwise be lost, and the server would keep serving
+                        // pre-edit content until some unrelated file changed.
                         Err(error) => {
+                            changed.extend(batch.iter().cloned());
                             error!(error = %error, "failed to update vault fingerprint; retrying on next change");
                             set_status(&state.watch, |status| {
                                 status.last_error = Some(error.to_string());
@@ -232,9 +236,12 @@ impl VaultFingerprint {
             if ignore.should_ignore_path(&path) {
                 continue;
             }
-            if path.is_dir() {
+            // Symlink-aware, matching `kataan_core::walk`: `ln -s . mirror`
+            // inside a vault would otherwise recurse until the stack overflows,
+            // which aborts the process rather than just the watcher.
+            if kataan_core::walk::is_regular_dir(&path) {
                 self.scan_dir(root, &path, ignore)?;
-            } else if path.is_file() {
+            } else if kataan_core::walk::is_regular_file(&path) {
                 self.hashes.insert(
                     kataan_core::walk::relative_slug(root, &path),
                     kataan_core::checksum::blake3_file(&path)?,
@@ -257,13 +264,13 @@ impl VaultFingerprint {
             let slug = kataan_core::walk::relative_slug(root, path);
             if ignore.should_ignore_path(path) {
                 self.remove_subtree(&slug);
-            } else if path.is_dir() {
+            } else if kataan_core::walk::is_regular_dir(path) {
                 // Reconcile the whole subtree: drop stale entries first, so a file
                 // deleted inside a directory reported only at directory granularity
                 // (e.g. coalesced FSEvents) is removed, not left as a ghost.
                 self.remove_subtree(&slug);
                 self.scan_dir(root, path, ignore)?;
-            } else if path.is_file() {
+            } else if kataan_core::walk::is_regular_file(path) {
                 self.hashes
                     .insert(slug, kataan_core::checksum::blake3_file(path)?);
             } else {

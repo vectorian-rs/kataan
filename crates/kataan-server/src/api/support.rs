@@ -233,9 +233,14 @@ pub(super) fn file_kind(extension: Option<&str>) -> &'static str {
         Some("json") => "json",
         Some("svg") => "image",
         Some("pdf") => "pdf",
-        Some(
-            "md" | "txt" | "toml" | "rs" | "ts" | "js" | "sh" | "bash" | "yaml" | "yml" | "py",
-        ) => "text",
+        // Anything the highlighter understands is text, so the two routes
+        // cannot disagree about whether a file is previewable.
+        Some("md" | "txt") => "text",
+        Some(extension)
+            if crate::api::render::highlight_language_name(Some(extension)).is_some() =>
+        {
+            "text"
+        }
         _ => "unsupported",
     }
 }
