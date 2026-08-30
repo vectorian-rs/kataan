@@ -189,14 +189,13 @@ pub fn update_document(
     // `updated_at` records when the record changed, so a call that changes
     // nothing must not move it. Otherwise a no-op update would dirty the file
     // on every invocation — the same git churn the sidecar rewrite avoids.
-    if body_changed || sidecar != before {
-        sidecar.insert(
-            "updated_at".to_owned(),
-            toml::Value::String(crate::time::iso8601_utc_now()),
-        );
-    } else {
+    if !body_changed && sidecar == before {
         return Ok(());
     }
+    sidecar.insert(
+        "updated_at".to_owned(),
+        toml::Value::String(crate::time::iso8601_utc_now()),
+    );
 
     write_sidecar_table(&record.toml_path, &sidecar)?;
     rebuild::rebuild_indexes(root)?;

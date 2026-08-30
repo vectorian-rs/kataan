@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::Path};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{diagnostic::Diagnostic, Error, Result};
+use crate::{diagnostic::Diagnostic, diagnostic_codes as codes, Error, Result};
 
 pub const ONTOLOGY_FILE: &str = "ontology.toml";
 
@@ -95,7 +95,7 @@ impl Ontology {
             if !is_predicate_name(name) {
                 diagnostics.push(
                     Diagnostic::error(
-                        "invalid-ontology-entry",
+                        codes::INVALID_ONTOLOGY_ENTRY,
                         format!("predicate `{name}` must use lowercase snake_case"),
                     )
                     .with_path(ONTOLOGY_FILE),
@@ -108,7 +108,7 @@ impl Ontology {
             {
                 diagnostics.push(
                     Diagnostic::error(
-                        "invalid-ontology-entry",
+                        codes::INVALID_ONTOLOGY_ENTRY,
                         format!("predicate `{name}` must define from, to, and cardinality"),
                     )
                     .with_path(ONTOLOGY_FILE),
@@ -118,7 +118,7 @@ impl Ontology {
             if predicate.symmetric && predicate.inverse.is_some() {
                 diagnostics.push(
                     Diagnostic::error(
-                        "invalid-ontology-entry",
+                        codes::INVALID_ONTOLOGY_ENTRY,
                         format!("predicate `{name}` cannot be both symmetric and inverse-backed"),
                     )
                     .with_path(ONTOLOGY_FILE),
@@ -128,7 +128,7 @@ impl Ontology {
             if predicate.symmetric && predicate.from != predicate.to {
                 diagnostics.push(
                     Diagnostic::error(
-                        "invalid-ontology-entry",
+                        codes::INVALID_ONTOLOGY_ENTRY,
                         format!(
                             "symmetric predicate `{name}` must have matching from and to endpoints"
                         ),
@@ -144,7 +144,7 @@ impl Ontology {
                 ) {
                     diagnostics.push(
                         Diagnostic::error(
-                            "invalid-ontology-entry",
+                            codes::INVALID_ONTOLOGY_ENTRY,
                             format!("predicate `{name}` has invalid cardinality `{cardinality}`"),
                         )
                         .with_path(ONTOLOGY_FILE),
@@ -158,7 +158,7 @@ impl Ontology {
                 if definition.r#type == FieldType::Array && definition.items.is_none() {
                     diagnostics.push(
                         Diagnostic::warning(
-                            "invalid-ontology-entry",
+                            codes::INVALID_ONTOLOGY_ENTRY,
                             format!(
                                 "`nodes.{type_name}.fields.{field}` is an array without `items`; elements are unchecked"
                             ),
@@ -172,7 +172,7 @@ impl Ontology {
                 {
                     diagnostics.push(
                         Diagnostic::error(
-                            "invalid-ontology-entry",
+                            codes::INVALID_ONTOLOGY_ENTRY,
                             format!(
                                 "`nodes.{type_name}.fields.{field}` sets `to` but is not a reference"
                             ),
@@ -186,7 +186,7 @@ impl Ontology {
                 if !schema.fields.contains_key(field) {
                     diagnostics.push(
                         Diagnostic::warning(
-                            "invalid-ontology-entry",
+                            codes::INVALID_ONTOLOGY_ENTRY,
                             format!(
                                 "`nodes.{type_name}` requires `{field}` but does not define it under `fields`"
                             ),
@@ -216,73 +216,79 @@ pub fn is_predicate_name(value: &str) -> bool {
 }
 
 /// Where a schema violation was found, and what was wrong.
-pub struct FieldViolation {
-    pub code: &'static str,
-    pub message: String,
-}
-
 impl FieldSchema {
-    /// Check one value against this field's declared type. `Ok(None)` means the
-    /// value is fine; `Ok(Some(id))` additionally reports a reference target
-    /// whose existence the caller must confirm, since that needs the whole
-    /// document set.
+    /// Check one value against this field's declared type. An empty `Vec` means
+    /// the value is fine; entries are reference targets whose existence the
+    /// caller must confirm, since that needs the whole document set.
     pub fn check(
         &self,
         field: &str,
         value: &toml::Value,
-    ) -> std::result::Result<Vec<String>, FieldViolation> {
-        let mismatch = |expected: &str| FieldViolation {
-            code: crate::diagnostic_codes::FIELD_TYPE_MISMATCH,
-            message: format!("`{field}` must be {expected}, found {}", value.type_str()),
+    ) -> std::result::Result<Vec<String>, Diagnostic> {
+        let mismatch = |expected: &str| {
+            Diagnostic::error(
+                codes::FIELD_TYPE_MISMATCH,
+                format!("`{field}` must be {expected}, found {}", value.type_str()),
+            )
+        };
+        let require = |ok: bool, expected: &str| -> std::result::Result<(), Diagnostic> {
+            if ok {
+                Ok(())
+            } else {
+                Err(mismatch(expected))
+            }
         };
 
-        match self.r#type {
-            FieldType::String => value
-                .as_str()
-                .map(|_| ())
-                .ok_or_else(|| mismatch("a string"))?,
-            FieldType::Integer => value
-                .as_integer()
-                .map(|_| ())
-                .ok_or_else(|| mismatch("an integer"))?,
-            FieldType::Number => value
-                .as_float()
-                .map(|_| ())
-                .or_else(|| value.as_integer().map(|_| ()))
-                .ok_or_else(|| mismatch("a number"))?,
-            FieldType::Boolean => value
-                .as_bool()
-                .map(|_| ())
-                .ok_or_else(|| mismatch("a boolean"))?,
-            FieldType::Table => value
-                .as_table()
-                .map(|_| ())
-                .ok_or_else(|| mismatch("a table"))?,
+        Ok(match self.r#type {
+            FieldType::String => {
+                require(value.is_str(), "a string")?;
+                Vec::new()
+            }
+            FieldType::Integer => {
+                require(value.is_integer(), "an integer")?;
+                Vec::new()
+            }
+            FieldType::Number => {
+                require(value.is_float() || value.is_integer(), "a number")?;
+                Vec::new()
+            }
+            FieldType::Boolean => {
+                require(value.is_bool(), "a boolean")?;
+                Vec::new()
+            }
+            FieldType::Table => {
+                require(value.is_table(), "a table")?;
+                Vec::new()
+            }
             FieldType::Date | FieldType::Instant => {
                 let raw = value
                     .as_str()
                     .ok_or_else(|| mismatch("a timestamp string"))?;
-                let parsed =
-                    crate::time::Timestamp::parse(raw).map_err(|error| FieldViolation {
-                        code: crate::diagnostic_codes::INVALID_TIMESTAMP,
-                        message: format!("`{field}`: {error}"),
-                    })?;
+                let parsed = crate::time::Timestamp::parse(raw).map_err(|error| {
+                    Diagnostic::error(codes::INVALID_TIMESTAMP, format!("`{field}`: {error}"))
+                })?;
                 if self.r#type == FieldType::Instant
                     && parsed.precision() != crate::time::Precision::Instant
                 {
-                    return Err(FieldViolation {
-                        code: crate::diagnostic_codes::FIELD_TYPE_MISMATCH,
-                        message: format!(
+                    return Err(Diagnostic::error(
+                        codes::FIELD_TYPE_MISMATCH,
+                        format!(
                             "`{field}` must be an exact instant, but `{raw}` is only {:?} precision",
                             parsed.precision()
                         ),
-                    });
+                    ));
                 }
+                Vec::new()
             }
-            FieldType::Interval => return check_interval(field, value).map(|_| Vec::new()),
+            FieldType::Interval => {
+                check_interval(field, value)?;
+                Vec::new()
+            }
             FieldType::Reference => {
-                let id = value.as_str().ok_or_else(|| mismatch("a document id"))?;
-                return Ok(vec![id.to_owned()]);
+                vec![value
+                    .as_str()
+                    .ok_or_else(|| mismatch("a document id"))?
+                    .to_owned()]
             }
             FieldType::Array => {
                 let items = value.as_array().ok_or_else(|| mismatch("an array"))?;
@@ -299,21 +305,17 @@ impl FieldSchema {
                 for item in items {
                     references.extend(element.check(field, item)?);
                 }
-                return Ok(references);
+                references
             }
-        }
-        Ok(Vec::new())
+        })
     }
 }
 
 /// An interval is `{ from, to? }`. An absent `to` is deliberately legal: an
 /// open interval means "still true", which is a fact about the world rather
 /// than missing data. Policy about open intervals belongs to the vault.
-fn check_interval(field: &str, value: &toml::Value) -> std::result::Result<(), FieldViolation> {
-    let invalid = |message: String| FieldViolation {
-        code: crate::diagnostic_codes::INVALID_INTERVAL,
-        message,
-    };
+fn check_interval(field: &str, value: &toml::Value) -> std::result::Result<(), Diagnostic> {
+    let invalid = |message: String| Diagnostic::error(codes::INVALID_INTERVAL, message);
     let table = value.as_table().ok_or_else(|| {
         invalid(format!(
             "`{field}` must be a table with `from` and optional `to`"
@@ -349,88 +351,64 @@ fn check_interval(field: &str, value: &toml::Value) -> std::result::Result<(), F
 /// Runs after the vault walk so every document is visible, which is what makes
 /// `reference` checkable — and means one implementation covers both the
 /// top-level and nested document walkers.
+///
+/// Diagnostics come back without a path; the caller attaches it.
 pub fn validate_node_fields(
     ontology: &Ontology,
     metadata: &crate::document::DocumentMetadata,
     known_document_types: &BTreeMap<String, String>,
-) -> Vec<FieldViolation> {
+) -> Vec<Diagnostic> {
     let Some(schema) = ontology.nodes.get(&metadata.r#type) else {
         return Vec::new();
     };
-    let mut violations = Vec::new();
+    // Serialize once rather than hand-mapping field names: `DocumentMetadata`
+    // already flattens `extra`, so this is the document exactly as authored,
+    // and schemas can address kataan's own keys and the vault's alike.
+    let Ok(fields) = toml::Table::try_from(metadata) else {
+        return Vec::new();
+    };
+    let mut diagnostics = Vec::new();
 
     for field in &schema.required {
-        if field_value(metadata, field).is_none() {
-            violations.push(FieldViolation {
-                code: crate::diagnostic_codes::MISSING_REQUIRED_FIELD,
-                message: format!("type `{}` requires field `{field}`", metadata.r#type),
-            });
+        if !fields.contains_key(field) {
+            diagnostics.push(Diagnostic::error(
+                codes::MISSING_REQUIRED_FIELD,
+                format!("type `{}` requires field `{field}`", metadata.r#type),
+            ));
         }
     }
 
     for (field, field_schema) in &schema.fields {
-        // Absent is fine unless `required` said otherwise, already handled above.
-        let Some(value) = field_value(metadata, field) else {
+        // Absent is fine unless `required` said otherwise, handled above.
+        let Some(value) = fields.get(field) else {
             continue;
         };
-        match field_schema.check(field, &value) {
+        match field_schema.check(field, value) {
             Ok(references) => {
                 for target in references {
                     let Some(target_type) = known_document_types.get(&target) else {
-                        violations.push(FieldViolation {
-                            code: crate::diagnostic_codes::UNRESOLVED_FIELD_REFERENCE,
-                            message: format!(
-                                "`{field}` references `{target}`, which does not exist"
-                            ),
-                        });
+                        diagnostics.push(Diagnostic::error(
+                            codes::UNRESOLVED_FIELD_REFERENCE,
+                            format!("`{field}` references `{target}`, which does not exist"),
+                        ));
                         continue;
                     };
                     if !field_schema.to.is_empty() && !type_allowed(&field_schema.to, target_type) {
-                        violations.push(FieldViolation {
-                            code: crate::diagnostic_codes::FIELD_TYPE_MISMATCH,
-                            message: format!(
+                        diagnostics.push(Diagnostic::error(
+                            codes::FIELD_TYPE_MISMATCH,
+                            format!(
                                 "`{field}` references `{target}` of type `{target_type}`, which is not among {:?}",
                                 field_schema.to
                             ),
-                        });
+                        ));
                     }
                 }
             }
-            Err(violation) => violations.push(violation),
+            Err(diagnostic) => diagnostics.push(diagnostic),
         }
     }
 
-    violations
-}
-
-/// Look a field up by name, whether it is one kataan models or one the vault
-/// added. Schemas address both the same way, so a vault can constrain
-/// `occurred_at` and `linkedin` in one place.
-fn field_value(metadata: &crate::document::DocumentMetadata, field: &str) -> Option<toml::Value> {
-    let string = |value: &Option<String>| value.clone().map(toml::Value::String);
-    match field {
-        "type" => Some(toml::Value::String(metadata.r#type.clone())),
-        "markdown" => Some(toml::Value::String(metadata.markdown.clone())),
-        "status" => string(&metadata.status),
-        "created_by" => string(&metadata.created_by),
-        "last_updated_by" => string(&metadata.last_updated_by),
-        "occurred_at" => string(&metadata.occurred_at),
-        "created_at" => string(&metadata.created_at),
-        "updated_at" => string(&metadata.updated_at),
-        "aliases" => Some(string_array(&metadata.aliases)),
-        "labels" => Some(string_array(&metadata.labels)),
-        other => metadata.extra.get(other).cloned(),
-    }
-}
-
-fn string_array(values: &[String]) -> toml::Value {
-    toml::Value::Array(
-        values
-            .iter()
-            .cloned()
-            .map(toml::Value::String)
-            .collect::<Vec<_>>(),
-    )
+    diagnostics
 }
 
 #[cfg(test)]
@@ -458,7 +436,7 @@ mod tests {
         let diagnostics = ontology.validate();
         assert!(diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.code == "invalid-ontology-entry"));
+            .any(|diagnostic| diagnostic.code == codes::INVALID_ONTOLOGY_ENTRY));
         assert!(diagnostics.len() >= 3);
     }
 }

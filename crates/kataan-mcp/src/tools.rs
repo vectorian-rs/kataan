@@ -225,14 +225,11 @@ fn get_document(vault: &Path, args: &Value) -> Result<String> {
 }
 
 fn documents(vault: &Path, args: &Value) -> Result<String> {
-    let direction = match opt_str(args, "direction") {
-        Some(value) => value.parse().map_err(|error: String| anyhow!(error))?,
-        None => kataan_core::query::Direction::Both,
-    };
-    let include = match opt_str(args, "include").as_deref() {
-        Some("markdown") => kataan_core::query::Include::Markdown,
-        Some("metadata") | None => kataan_core::query::Include::Metadata,
-        Some(other) => return Err(anyhow!("invalid include `{other}`")),
+    let direction = opt_direction(args)?;
+    // `Include` already derives Deserialize with the lowercase names.
+    let include = match args.get("include") {
+        Some(value) => serde_json::from_value(value.clone()).context("invalid `include`")?,
+        None => kataan_core::query::Include::default(),
     };
     let query = kataan_core::query::DocumentQuery {
         ids: str_vec(args, "ids"),
@@ -318,10 +315,7 @@ fn vault_info(vault: &Path) -> Result<String> {
 
 fn neighbors(vault: &Path, args: &Value) -> Result<String> {
     let id = parse_id(args, "id")?;
-    let direction = match opt_str(args, "direction") {
-        Some(value) => value.parse().map_err(|error: String| anyhow!(error))?,
-        None => kataan_core::query::Direction::Both,
-    };
+    let direction = opt_direction(args)?;
     let loaded = LoadedVault::load(vault)?;
     let result = kataan_core::query::neighbors(
         &loaded,
@@ -439,15 +433,18 @@ fn opt_str_vec(args: &Value, key: &str) -> Option<Vec<String>> {
 /// Extra sidecar fields from an object-valued argument. `mutate` rejects any
 /// key kataan defines, so no filtering is needed here.
 fn extra_fields(args: &Value, key: &str) -> std::collections::BTreeMap<String, toml::Value> {
-    args.get(key)
-        .and_then(Value::as_object)
-        .map(|fields| {
-            fields
-                .iter()
-                .filter_map(|(name, value)| Some((name.clone(), json_to_toml(value)?)))
-                .collect()
-        })
-        .unwrap_or_default()
+    match args.get(key).and_then(json_to_toml) {
+        Some(toml::Value::Table(fields)) => fields.into_iter().collect(),
+        _ => Default::default(),
+    }
+}
+
+/// `direction` defaults to the enum's own default rather than restating it.
+fn opt_direction(args: &Value) -> Result<kataan_core::query::Direction> {
+    match opt_str(args, "direction") {
+        Some(value) => value.parse().map_err(|error: String| anyhow!(error)),
+        None => Ok(kataan_core::query::Direction::default()),
+    }
 }
 
 /// Convert a JSON tool argument to TOML. JSON null has no TOML representation,

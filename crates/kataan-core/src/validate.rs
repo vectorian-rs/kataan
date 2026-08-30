@@ -396,13 +396,11 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
 
     for (path, _, metadata) in loaded_metadata {
         if let Some(ontology) = &ontology {
-            for violation in
+            issues.extend(
                 crate::ontology::validate_node_fields(ontology, &metadata, &known_document_types)
-            {
-                issues.push(
-                    Diagnostic::error(violation.code, violation.message).with_path(path.clone()),
-                );
-            }
+                    .into_iter()
+                    .map(|diagnostic| diagnostic.with_path(path.clone())),
+            );
 
             for (predicate_name, targets) in &metadata.edges {
                 let Some(predicate) = ontology.edges.get(predicate_name) else {

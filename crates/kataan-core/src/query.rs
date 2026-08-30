@@ -215,6 +215,13 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
         resolved
     };
 
+    // Built once rather than per candidate: the closure below runs over every
+    // document in the vault when no `ids` were given.
+    let path_prefix = query
+        .path_prefix
+        .as_ref()
+        .map(|prefix| (prefix.as_str(), format!("{prefix}/")));
+
     let matched: Vec<&CanonicalId> = candidates
         .into_iter()
         .filter(|id| {
@@ -233,26 +240,25 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
                     .labels
                     .iter()
                     .all(|label| record.metadata.labels.contains(label))
-                && query.path_prefix.as_ref().is_none_or(|prefix| {
-                    let id = id.as_str();
-                    id == prefix || id.starts_with(&format!("{prefix}/"))
+                && path_prefix.as_ref().is_none_or(|(prefix, with_slash)| {
+                    id.as_str() == *prefix || id.as_str().starts_with(with_slash.as_str())
                 })
                 && linked.as_ref().is_none_or(|allowed| allowed.contains(*id))
         })
         .collect();
 
     let total = matched.len();
-    let page: Vec<&CanonicalId> = matched.into_iter().skip(query.offset).collect();
-    if page.len() > limit {
+    let page_len = total.saturating_sub(query.offset);
+    if page_len > limit {
         return Err(Error::InvalidRequest(format!(
-            "{} documents match (offset {}), which exceeds limit {limit}; narrow the query or page with offset",
-            page.len(),
+            "{page_len} documents match (offset {}), which exceeds limit {limit}; narrow the query or page with offset",
             query.offset
         )));
     }
 
-    let documents = page
+    let documents = matched
         .into_iter()
+        .skip(query.offset)
         .filter_map(|id| {
             let summary = summarize(vault, id)?;
             let markdown = match query.include {
@@ -273,15 +279,23 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
 /// Build the display summary for a document id, or `None` if it is not in the
 /// vault (an edge may point at a document that was deleted).
 pub fn summarize(vault: &LoadedVault, id: &CanonicalId) -> Option<DocumentSummary> {
-    let record = vault.documents.get(id)?;
-    Some(DocumentSummary {
+    vault
+        .documents
+        .get(id)
+        .map(|record| summarize_record(id, record))
+}
+
+/// Build a summary from a record the caller already holds, so iteration over
+/// `documents` does not look each one up a second time.
+fn summarize_record(id: &CanonicalId, record: &crate::vault::DocumentRecord) -> DocumentSummary {
+    DocumentSummary {
         id: id.as_str().to_owned(),
         r#type: record.metadata.r#type.clone(),
         title: display_name(&record.metadata).unwrap_or_else(|| title_from_id(id.as_str())),
         status: record.metadata.status.clone(),
         labels: record.metadata.labels.clone(),
         is_folder_index: record.is_folder_index,
-    })
+    }
 }
 
 /// Neighbours of `id`, optionally restricted to a single predicate.
@@ -339,7 +353,7 @@ pub fn subgraph(vault: &LoadedVault, types: &[String], predicates: &[String]) ->
         .documents
         .iter()
         .filter(|(_, record)| type_matches(&record.metadata.r#type))
-        .filter_map(|(id, _)| summarize(vault, id))
+        .map(|(id, record)| summarize_record(id, record))
         .collect();
     let present: BTreeSet<&str> = nodes.iter().map(|node| node.id.as_str()).collect();
 

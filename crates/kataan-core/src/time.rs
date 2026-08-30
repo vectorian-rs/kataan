@@ -82,16 +82,19 @@ impl Timestamp {
             return Err(TimestampError::UnixEpoch(raw.to_owned()));
         }
 
-        let precision = if raw.contains('T') {
+        let precision = match raw.split_once('T') {
             // Datetimes must pin a zone: without one the instant is ambiguous.
-            if !(raw.ends_with('Z') || has_offset(raw)) {
-                return Err(TimestampError::Zoneless(raw.to_owned()));
+            // Only the clock half is inspected, since the date half is full of
+            // `-` separators.
+            Some((_, clock)) => {
+                if !(clock.ends_with('Z') || clock.contains('+') || clock.contains('-')) {
+                    return Err(TimestampError::Zoneless(raw.to_owned()));
+                }
+                OffsetDateTime::parse(raw, &Rfc3339)
+                    .map_err(|_| TimestampError::Unparseable(raw.to_owned()))?;
+                Precision::Instant
             }
-            OffsetDateTime::parse(raw, &Rfc3339)
-                .map_err(|_| TimestampError::Unparseable(raw.to_owned()))?;
-            Precision::Instant
-        } else {
-            parse_civil(raw)?
+            None => parse_civil(raw)?,
         };
 
         Ok(Self {
@@ -120,9 +123,10 @@ impl std::fmt::Display for Timestamp {
 fn parse_civil(raw: &str) -> Result<Precision, TimestampError> {
     let unparseable = || TimestampError::Unparseable(raw.to_owned());
     let mut parts = raw.split('-');
+    // `split` always yields at least one item; an empty `raw` fails the parse.
     let year: i32 = parts
         .next()
-        .ok_or_else(unparseable)?
+        .unwrap_or_default()
         .parse()
         .map_err(|_| unparseable())?;
 
@@ -141,13 +145,6 @@ fn parse_civil(raw: &str) -> Result<Precision, TimestampError> {
     let day: u8 = day.parse().map_err(|_| unparseable())?;
     Date::from_calendar_date(year, month, day).map_err(|_| unparseable())?;
     Ok(Precision::Day)
-}
-
-/// Whether a datetime carries a `+HH:MM` / `-HH:MM` offset. Only the time half
-/// is inspected, since the date half is full of `-` separators.
-fn has_offset(raw: &str) -> bool {
-    raw.split_once('T')
-        .is_some_and(|(_, clock)| clock.contains('+') || clock.contains('-'))
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
-use kataan_core::title::title_from_id;
+use kataan_core::{id::CanonicalId, title::title_from_id};
 
 use crate::{state::AppState, watch::WatchStatus};
 
@@ -104,19 +104,11 @@ pub struct HighlightResponse {
     pub html: String,
 }
 
+/// A resolved document: its canonical id plus enough context to fetch or route
+/// to it without a second lookup. Shared by both resolve endpoints, which
+/// differ only in how the id is looked up.
 #[derive(Debug, Serialize)]
 pub struct ResolveResponse {
-    pub id: String,
-    pub folder: String,
-    pub type_folder: String,
-    pub route_token: String,
-    pub is_folder_index: bool,
-}
-
-/// The canonical id a filesystem path belongs to, plus enough context to fetch
-/// or route to it without a second lookup.
-#[derive(Debug, Serialize)]
-pub struct ResolvePathResponse {
     pub id: String,
     pub folder: String,
     pub type_folder: String,
@@ -166,20 +158,6 @@ fn comma_separated(value: Option<&String>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-impl SubgraphQuery {
-    fn split(value: Option<&String>) -> Vec<String> {
-        value
-            .map(|raw| {
-                raw.split(',')
-                    .map(str::trim)
-                    .filter(|part| !part.is_empty())
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -425,23 +403,13 @@ pub async fn resolve_route(
                 query.token, query.r#type
             ))
         })?;
-    let document = loaded
-        .documents
-        .get(&id)
-        .ok_or_else(|| ApiError::not_found(format!("document `{id}` does not exist")))?;
-    Ok(Json(ResolveResponse {
-        id: id.as_str().to_owned(),
-        folder: id.containing_folder().to_owned(),
-        type_folder: id.top_level_folder().to_owned(),
-        route_token: kataan_core::vault::route_token_for_id(&id),
-        is_folder_index: document.is_folder_index,
-    }))
+    Ok(Json(resolved(&loaded, &id)))
 }
 
 pub async fn resolve_path(
     State(state): State<AppState>,
     Query(query): Query<PathQuery>,
-) -> Result<Json<ResolvePathResponse>, ApiError> {
+) -> Result<Json<ResolveResponse>, ApiError> {
     let loaded = read_loaded_vault(&state)?;
     let id = loaded
         .resolve_path(&query.path)
@@ -452,17 +420,22 @@ pub async fn resolve_path(
             ))
         })?
         .clone();
-    let is_folder_index = loaded
-        .documents
-        .get(&id)
-        .is_some_and(|record| record.is_folder_index);
-    Ok(Json(ResolvePathResponse {
+    Ok(Json(resolved(&loaded, &id)))
+}
+
+/// The shared projection behind both resolve endpoints: they differ only in how
+/// the id was found, not in what a caller gets back.
+fn resolved(loaded: &kataan_core::vault::LoadedVault, id: &CanonicalId) -> ResolveResponse {
+    ResolveResponse {
         id: id.as_str().to_owned(),
         folder: id.containing_folder().to_owned(),
         type_folder: id.top_level_folder().to_owned(),
-        route_token: kataan_core::vault::route_token_for_id(&id),
-        is_folder_index,
-    }))
+        route_token: kataan_core::vault::route_token_for_id(id),
+        is_folder_index: loaded
+            .documents
+            .get(id)
+            .is_some_and(|record| record.is_folder_index),
+    }
 }
 
 /// Filters arrive as a query string; `ids` and `labels` accept comma-separated
@@ -535,8 +508,8 @@ pub async fn subgraph(
     Query(query): Query<SubgraphQuery>,
 ) -> Result<Json<kataan_core::query::Subgraph>, ApiError> {
     let loaded = read_loaded_vault(&state)?;
-    let types = SubgraphQuery::split(query.types.as_ref());
-    let predicates = SubgraphQuery::split(query.predicates.as_ref());
+    let types = comma_separated(query.types.as_ref());
+    let predicates = comma_separated(query.predicates.as_ref());
     Ok(Json(kataan_core::query::subgraph(
         &loaded,
         &types,
