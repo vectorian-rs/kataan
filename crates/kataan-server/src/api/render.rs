@@ -9,10 +9,21 @@ pub(super) fn normalize_lumis_line_html(html: &str) -> String {
         .replace("\n</div>", "</div>")
 }
 
+/// How a vault-relative path found in a Markdown link resolves.
+pub(super) enum LinkTarget {
+    /// A document in this vault; the value is its canonical id.
+    Document(String),
+    /// A real file that is not a document (an image, a PDF, a data file).
+    File,
+    /// Nothing in this vault — a stale link.
+    Missing,
+}
+
 pub(super) fn render_markdown_html(
     markdown: &str,
     base_folder: Option<&str>,
     theme_preference: Option<&str>,
+    resolve_link: &dyn Fn(&str) -> LinkTarget,
 ) -> Result<String, ApiError> {
     use pulldown_cmark::{CodeBlockKind, CowStr, Event, Options, Parser, Tag, TagEnd};
 
@@ -60,6 +71,50 @@ pub(super) fn render_markdown_html(
                 title,
                 id,
             })),
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => {
+                let rewritten = rewrite_markdown_link(&dest_url, base_folder, resolve_link);
+                if let Some(RewrittenLink { href, document_id }) = rewritten {
+                    // A document link becomes an app route, marked so the SPA
+                    // can select it in place instead of reloading the page.
+                    // The href stays real, so middle-click and copy-link work.
+                    if let Some(document_id) = document_id {
+                        events.push(Event::Html(CowStr::Boxed(
+                            format!(
+                                "<a href=\"{}\" data-document=\"{}\">",
+                                escape_attribute(&href),
+                                escape_attribute(&document_id)
+                            )
+                            .into_boxed_str(),
+                        )));
+                        for inner in parser.by_ref() {
+                            match inner {
+                                Event::End(TagEnd::Link) => break,
+                                other => events.push(other),
+                            }
+                        }
+                        events.push(Event::Html(CowStr::Borrowed("</a>")));
+                        continue;
+                    }
+                    events.push(Event::Start(Tag::Link {
+                        link_type,
+                        dest_url: CowStr::Boxed(href.into_boxed_str()),
+                        title,
+                        id,
+                    }));
+                    continue;
+                }
+                events.push(Event::Start(Tag::Link {
+                    link_type,
+                    dest_url,
+                    title,
+                    id,
+                }));
+            }
             other => events.push(other),
         }
     }
@@ -90,12 +145,83 @@ pub(super) fn sanitize_vault_html(html: &str) -> String {
             // Syntax highlighting and heading anchors are emitted as classes
             // by our own renderer, so they have to survive the clean.
             builder
-                .add_generic_attributes(["class"])
+                // `class` carries our highlighter output; `data-document` is
+                // how a rewritten internal link tells the app what to select.
+                .add_generic_attributes(["class", "data-document"])
                 .url_schemes(HashSet::from(["http", "https", "mailto", "data"]));
             builder
         })
         .clean(html)
         .to_string()
+}
+
+pub(super) struct RewrittenLink {
+    pub href: String,
+    /// Set when the link points at a document, so the client can select it
+    /// without a page load.
+    pub document_id: Option<String>,
+}
+
+/// Turn a filesystem-relative Markdown link into something the app can follow.
+///
+/// Documents in a vault link to each other the way files do — `datasentics.md`,
+/// `../docs/plan.md`. Left alone, the browser resolves those against the
+/// current route and lands nowhere. Here they become the document's own route.
+///
+/// Returns `None` for anything that is not a local path (external URLs, plain
+/// anchors), which is left exactly as the author wrote it.
+pub(super) fn rewrite_markdown_link(
+    dest_url: &str,
+    base_folder: Option<&str>,
+    resolve_link: &dyn Fn(&str) -> LinkTarget,
+) -> Option<RewrittenLink> {
+    if !is_local_markdown_url(dest_url) {
+        return None;
+    }
+    let (path_part, query, fragment) = split_markdown_url(dest_url);
+    let vault_relative_path = normalize_markdown_asset_path(base_folder.unwrap_or(""), path_part)?;
+
+    let suffix = |base: String| {
+        let mut out = base;
+        if let Some(fragment) = fragment {
+            out.push('#');
+            out.push_str(fragment);
+        }
+        out
+    };
+
+    match resolve_link(&vault_relative_path) {
+        LinkTarget::Document(id) => Some(RewrittenLink {
+            href: suffix(format!("/{id}")),
+            document_id: Some(id),
+        }),
+        // A real non-document file: serve the bytes rather than 404 in the SPA.
+        LinkTarget::File => {
+            let mut href = format!(
+                "/api/file/raw?path={}",
+                percent_encode_query_value(&vault_relative_path)
+            );
+            if let Some(query) = query {
+                href.push('&');
+                href.push_str(query);
+            }
+            Some(RewrittenLink {
+                href: suffix(href),
+                document_id: None,
+            })
+        }
+        // Leave the author's text alone but say plainly that it goes nowhere,
+        // rather than silently resetting the app.
+        LinkTarget::Missing => None,
+    }
+}
+
+fn escape_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub(super) fn rewrite_markdown_svg_url(
@@ -312,7 +438,8 @@ mod tests {
         ];
 
         for markdown in hostile {
-            let html = render_markdown_html(markdown, None, None).unwrap();
+            let html =
+                render_markdown_html(markdown, None, None, &|_| LinkTarget::Missing).unwrap();
             let lowered = html.to_lowercase();
             for banned in ["onerror", "onload", "<script", "javascript:", "<iframe"] {
                 assert!(
@@ -330,6 +457,7 @@ mod tests {
              | a | b |\n| - | - |\n| 1 | 2 |\n",
             None,
             None,
+            &|_| LinkTarget::Missing,
         )
         .unwrap();
 
@@ -341,10 +469,126 @@ mod tests {
     #[test]
     fn highlighted_code_keeps_its_classes() {
         // Sanitizing must not strip the spans our own highlighter emits.
-        let html = render_markdown_html("```rust\nfn main() {}\n```\n", None, None).unwrap();
+        let html = render_markdown_html("```rust\nfn main() {}\n```\n", None, None, &|_| {
+            LinkTarget::Missing
+        })
+        .unwrap();
         assert!(
             html.contains("class="),
             "highlight classes stripped: {html}"
         );
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    /// A vault where `organizations/datasentics` is a document, `charts/x.svg`
+    /// is a plain file, and nothing else exists.
+    fn resolver(path: &str) -> LinkTarget {
+        let id = path
+            .strip_suffix(".md")
+            .unwrap_or(path)
+            .strip_suffix("/index")
+            .unwrap_or_else(|| path.strip_suffix(".md").unwrap_or(path));
+        match id {
+            "organizations/datasentics" | "docs/plan" | "organizations" => {
+                LinkTarget::Document(id.to_owned())
+            }
+            _ if path.ends_with(".svg") => LinkTarget::File,
+            _ => LinkTarget::Missing,
+        }
+    }
+
+    fn render(markdown: &str, base: &str) -> String {
+        render_markdown_html(markdown, Some(base), None, &resolver).unwrap()
+    }
+
+    #[test]
+    fn a_sibling_document_link_becomes_an_app_route() {
+        // The shape that is all over a real vault: a bare filename.
+        let html = render("[DataSentics](datasentics.md)", "organizations");
+        assert!(
+            html.contains(r#"href="/organizations/datasentics""#),
+            "not rewritten: {html}"
+        );
+        assert!(
+            html.contains(r#"data-document="organizations/datasentics""#),
+            "missing selection marker: {html}"
+        );
+        assert!(html.contains("DataSentics</a>"), "link text lost: {html}");
+    }
+
+    #[test]
+    fn parent_relative_links_resolve_against_the_document_folder() {
+        // Two levels up from `organizations/eu` lands at the vault root, then
+        // down into `docs/`. `..` must be applied before resolution, not
+        // treated as a literal path segment.
+        let html = render("[plan](../../docs/plan.md)", "organizations/eu");
+        assert!(html.contains(r#"href="/docs/plan""#), "{html}");
+    }
+
+    #[test]
+    fn an_index_link_resolves_to_its_folder() {
+        let html = render("[all orgs](index.md)", "organizations");
+        assert!(html.contains(r#"href="/organizations""#), "{html}");
+    }
+
+    #[test]
+    fn a_fragment_survives_the_rewrite() {
+        let html = render("[section](datasentics.md#history)", "organizations");
+        assert!(
+            html.contains(r#"href="/organizations/datasentics#history""#),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn a_non_document_file_link_serves_the_file() {
+        let html = render("[chart](charts/x.svg)", "organizations");
+        assert!(html.contains("/api/file/raw?path="), "{html}");
+        // Not a document, so it must not be marked for in-app selection.
+        assert!(!html.contains("data-document"), "{html}");
+    }
+
+    #[test]
+    fn external_and_anchor_links_are_left_alone() {
+        for (markdown, expected) in [
+            (
+                "[site](https://example.com/x.md)",
+                "https://example.com/x.md",
+            ),
+            ("[top](#heading)", "#heading"),
+            ("[mail](mailto:a@b.c)", "mailto:a@b.c"),
+        ] {
+            let html = render(markdown, "organizations");
+            assert!(html.contains(expected), "`{markdown}` changed: {html}");
+            assert!(!html.contains("data-document"), "{html}");
+        }
+    }
+
+    #[test]
+    fn a_link_to_nothing_is_left_as_written() {
+        // Better a visibly dead link than one that silently resets the app.
+        let html = render("[gone](deleted-note.md)", "organizations");
+        assert!(html.contains(r#"href="deleted-note.md""#), "{html}");
+        assert!(!html.contains("data-document"), "{html}");
+    }
+
+    #[test]
+    fn a_link_escaping_the_vault_is_not_rewritten() {
+        let html = render("[escape](../../../../etc/passwd)", "organizations");
+        assert!(!html.contains("/etc/passwd\" data-document"), "{html}");
+        assert!(!html.contains("/api/file/raw"), "{html}");
+    }
+
+    #[test]
+    fn link_text_and_attributes_are_escaped() {
+        let html = render(
+            r#"[<img src=x onerror=alert(1)>](datasentics.md)"#,
+            "organizations",
+        );
+        assert!(!html.to_lowercase().contains("onerror"), "{html}");
     }
 }

@@ -110,7 +110,6 @@ Tools exposed by `kataan-mcp`:
 | `get_document` | read | `id` | Fetch one document's metadata, Markdown body, ancestors, and facets by canonical id, e.g. `notes/my-note`. |
 | `list_folders` | read | none | Return the vault's type-to-folder mapping. |
 | `get_folder` | read | `id` | List direct child folders and documents under a folder id, e.g. `notes`. |
-| `resolve` | read | `type`, `token` | Resolve an alias or slug route token within a type folder to a canonical id. |
 | `schema` | read | `kind` | Return the TOML schema for a kind such as `document`, `ontology`, or `index`. |
 | `vault_info` | read | none | Return the vault configuration/index. |
 | `resolve_path` | read | `path` | Resolve a filesystem path to a canonical id. Accepts either file of a pair (`notes/x.md`, `notes/x.toml`), a folder's `index`, or the extensionless form. |

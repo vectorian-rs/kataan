@@ -93,14 +93,6 @@ pub fn list() -> Value {
             object(&[("id", "string", "Folder id, e.g. notes.")], &["id"]),
         ),
         tool(
-            "resolve",
-            "Resolve a route token (alias or slug) within a type folder to a canonical id.",
-            object(
-                &[("type", "string", "Type folder to resolve within."), ("token", "string", "Alias or slug to resolve.")],
-                &["type", "token"],
-            ),
-        ),
-        tool(
             "resolve_path",
             "Resolve a filesystem path to a canonical document id. Accepts either file of a document pair (notes/x.md, notes/x.toml), a folder's index (resolves to the folder id), or the extensionless form. Use when you have a path from outside kataan and need an id for the other tools.",
             object(
@@ -203,7 +195,6 @@ pub fn call(vault: &Path, name: &str, args: &Value) -> Result<String> {
         "documents" => documents(vault, args),
         "list_folders" => list_folders(vault),
         "get_folder" => get_folder(vault, args),
-        "resolve" => resolve(vault, args),
         "resolve_path" => resolve_path(vault, args),
         "schema" => schema(vault, args),
         "vault_info" => vault_info(vault),
@@ -285,16 +276,6 @@ fn get_folder(vault: &Path, args: &Value) -> Result<String> {
         }
     }
     to_pretty(&json!({ "id": id.as_str(), "folders": folders, "documents": documents }))
-}
-
-fn resolve(vault: &Path, args: &Value) -> Result<String> {
-    let type_folder = str_arg(args, "type")?;
-    let token = str_arg(args, "token")?;
-    let loaded = LoadedVault::load(vault)?;
-    let id = loaded
-        .resolve_route_token(&type_folder, &token)
-        .ok_or_else(|| anyhow!("`{token}` does not resolve within `{type_folder}`"))?;
-    to_pretty(&json!({ "id": id.as_str() }))
 }
 
 fn resolve_path(vault: &Path, args: &Value) -> Result<String> {

@@ -81,7 +81,6 @@ pub struct FolderFileResponse {
 pub struct DocumentResponse {
     pub id: String,
     pub type_folder: String,
-    pub route_token: String,
     pub metadata: kataan_core::document::DocumentMetadata,
     pub markdown: String,
     pub html: String,
@@ -113,7 +112,6 @@ pub struct ResolveResponse {
     pub id: String,
     pub folder: String,
     pub type_folder: String,
-    pub route_token: String,
     pub is_folder_index: bool,
 }
 
@@ -167,12 +165,6 @@ pub struct FileQuery {
     pub theme: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ResolveQuery {
-    pub r#type: String,
-    pub token: String,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct DiagnosticResponse {
     pub severity: String,
@@ -208,7 +200,6 @@ pub fn router(state: AppState) -> Router {
         .route("/file", get(file_by_path))
         .route("/file/raw", get(raw_file_by_path))
         .route("/file/highlight", get(highlight_file_by_path))
-        .route("/resolve", get(resolve_route))
         .route("/resolve-path", get(resolve_path))
         .route("/documents", get(documents))
         .route("/graph/neighbors", get(neighbors))
@@ -392,23 +383,6 @@ pub async fn raw_file_by_path(
     raw_file_response(&state, &query.path)
 }
 
-pub async fn resolve_route(
-    State(state): State<AppState>,
-    Query(query): Query<ResolveQuery>,
-) -> Result<Json<ResolveResponse>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
-    let id = loaded
-        .resolve_route_token(&query.r#type, &query.token)
-        .cloned()
-        .ok_or_else(|| {
-            ApiError::not_found(format!(
-                "route token `{}` for type `{}` does not resolve",
-                query.token, query.r#type
-            ))
-        })?;
-    Ok(Json(resolved(&loaded, &id)))
-}
-
 pub async fn resolve_path(
     State(state): State<AppState>,
     Query(query): Query<PathQuery>,
@@ -433,7 +407,6 @@ fn resolved(loaded: &kataan_core::vault::LoadedVault, id: &CanonicalId) -> Resol
         id: id.as_str().to_owned(),
         folder: id.containing_folder().to_owned(),
         type_folder: id.top_level_folder().to_owned(),
-        route_token: kataan_core::vault::route_token_for_id(id),
         is_folder_index: loaded
             .documents
             .get(id)
