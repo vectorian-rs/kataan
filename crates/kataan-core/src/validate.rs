@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::Path,
-};
+use std::{collections::BTreeMap, path::Path};
 
 use crate::{
     constants::{DEFAULT_MAX_FOLDER_DEPTH, TYPE_DEFINITION, VAULT_CONFIG_FILE},
@@ -109,7 +106,6 @@ fn validate_type_registry(issues: &mut Vec<Diagnostic>, vault: &Vault, registry:
 
 fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
     let mut issues = Vec::new();
-    let mut known_document_ids = BTreeSet::new();
     let mut loaded_metadata = Vec::new();
     let max_folder_depth = vault
         .index
@@ -139,12 +135,11 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         Err(error) => return Err(error),
     };
 
-    let type_registry = Some(TypeRegistry::load(vault)?);
+    let type_registry = TypeRegistry::load(vault)?;
     let mut known_document_types = BTreeMap::new();
     match vault.load_documents_with_ignore(&ignore) {
         Ok(documents) => {
             for document in documents {
-                known_document_ids.insert(document.id.as_str().to_owned());
                 known_document_types
                     .insert(document.id.as_str().to_owned(), document.metadata.r#type);
             }
@@ -152,15 +147,18 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         // Swallowing this reported a clean vault while every read path — CLI,
         // server and MCP — failed outright on the same data. `validate` is the
         // tool meant to explain that, so it has to say so.
-        Err(error) => issues.push(Diagnostic::error(
-            codes::INVALID_VAULT_STRUCTURE,
-            format!("vault cannot be loaded: {error}"),
-        )),
+        Err(error) => issues.push(
+            Diagnostic::error(
+                codes::INVALID_VAULT_STRUCTURE,
+                format!("vault cannot be loaded: {error}"),
+            )
+            // Every other diagnostic carries a location; without one this drops
+            // out of anything grouping the report by file.
+            .with_path(VAULT_CONFIG_FILE),
+        ),
     }
 
-    if let Some(type_registry) = &type_registry {
-        validate_type_registry(&mut issues, vault, type_registry);
-    }
+    validate_type_registry(&mut issues, vault, &type_registry);
 
     for folder in vault.index.type_folders.values() {
         if !crate::index::is_safe_type_folder(folder) {
@@ -191,22 +189,23 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
         // The top-level type folder is the depth-0 case of the same walk, so
         // it now goes through the same code path. A check added in one place
         // covers every document instead of half the vault.
-        folder::validate_nested_folder_recursive(
-            &mut issues,
-            folder,
-            &folder_path,
-            &folder_path,
+        let walk = folder::FolderWalk {
+            root_folder: folder,
+            root_folder_path: &folder_path,
             max_folder_depth,
-            type_registry.as_ref(),
-            &vault.index.type_folders,
-            &ignore,
-            &mut known_document_ids,
-            &mut known_document_types,
-            &mut loaded_metadata,
-        )?;
+            type_registry: &type_registry,
+            type_folders: &vault.index.type_folders,
+            ignore: &ignore,
+        };
+        let mut collected = folder::Collected {
+            issues: &mut issues,
+            known_document_types: &mut known_document_types,
+            loaded_metadata: &mut loaded_metadata,
+        };
+        walk.folder(&mut collected, &folder_path)?;
     }
 
-    for (path, _, metadata) in loaded_metadata {
+    for (path, metadata) in loaded_metadata {
         if let Some(ontology) = &ontology {
             issues.extend(
                 crate::ontology::validate_node_fields(ontology, &metadata, &known_document_types)
