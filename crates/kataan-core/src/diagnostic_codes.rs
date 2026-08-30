@@ -11,6 +11,7 @@ pub const UNRESOLVED_FIELD_REFERENCE: &str = "unresolved-field-reference";
 pub const INVALID_TIMESTAMP: &str = "invalid-timestamp";
 pub const UNIX_EPOCH_TIMESTAMP: &str = "unix-epoch-timestamp";
 pub const ZONELESS_TIMESTAMP: &str = "zoneless-timestamp";
+pub const INVALID_VAULT_STRUCTURE: &str = "invalid-vault-structure";
 pub const INVALID_TOML: &str = "invalid-toml";
 pub const INVALID_SCAN_PATTERN: &str = "invalid-scan-pattern";
 pub const INVALID_TYPE: &str = "invalid-type";

@@ -115,6 +115,38 @@ impl Ontology {
                 );
             }
 
+            if let Some(inverse) = &predicate.inverse {
+                // An inverse is a *label* for the reverse direction, not a
+                // separately defined predicate — `owned_by.inverse = "owns"`
+                // needs no `[edges.owns]`. So existence cannot be required.
+                // What can be caught is a malformed name, and a name that
+                // collides with a real predicate pointing somewhere else.
+                if !is_predicate_name(inverse) {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            codes::INVALID_ONTOLOGY_ENTRY,
+                            format!(
+                                "predicate `{name}` declares inverse `{inverse}`, which must use lowercase snake_case"
+                            ),
+                        )
+                        .with_path(ONTOLOGY_FILE),
+                    );
+                }
+                if let Some(other) = self.edges.get(inverse) {
+                    if other.inverse.as_deref() != Some(name.as_str()) {
+                        diagnostics.push(
+                            Diagnostic::error(
+                                codes::INVALID_ONTOLOGY_ENTRY,
+                                format!(
+                                    "predicate `{name}` declares inverse `{inverse}`, but `{inverse}` is itself a predicate that does not declare `{name}` back; incoming edges would be keyed ambiguously"
+                                ),
+                            )
+                            .with_path(ONTOLOGY_FILE),
+                        );
+                    }
+                }
+            }
+
             if predicate.symmetric && predicate.inverse.is_some() {
                 diagnostics.push(
                     Diagnostic::error(
