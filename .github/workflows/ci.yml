@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# The job installs bun packages and builds ~500 crates, any of which can run
+# arbitrary build scripts. It needs nothing but read access.
+permissions:
+  contents: read
+
 # Cancel superseded runs on the same ref.
 concurrency:
   group: ci-${{ github.ref }}

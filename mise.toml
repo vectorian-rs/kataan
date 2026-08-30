@@ -48,9 +48,9 @@ run = [
 
 [tasks.test]
 description = "Build the web UI, then run all Rust tests"
-# The server test boots the binary and asserts `/` serves the SPA, which the
-# default `embed-ui` feature reads from apps/web/dist (gitignored). Without a
-# prior web build that fails as "no HTML" rather than "you forgot to build".
+# The default `embed-ui` feature makes rust-embed require apps/web/dist at
+# compile time, and dist is gitignored, so without this every Rust command
+# fails with a `#[derive(RustEmbed)] folder does not exist` error.
 run = [
   "bun install",
   "bun --filter @kataan/web build",
@@ -89,13 +89,24 @@ run = [
   "cargo fmt --check",
   "cargo test",
   "cargo clippy --all-targets -- -D warnings",
+  # The API-only build has its own `#[cfg]` paths (the `/` explainer, the
+  # startup hint). Nothing else compiles them, so they rot silently.
+  "cargo clippy -p kataan-server --no-default-features --all-targets -- -D warnings",
+  "cargo test -p kataan-server --no-default-features",
   "bun --filter @kataan/web format:check",
   "bun --filter @kataan/web check",
 ]
 
 [tasks.server]
 description = "Run Kataan with embedded UI. Usage: mise run server -- --vault /path/to/vault"
-run = "cargo run -p kataan-server --"
+# The default `embed-ui` feature makes rust-embed require apps/web/dist at
+# compile time, and dist is gitignored — without this a fresh clone fails with
+# a derive error rather than anything actionable.
+run = [
+  "bun install",
+  "bun --filter @kataan/web build",
+  "cargo run -p kataan-server --",
+]
 
 [tasks.cli]
 description = "Run the Kataan CLI. Usage: mise run cli -- validate /path/to/vault"
