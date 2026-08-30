@@ -79,7 +79,7 @@ pub fn folder_checksum_from_files(folder_path: impl AsRef<Path>) -> Result<Strin
 
     let index_md = folder_path.join("index.md");
     let index_toml = folder_path.join("index.toml");
-    if index_md.exists() && index_toml.exists() {
+    if crate::walk::is_regular_file(&index_md) && crate::walk::is_regular_file(&index_toml) {
         documents.push(FolderDocument {
             slug: "index".to_owned(),
             markdown: "index.md".to_owned(),
@@ -101,7 +101,9 @@ pub fn folder_checksum_from_files(folder_path: impl AsRef<Path>) -> Result<Strin
         let name = entry.file_name().to_string_lossy().to_string();
 
         if crate::walk::is_regular_dir(&path) {
-            if path.join("index.toml").exists() && path.join("index.md").exists() {
+            if crate::walk::is_regular_file(&path.join("index.toml"))
+                && crate::walk::is_regular_file(&path.join("index.md"))
+            {
                 subfolders.push(SubfolderChecksum {
                     name,
                     folder_checksum: folder_checksum_from_files(&path)?,
@@ -121,7 +123,7 @@ pub fn folder_checksum_from_files(folder_path: impl AsRef<Path>) -> Result<Strin
             continue;
         };
         let toml_path = folder_path.join(format!("{stem}.toml"));
-        if !toml_path.exists() {
+        if !crate::walk::is_regular_file(&toml_path) {
             continue;
         }
 

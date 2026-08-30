@@ -49,7 +49,7 @@ pub fn walk_type_folder(
 ) -> Result<Vec<VaultEntry>> {
     let mut entries = Vec::new();
     let relative_folder = Path::new(type_folder);
-    if root.join(relative_folder).exists() {
+    if is_regular_dir(&root.join(relative_folder)) {
         walk_folder(root, relative_folder, ignore, &mut entries)?;
     }
     entries.sort_by(|left, right| left.id().cmp(right.id()));
@@ -65,7 +65,7 @@ fn walk_folder(
     let folder_path = root.join(relative_folder);
     let index_md = folder_path.join("index.md");
     let index_toml = folder_path.join("index.toml");
-    if index_md.exists() && index_toml.exists() {
+    if is_regular_file(&index_md) && is_regular_file(&index_toml) {
         let relative_index = relative_folder.join("index.toml");
         let id = canonical_id_from_path(&relative_index)?;
         entries.push(VaultEntry::FolderIndex {
@@ -105,7 +105,7 @@ fn walk_folder(
             continue;
         };
         let toml_path = folder_path.join(format!("{stem}.toml"));
-        if !toml_path.exists() {
+        if !is_regular_file(&toml_path) {
             continue;
         }
 

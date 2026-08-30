@@ -25,5 +25,6 @@ pub const MISSING_TYPE_FOLDER: &str = "missing-type-folder";
 pub const PREDICATE_SOURCE_TYPE_MISMATCH: &str = "predicate-source-type-mismatch";
 pub const PREDICATE_TARGET_TYPE_MISMATCH: &str = "predicate-target-type-mismatch";
 pub const TYPE_FOLDER_MISMATCH: &str = "type-folder-mismatch";
+pub const UNSAFE_TYPE_FOLDER: &str = "unsafe-type-folder";
 pub const UNKNOWN_PREDICATE: &str = "unknown-predicate";
 pub const UNRESOLVED_EDGE_TARGET: &str = "unresolved-edge-target";
