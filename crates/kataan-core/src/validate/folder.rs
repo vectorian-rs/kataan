@@ -106,6 +106,10 @@ pub(super) fn validate_nested_folder_recursive(
         }
     }
 
+    // A `.toml` with no matching `.md` is a standalone file, not a half-written
+    // document: the vault format supports plain artifacts addressable by path,
+    // which are deliberately not documents and not graph nodes. Reporting them
+    // would fire on every legitimate data file a vault carries.
     document_toml_files.retain(|(path, _)| {
         path.file_stem()
             .and_then(|stem| stem.to_str())
@@ -213,11 +217,20 @@ pub(super) fn validate_metadata_markdown_path(
     false
 }
 
+/// The vault-relative path of a folder, e.g. `projects/company-x`.
+///
+/// At depth 0 the suffix is empty, and `Path::join("")` appends a separator —
+/// which would yield `projects/` and then `projects//x.toml` for every document
+/// directly inside a type folder.
 fn relative_folder_path(root_folder: &str, root_folder_path: &Path, folder_path: &Path) -> String {
-    folder_path
+    let suffix = folder_path
         .strip_prefix(root_folder_path)
-        .map(|path| Path::new(root_folder).join(path))
-        .unwrap_or_else(|_| Path::new(root_folder).to_path_buf())
+        .unwrap_or(Path::new(""));
+    if suffix.as_os_str().is_empty() {
+        return root_folder.to_owned();
+    }
+    Path::new(root_folder)
+        .join(suffix)
         .to_string_lossy()
         .replace('\\', "/")
 }

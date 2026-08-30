@@ -991,3 +991,87 @@ fn an_escaping_type_folder_is_refused_everywhere() {
     fs::remove_dir_all(&outside).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_vault_that_cannot_load_is_reported_not_called_clean() {
+    let root = crate::test_support::unique_temp_dir("unloadable");
+    crate::init::init_vault(&root, "Test").unwrap();
+
+    // An underscore is not a legal canonical id segment, so the walker returns
+    // InvalidCanonicalIdAtPath and `Vault::load()` fails — meaning every CLI,
+    // server and MCP read path errors out on this vault.
+    fs::write(root.join("notes/my_note.md"), "# X\n").unwrap();
+    fs::write(
+        root.join("notes/my_note.toml"),
+        "type = \"note\"\nmarkdown = \"my_note.md\"\n",
+    )
+    .unwrap();
+    assert!(
+        crate::vault::LoadedVault::load(&root).is_err(),
+        "fixture no longer reproduces an unloadable vault"
+    );
+
+    // `validate` used to swallow that error and report the vault clean.
+    let report = validate(&root).unwrap();
+    assert!(
+        !report.is_ok(),
+        "validate called an unloadable vault clean: {:?}",
+        report
+            .diagnostics
+            .iter()
+            .map(|d| &d.code)
+            .collect::<Vec<_>>()
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_inverse_colliding_with_another_predicate_is_reported() {
+    use crate::ontology::{EdgePredicate, Ontology};
+    use std::collections::BTreeMap;
+
+    let predicate = |inverse: Option<&str>| EdgePredicate {
+        from: vec!["*".to_owned()],
+        to: vec!["*".to_owned()],
+        inverse: inverse.map(str::to_owned),
+        symmetric: false,
+        cardinality: Some("many-to-many".to_owned()),
+        description: None,
+    };
+
+    // A free-form inverse label needs no definition of its own — this is how
+    // the default ontology works and must stay valid.
+    let derived_label = Ontology {
+        schema_version: "0.1.0".to_owned(),
+        nodes: BTreeMap::new(),
+        edges: BTreeMap::from([("owned_by".to_owned(), predicate(Some("owns")))]),
+    };
+    assert!(derived_label.validate().is_empty());
+
+    // But if `owns` is itself a predicate pointing elsewhere, incoming edges
+    // would be keyed ambiguously.
+    let colliding = Ontology {
+        schema_version: "0.1.0".to_owned(),
+        nodes: BTreeMap::new(),
+        edges: BTreeMap::from([
+            ("owned_by".to_owned(), predicate(Some("owns"))),
+            ("owns".to_owned(), predicate(Some("something_else"))),
+        ]),
+    };
+    assert!(colliding
+        .validate()
+        .iter()
+        .any(|d| d.code == codes::INVALID_ONTOLOGY_ENTRY));
+
+    // A reciprocal pair is fine.
+    let reciprocal = Ontology {
+        schema_version: "0.1.0".to_owned(),
+        nodes: BTreeMap::new(),
+        edges: BTreeMap::from([
+            ("owned_by".to_owned(), predicate(Some("owns"))),
+            ("owns".to_owned(), predicate(Some("owned_by"))),
+        ]),
+    };
+    assert!(reciprocal.validate().is_empty());
+}
