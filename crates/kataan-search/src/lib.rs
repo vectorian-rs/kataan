@@ -89,11 +89,27 @@ impl SearchIndex {
                 )
             })?;
         }
-        let connection = Connection::open(&path)
-            .with_context(|| format!("failed to open search index `{}`", path.display()))?;
-        configure_connection(&connection)?;
+        let connection = match Self::open_configured(&path) {
+            Ok(connection) => connection,
+            // The index is derived from the vault and lives at an opaque
+            // cache path a user cannot reasonably find, so a corrupt file
+            // would otherwise be a permanent, unfixable failure. Nothing is
+            // lost by recreating it.
+            Err(_) => {
+                std::fs::remove_file(&path).ok();
+                Self::open_configured(&path)
+                    .with_context(|| format!("failed to open search index `{}`", path.display()))?
+            }
+        };
         create_schema(&connection)?;
         Ok(Self { path })
+    }
+
+    /// Open and configure a connection, surfacing a corrupt file as an error.
+    fn open_configured(path: &Path) -> Result<Connection> {
+        let connection = Connection::open(path)?;
+        configure_connection(&connection)?;
+        Ok(connection)
     }
 
     pub fn open_default(vault_root: impl AsRef<Path>) -> Result<Self> {
@@ -190,13 +206,20 @@ impl SearchIndex {
         let raw_query = query.q.as_deref().unwrap_or_default().trim().to_owned();
         let fts_query = fts_query_for(&raw_query);
         let limit = query.limit.unwrap_or(20).clamp(1, 100);
-        let offset = query.offset.unwrap_or(0);
+        // Bound it: `offset as i64` above i64::MAX goes negative, and SQLite
+        // reads a negative OFFSET as 0 — so a client with an arithmetic bug
+        // silently re-reads the first page forever.
+        let offset = query.offset.unwrap_or(0).min(i64::MAX as usize);
         let filters = SearchFilters::from_query(query);
 
-        let rows = if let Some(fts_query) = fts_query {
-            search_fts(&connection, &fts_query, &filters, limit, offset)?
-        } else {
-            search_filtered(&connection, &filters, limit, offset)?
+        let rows = match (&fts_query, raw_query.is_empty()) {
+            (Some(fts_query), _) => search_fts(&connection, fts_query, &filters, limit, offset)?,
+            // No query text at all: this is a filtered listing.
+            (None, true) => search_filtered(&connection, &filters, limit, offset)?,
+            // Query text was given but nothing searchable survived tokenising
+            // (`C++`, `&&`, an emoji). Falling through to the listing path
+            // would present the whole vault as keyword matches.
+            (None, false) => Vec::new(),
         };
 
         let mut results = Vec::with_capacity(rows.len());

@@ -122,6 +122,20 @@ enum GraphCommand {
     },
 }
 
+/// Print a line to stdout, treating a closed pipe as a clean exit.
+///
+/// `println!` panics when the reader goes away, so `graph export | head` — the
+/// obvious way to look at these commands' output — aborted with exit 101.
+fn print_line(text: &str) -> Result<()> {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    match writeln!(stdout, "{text}") {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn main() -> Result<()> {
     init_tracing();
 
@@ -147,17 +161,20 @@ fn main() -> Result<()> {
                         .map(JsonDiagnostic::from)
                         .collect(),
                 };
-                println!("{}", serde_json::to_string_pretty(&out)?);
+                print_line(&serde_json::to_string_pretty(&out)?)?;
             } else if ok {
-                println!("valid");
+                print_line("valid")?;
             } else {
                 for issue in &report.diagnostics {
                     let severity = format!("{:?}", issue.severity).to_lowercase();
                     match issue.path.as_deref() {
-                        Some(location) => {
-                            println!("{severity} [{}] {location}: {}", issue.code, issue.message)
+                        Some(location) => print_line(&format!(
+                            "{severity} [{}] {location}: {}",
+                            issue.code, issue.message
+                        ))?,
+                        None => {
+                            print_line(&format!("{severity} [{}]: {}", issue.code, issue.message))?
                         }
-                        None => println!("{severity} [{}]: {}", issue.code, issue.message),
                     }
                 }
             }
@@ -177,7 +194,7 @@ fn main() -> Result<()> {
             } => {
                 let vault = kataan_core::vault::LoadedVault::load(&path)?;
                 let graph = kataan_core::query::subgraph(&vault, &types, &predicates);
-                println!("{}", serde_json::to_string_pretty(&graph)?);
+                print_line(&serde_json::to_string_pretty(&graph)?)?;
             }
             GraphCommand::Neighbors {
                 path,
@@ -189,7 +206,7 @@ fn main() -> Result<()> {
                 let id = kataan_core::id::CanonicalId::parse(&id)?;
                 let result =
                     kataan_core::query::neighbors(&vault, &id, predicate.as_deref(), direction)?;
-                println!("{}", serde_json::to_string_pretty(&result)?);
+                print_line(&serde_json::to_string_pretty(&result)?)?;
             }
         },
         Command::Documents {
@@ -227,10 +244,10 @@ fn main() -> Result<()> {
                 offset,
             };
             let page = kataan_core::query::documents(&vault, &query)?;
-            println!("{}", serde_json::to_string_pretty(&page)?);
+            print_line(&serde_json::to_string_pretty(&page)?)?;
         }
         Command::Guide => {
-            print!("{AGENT_GUIDE}");
+            print_line(AGENT_GUIDE)?;
         }
     }
 
