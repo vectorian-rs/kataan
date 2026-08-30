@@ -1,5 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     http::{header, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -274,8 +275,10 @@ pub async fn search_status(
 }
 
 pub async fn search_reindex(
+    headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Json<kataan_search::ReindexResponse>, ApiError> {
+    reject_cross_site(&headers)?;
     let loaded = read_loaded_vault(&state)?;
     state
         .search
@@ -534,7 +537,37 @@ pub async fn schema(
     Ok(Json(response))
 }
 
-pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResponse>, ApiError> {
+/// Refuse a state-changing request that a foreign page triggered.
+///
+/// Neither write route takes a body, so a plain `<form method="POST">` on any
+/// site the user visits is a CORS "simple request": no preflight, no `Origin`
+/// enforcement by the browser, and the side effect fires. Binding to localhost
+/// does not help. Non-browser callers (curl, the CLI) send neither header and
+/// are unaffected.
+fn reject_cross_site(headers: &HeaderMap) -> Result<(), ApiError> {
+    if let Some(site) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+        if site != "same-origin" && site != "none" {
+            return Err(ApiError::forbidden(format!(
+                "cross-site `{site}` request refused"
+            )));
+        }
+        return Ok(());
+    }
+    // Older browsers send `Origin` but not `Sec-Fetch-Site`. A request from a
+    // real page always carries one of the two; a bare tool carries neither.
+    if headers.contains_key(header::ORIGIN) {
+        return Err(ApiError::forbidden(
+            "cross-origin request refused".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub async fn validate(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<ValidateResponse>, ApiError> {
+    reject_cross_site(&headers)?;
     debug!(vault = %state.vault_path.display(), "validating vault");
     let report =
         kataan_core::validate::validate(state.vault_path.as_ref()).map_err(ApiError::from)?;
@@ -555,7 +588,11 @@ pub async fn validate(State(state): State<AppState>) -> Result<Json<ValidateResp
     Ok(Json(ValidateResponse { ok, diagnostics }))
 }
 
-pub async fn rebuild_indexes(State(state): State<AppState>) -> Result<Json<OkResponse>, ApiError> {
+pub async fn rebuild_indexes(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<OkResponse>, ApiError> {
+    reject_cross_site(&headers)?;
     info!(vault = %state.vault_path.display(), "rebuilding indexes");
     kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(ApiError::from)?;
     state.reload().map_err(ApiError::from)?;
@@ -586,6 +623,10 @@ impl ApiError {
 
     pub fn bad_request(message: impl std::fmt::Display) -> Self {
         Self::with_status(StatusCode::BAD_REQUEST, message)
+    }
+
+    pub fn forbidden(message: impl std::fmt::Display) -> Self {
+        Self::with_status(StatusCode::FORBIDDEN, message)
     }
 
     pub fn too_large(message: impl std::fmt::Display) -> Self {

