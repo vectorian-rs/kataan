@@ -41,6 +41,15 @@ struct InitialFolderIndexToml<'a> {
 
 pub fn init_vault(root: impl AsRef<Path>, name: &str) -> Result<()> {
     let root = root.as_ref();
+    // Re-initialising would overwrite kataan.toml, ontology.toml and every
+    // folder index. Hand-authored notes survive, but an edited ontology does
+    // not — and a typo in the path makes that unrecoverable.
+    if root.join(crate::constants::VAULT_CONFIG_FILE).exists() {
+        return Err(Error::InvalidRequest(format!(
+            "`{}` is already a vault; refusing to overwrite its configuration and ontology",
+            root.display()
+        )));
+    }
     std::fs::create_dir_all(root).map_err(|source| Error::Io {
         path: root.to_path_buf(),
         source,

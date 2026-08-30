@@ -43,7 +43,18 @@ fn main() -> Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     for line in stdin.lock().lines() {
-        let line = line?;
+        // A malformed line is that line's problem: reporting a parse error and
+        // reading on keeps one corrupt byte from ending the whole session.
+        let line = match line {
+            Ok(line) => line,
+            Err(error) => {
+                let response = error_response(Value::Null, -32700, format!("parse error: {error}"));
+                serde_json::to_writer(&mut stdout, &response)?;
+                stdout.write_all(b"\n")?;
+                stdout.flush()?;
+                continue;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -67,6 +78,17 @@ fn main() -> Result<()> {
 /// Dispatch one JSON-RPC message. Returns `None` for notifications (no `id`),
 /// which get no reply.
 fn handle_message(vault: &std::path::Path, message: &Value) -> Option<Value> {
+    // Batching was removed in the revision we default to, but older clients may
+    // still send an array. Answering keeps them from hanging on a reply that
+    // would otherwise never come.
+    if !message.is_object() {
+        return Some(error_response(
+            Value::Null,
+            -32600,
+            "invalid request: expected a single JSON-RPC object (batches are not supported)"
+                .to_owned(),
+        ));
+    }
     let id = message.get("id").cloned();
     let method = message
         .get("method")

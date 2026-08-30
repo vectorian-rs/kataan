@@ -2,6 +2,22 @@ use std::fs;
 
 use super::*;
 
+/// An initialised vault with one indexed note, plus its index.
+fn indexed_vault(name: &str) -> (std::path::PathBuf, SearchIndex) {
+    let root = temp_dir(name);
+    kataan_core::init::init_vault(&root, "Search Test").unwrap();
+    write_note(
+        &root,
+        "sample",
+        "# Sample\n\nSearchable body text.",
+        "type = \"note\"\nmarkdown = \"sample.md\"\n",
+    );
+    let loaded = LoadedVault::load(&root).unwrap();
+    let index = SearchIndex::open(root.join("search.sqlite")).unwrap();
+    index.reindex_loaded(&loaded).unwrap();
+    (root, index)
+}
+
 #[test]
 fn connections_use_wal_for_concurrent_read_and_reindex() {
     let root = temp_dir("wal");
@@ -217,4 +233,69 @@ fn temp_dir(name: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     root
+}
+
+#[test]
+fn a_query_with_no_searchable_terms_matches_nothing() {
+    let (root, index) = indexed_vault("no-terms");
+
+    // Every one of these has query text but no alphanumeric token. Falling
+    // through to the unfiltered listing presented the whole vault as keyword
+    // matches, so a user searching `C++` saw everything.
+    for q in ["@#$%", "(((", "&&", "\u{1f600}", "+++"] {
+        let response = index
+            .search(&SearchQuery {
+                q: Some(q.to_owned()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(
+            response.results.is_empty(),
+            "`{q}` returned {} results",
+            response.results.len()
+        );
+    }
+
+    // No query text at all is still a listing, not a no-op.
+    let listing = index.search(&SearchQuery::default()).unwrap();
+    assert!(!listing.results.is_empty());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_corrupt_index_is_rebuilt_rather_than_failing_forever() {
+    let (dir, index) = indexed_vault("corrupt-index");
+    let path = index.path().to_path_buf();
+    assert!(path.exists());
+
+    // Truncate the cache to garbage, as an interrupted write would.
+    std::fs::write(&path, b"this is not a database").unwrap();
+
+    // Opening recreates it instead of returning "file is not a database"
+    // forever at a cache path the user cannot find.
+    let reopened = SearchIndex::open(&path).unwrap();
+    let response = reopened.search(&SearchQuery::default()).unwrap();
+    assert!(response.results.is_empty(), "a rebuilt index starts empty");
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn an_absurd_offset_returns_nothing_rather_than_page_one() {
+    let (root, index) = indexed_vault("offset-clamp");
+
+    let response = index
+        .search(&SearchQuery {
+            offset: Some(usize::MAX),
+            ..Default::default()
+        })
+        .unwrap();
+
+    assert!(
+        response.results.is_empty(),
+        "an overflowing offset wrapped negative and re-read the first page"
+    );
+
+    fs::remove_dir_all(root).unwrap();
 }

@@ -19,6 +19,17 @@ use kataan_core::{
 };
 use kataan_search::{SearchIndex, SearchQuery};
 
+/// Refresh the search index after a committed write.
+///
+/// The write is already durable, so a failure here must not turn a success
+/// into an `isError` result — an agent that sees one retries and creates a
+/// duplicate document. The index is a derived cache; log and carry on.
+fn refresh_search_after_write(vault: &Path) {
+    if let Err(error) = reindex_search(vault) {
+        tracing::warn!(error = %error, "search reindex after write failed; index is stale");
+    }
+}
+
 /// Rebuild the FTS index from the current vault state.
 pub fn reindex_search(vault: &Path) -> Result<()> {
     let loaded = LoadedVault::load(vault)?;
@@ -351,7 +362,7 @@ fn create_document(vault: &Path, args: &Value) -> Result<String> {
         extra: extra_fields(args, "fields"),
     };
     let id = mutate::create_document(vault, request)?;
-    reindex_search(vault)?;
+    refresh_search_after_write(vault);
     to_pretty(&json!({ "id": id.as_str() }))
 }
 
@@ -366,7 +377,7 @@ fn update_document(vault: &Path, args: &Value) -> Result<String> {
         actor: None,
     };
     mutate::update_document(vault, &id, opt_str(args, "body"), patch)?;
-    reindex_search(vault)?;
+    refresh_search_after_write(vault);
     to_pretty(&json!({ "id": id.as_str(), "updated": true }))
 }
 
@@ -375,7 +386,7 @@ fn add_edge(vault: &Path, args: &Value) -> Result<String> {
     let target = parse_id(args, "target")?;
     let predicate = str_arg(args, "predicate")?;
     mutate::add_edge(vault, &source, &predicate, &target)?;
-    reindex_search(vault)?;
+    refresh_search_after_write(vault);
     to_pretty(
         &json!({ "source": source.as_str(), "predicate": predicate, "target": target.as_str() }),
     )
