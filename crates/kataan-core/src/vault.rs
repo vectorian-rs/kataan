@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -54,7 +54,6 @@ pub struct LoadedVault {
     pub type_registry: TypeRegistry,
     pub ontology: Ontology,
     pub documents: BTreeMap<CanonicalId, DocumentRecord>,
-    pub route_tokens: HashMap<(String, String), CanonicalId>,
     pub graph: VaultGraph,
 }
 
@@ -77,11 +76,6 @@ impl LoadedVault {
             path: record.markdown_path.clone(),
             source,
         })
-    }
-
-    pub fn resolve_route_token(&self, type_folder: &str, token: &str) -> Option<&CanonicalId> {
-        self.route_tokens
-            .get(&(type_folder.to_owned(), token.to_owned()))
     }
 
     /// Resolve a filesystem path to the canonical id of the document it belongs
@@ -197,15 +191,6 @@ impl Vault {
             .into_iter()
             .map(|document| (document.id.clone(), document))
             .collect::<BTreeMap<_, _>>();
-        let route_tokens = documents
-            .keys()
-            .map(|id| {
-                (
-                    (id.top_level_folder().to_owned(), route_token_for_id(id)),
-                    id.clone(),
-                )
-            })
-            .collect();
         let graph = VaultGraph::build_with_ontology(documents.values().cloned(), Some(&ontology))?;
 
         Ok(LoadedVault {
@@ -214,7 +199,6 @@ impl Vault {
             type_registry,
             ontology,
             documents,
-            route_tokens,
             graph,
         })
     }
@@ -322,10 +306,6 @@ fn is_plain_filename(name: &str) -> bool {
         (components.next(), components.next()),
         (Some(std::path::Component::Normal(_)), None)
     )
-}
-
-pub fn route_token_for_id(id: &CanonicalId) -> String {
-    blake3::hash(id.as_str().as_bytes()).to_hex()[..32].to_owned()
 }
 
 fn facets_for(metadata: &DocumentMetadata, ancestors: &[String]) -> Vec<String> {

@@ -209,7 +209,7 @@ mod tests {
         let message = request(2, "tools/list", Value::Null);
         let response = handle_message(no_vault(), &message).unwrap();
         let tools = response["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 13);
         for expected in [
             "create_document",
             "neighbors",

@@ -60,7 +60,6 @@ GET  /api/documents/<canonical-document-id>
 GET  /api/file?path=<vault-relative-file-path>
 GET  /api/file/highlight?path=<vault-relative-file-path>&theme=<theme>
 GET  /api/file/raw?path=<vault-relative-file-path>
-GET  /api/resolve?type=<type-folder>&token=<route-token>
 GET  /api/resolve-path?path=<vault-relative-or-absolute-path>
 GET  /api/documents?type=&status=&labels=&ids=&path_prefix=&linked_to=&predicate=&direction=&include=&limit=&offset=
 GET  /api/graph/neighbors?id=<canonical-id>&predicate=<predicate>&direction=out|in|both
@@ -152,6 +151,12 @@ Choosing a read tool:
 - A whole graph — `subgraph`. Each edge appears once, in the direction it was
   authored. It can be large; filter by `types`/`predicates`.
 - A filesystem path rather than an id — `resolve_path`, then `get_document`.
+
+Note the UI route for a document is simply its canonical id
+(`/organizations/datasentics`), and Markdown links between documents are
+rewritten to those routes when the server renders HTML — so write links the
+normal way, `[DataSentics](datasentics.md)`, and they work both in an editor and
+in the app.
 
 Because the mutation tools rebuild indexes and reindex search themselves, you do
 **not** need to call `rebuild-indexes`/`validate` after an MCP write — that is

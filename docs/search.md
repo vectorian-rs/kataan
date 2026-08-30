@@ -71,7 +71,6 @@ Do not store the search database in the vault by default.
 For Markdown+TOML document pairs and folder index documents, index:
 
 - canonical ID
-- route token
 - Markdown body
 - title/heading, where available
 - aliases
@@ -161,7 +160,6 @@ CREATE TABLE search_items (
   type TEXT,
   status TEXT,
   extension TEXT,
-  route_token TEXT
 );
 -- The last-indexed timestamp lives in a small search_metadata(key, value)
 -- table, not per row. Per-document checksums (and an extractor-version stamp
@@ -275,7 +273,6 @@ type SearchResult = {
   type?: string;
   status?: string;
   extension?: string;
-  route_token?: string;
   facets: string[];
   snippet?: string;
   score: number;

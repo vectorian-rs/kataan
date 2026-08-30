@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 use kataan_core::{
     title::title_from_id,
-    vault::{route_token_for_id, DocumentRecord, LoadedVault},
+    vault::{DocumentRecord, LoadedVault},
 };
 use rusqlite::{named_params, params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,6 @@ pub struct SearchResult {
     pub r#type: Option<String>,
     pub status: Option<String>,
     pub extension: Option<String>,
-    pub route_token: Option<String>,
     pub facets: Vec<String>,
     pub snippet: Option<String>,
     pub score: f64,
@@ -311,7 +310,6 @@ struct SearchItem {
     type_name: Option<String>,
     status: Option<String>,
     extension: Option<String>,
-    route_token: Option<String>,
     aliases: String,
     facets: Vec<String>,
     metadata: String,
@@ -349,7 +347,6 @@ impl SearchItem {
             type_name: Some(record.metadata.r#type.clone()),
             status: record.metadata.status.clone(),
             extension,
-            route_token: Some(route_token_for_id(&record.id)),
             aliases,
             facets: record.facets.clone(),
             metadata,
@@ -368,7 +365,6 @@ struct SearchRow {
     type_name: Option<String>,
     status: Option<String>,
     extension: Option<String>,
-    route_token: Option<String>,
     snippet: Option<String>,
     score: f64,
 }
@@ -383,7 +379,6 @@ impl SearchRow {
             r#type: self.type_name,
             status: self.status,
             extension: self.extension,
-            route_token: self.route_token,
             facets,
             snippet: self.snippet,
             score: self.score,
@@ -436,8 +431,7 @@ fn create_schema(connection: &Connection) -> Result<()> {
            title TEXT,
            type TEXT,
            status TEXT,
-           extension TEXT,
-           route_token TEXT
+           extension TEXT
          );
 
          CREATE TABLE IF NOT EXISTS search_facets (
@@ -475,8 +469,8 @@ fn insert_item(connection: &Connection, item: &SearchItem) -> Result<()> {
     connection
         .prepare_cached(
             "INSERT INTO search_items(
-               item_key, kind, id, path, title, type, status, extension, route_token
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+               item_key, kind, id, path, title, type, status, extension
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?
         .execute(params![
             &item.item_key,
@@ -487,7 +481,6 @@ fn insert_item(connection: &Connection, item: &SearchItem) -> Result<()> {
             item.type_name.as_deref(),
             item.status.as_deref(),
             item.extension.as_deref(),
-            item.route_token.as_deref(),
         ])?;
 
     let facet_text = item.facets.join(" ");
@@ -532,7 +525,6 @@ fn search_fts(
            i.type,
            i.status,
            i.extension,
-           i.route_token,
            snippet(search_fts, -1, '<mark>', '</mark>', '…', 24) AS snippet,
            bm25(search_fts, 0.0, 5.0, 3.0, 4.0, 3.0, 2.0, 1.0) AS rank
          FROM search_fts
@@ -577,8 +569,7 @@ fn search_filtered(
            i.title,
            i.type,
            i.status,
-           i.extension,
-           i.route_token
+           i.extension
          FROM search_items i
          WHERE 1 = 1
 {SEARCH_FILTER_SQL}
@@ -605,8 +596,8 @@ fn search_filtered(
 }
 
 fn search_row_from_fts(row: &Row<'_>) -> rusqlite::Result<SearchRow> {
-    let snippet = row.get(9)?;
-    let rank: f64 = row.get(10)?;
+    let snippet = row.get(8)?;
+    let rank: f64 = row.get(9)?;
     search_row(row, snippet, -rank)
 }
 
@@ -624,7 +615,6 @@ fn search_row(row: &Row<'_>, snippet: Option<String>, score: f64) -> rusqlite::R
         type_name: row.get(5)?,
         status: row.get(6)?,
         extension: row.get(7)?,
-        route_token: row.get(8)?,
         snippet,
         score,
     })

@@ -333,40 +333,6 @@ async fn file_endpoints_reject_symlink_files_and_intermediate_dirs() {
 }
 
 #[tokio::test]
-async fn resolve_route_maps_a_token_back_to_its_document() {
-    let root = test_vault();
-    let app = test_app(&root);
-
-    // `type/project` is a seeded type-definition document; the route token is
-    // derived from its canonical id, and `type` is its top-level folder.
-    let id = kataan_core::id::CanonicalId::parse("type/project").unwrap();
-    let token = kataan_core::vault::route_token_for_id(&id);
-    let uri = format!("/api/resolve?type=type&token={token}");
-
-    let response = request(app, "GET", &uri).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body: serde_json::Value = json_response(response).await;
-    assert_eq!(body["id"], "type/project");
-    assert_eq!(body["type_folder"], "type");
-    assert_eq!(body["folder"], "type");
-    assert_eq!(body["route_token"], token);
-    assert_eq!(body["is_folder_index"], false);
-
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
-async fn resolve_route_returns_404_for_unknown_token() {
-    let root = test_vault();
-    let app = test_app(&root);
-
-    let response = request(app, "GET", "/api/resolve?type=type&token=deadbeef").await;
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[tokio::test]
 async fn document_endpoint_returns_document() {
     let root = test_vault();
     let app = test_app(&root);
@@ -493,6 +459,7 @@ fn markdown_svg_images_are_rewritten_to_raw_file_api() {
         "![Look-to-book pollution map](charts/look-to-book.svg)",
         Some("projects/airline-anchor"),
         None,
+        &|_| crate::api::render::LinkTarget::Missing,
     )
     .unwrap();
 
@@ -632,4 +599,70 @@ fn unique_temp_dir() -> PathBuf {
         "kataan-server-test-{}-{counter}",
         std::process::id()
     ))
+}
+
+#[tokio::test]
+async fn internal_document_links_become_app_routes_end_to_end() {
+    let root = test_vault();
+
+    // Two real documents, one linking to the other the way a vault actually
+    // does: a bare sibling filename.
+    for (slug, body) in [
+        (
+            "alpha",
+            "# Alpha\n\nSee [Beta](beta.md) and [gone](deleted.md).\n",
+        ),
+        ("beta", "# Beta\n"),
+    ] {
+        fs::write(root.join(format!("notes/{slug}.md")), body).unwrap();
+        fs::write(
+            root.join(format!("notes/{slug}.toml")),
+            format!("type = \"note\"\nmarkdown = \"{slug}.md\"\n"),
+        )
+        .unwrap();
+    }
+    kataan_core::rebuild::rebuild_indexes(&root).unwrap();
+
+    let app = test_app(&root);
+    let response = request(app, "GET", "/api/document?id=notes/alpha").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    let html = body["html"].as_str().unwrap();
+
+    // The live link points at the app's own route and is marked for in-app
+    // selection, so following it does not reload the page.
+    assert!(
+        html.contains(r#"href="/notes/beta""#),
+        "sibling link not rewritten: {html}"
+    );
+    assert!(
+        html.contains(r#"data-document="notes/beta""#),
+        "missing selection marker: {html}"
+    );
+    // The dead one is left exactly as authored rather than silently
+    // resolving to something that resets the app.
+    assert!(
+        html.contains(r#"href="deleted.md""#),
+        "dead link was rewritten: {html}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn a_document_route_is_its_canonical_id() {
+    let root = test_vault();
+    let app = test_app(&root);
+
+    // The id is the route: no token, no lookup table.
+    let response = request(app, "GET", "/api/resolve-path?path=type/project.md").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    assert_eq!(body["id"], "type/project");
+    assert!(
+        body.get("route_token").is_none(),
+        "route_token should be gone: {body}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
 }

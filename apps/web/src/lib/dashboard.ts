@@ -11,7 +11,7 @@ import {
   getVault,
   rebuildIndexes,
   reindexSearch,
-  resolveRoute,
+  resolvePath,
   searchVault,
   validateVault,
   type Diagnostic,
@@ -121,6 +121,22 @@ searchInput.addEventListener('input', () => {
   searchDebounce = window.setTimeout(() => {
     void runAction(() => runSearch(searchInput.value));
   }, 180);
+});
+
+// Internal links inside a rendered document carry the id the server resolved
+// them to. Selecting in place keeps the app state; the anchor still has a real
+// href, so middle-click and "copy link" behave normally.
+documentBody.addEventListener('click', (event) => {
+  const anchor = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>(
+    'a[data-document]',
+  );
+  const id = anchor?.dataset.document;
+  if (!id) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  void runAction(() => selectDocument(id));
 });
 
 // Edge targets are re-rendered wholesale on every document, so the listener
@@ -600,7 +616,7 @@ async function restoreRouteSelection() {
   const locator = currentRouteLocator();
   if (!locator) return;
 
-  const resolved = await resolveRoute(locator.type, locator.token);
+  const resolved = await resolvePath(locator);
   if (resolved.is_folder_index) {
     await selectFolder(resolved.id, { selectFirst: false });
     return;
@@ -612,15 +628,17 @@ async function restoreRouteSelection() {
   await selectDocument(resolved.id, { updateUrl: false });
 }
 
+/// The path *is* the canonical id, so a URL can be read and shared.
 function currentRouteLocator() {
-  const [, type, token, extra] = window.location.pathname.split('/');
-  if (!type || !token || extra) return null;
-  if (!/^[0-9a-f]{32}$/.test(token)) return null;
-  return { type, token };
+  const id = decodeURI(window.location.pathname).replace(/^\/+|\/+$/g, '');
+  if (!id) return null;
+  // Ids are lowercase, digits, hyphens and slashes; anything else is not ours.
+  if (!/^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/.test(id)) return null;
+  return id;
 }
 
 function updateRouteUrl(vaultDocument: DocumentResponse) {
-  const nextPath = `/${encodeURIComponent(vaultDocument.type_folder)}/${vaultDocument.route_token}`;
+  const nextPath = `/${vaultDocument.id.split('/').map(encodeURIComponent).join('/')}`;
   if (window.location.pathname !== nextPath) {
     window.history.pushState({}, '', nextPath);
   }

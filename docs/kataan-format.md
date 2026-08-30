@@ -333,24 +333,50 @@ Filenames are preserved exactly as authored. Canonical IDs allow mixed-case URL-
 
 Because canonical IDs are path-based and case-sensitive, rename and move operations must update the Markdown file, TOML sidecar, containing folder indexes, checksums, and references to the old canonical ID. Validation should detect case-insensitive collisions for cross-platform safety.
 
-## UI route locators
+## UI routes
 
-Canonical IDs remain the source-of-truth document identity. The web UI may expose shorter reloadable routes that preserve the current document without putting canonical IDs or filesystem-like paths in the browser route.
-
-Route form:
+The web UI's route **is** the canonical id:
 
 ```txt
-/<type-folder>/<route-token>
-/projects/8d8f2a41e5a6b07d9c948b9f7d6be2a1
+/<canonical-id>
+/organizations/datasentics
+/companies/snappy/customers/focusedenergy/docs/responsibility-split
 ```
 
-`type-folder` is the visible top-level type folder, such as `projects`, `people`, or `topics`. `route-token` is derived from the canonical ID, for example the first 16 bytes of `blake3(canonical_id)` rendered as 32 lowercase hex characters. `LoadedVault` builds an in-memory lookup from `(type-folder, route-token)` to canonical ID. This lookup is only a UI locator, not a persistent identity field. Rename or move invalidates the old route; edits do not change it.
+Canonical ids are already URL-safe by construction (lowercase, digits, hyphens,
+and `/`), so no encoding or lookup table is needed. A URL can be read, shared,
+and pasted, and it survives a reload.
 
-The API resolves locators explicitly, for example:
+This replaces an earlier scheme of `/<type-folder>/<blake3-token>`. The token
+was opaque and, being derived from the id, changed whenever a document was
+renamed — silently breaking every link anyone had saved. It also forced a
+translation step for internal links, which is the thing that made them not work
+at all (see "Links between documents" below).
+
+Resolve a filesystem path — or a canonical id, which is its extensionless form —
+with:
 
 ```txt
-GET /api/resolve?type=projects&token=8d8f2a41e5a6b07d9c948b9f7d6be2a1
+GET /api/resolve-path?path=companies/snappy/customers/focusedenergy/docs/responsibility-split.md
 ```
+
+## Links between documents
+
+Documents link to each other the way files do, because that is what makes them
+readable in an editor and on GitHub:
+
+```markdown
+See [DataSentics](datasentics.md) and [the split](../../docs/responsibility-split.md).
+```
+
+The server rewrites these when it renders Markdown to HTML. A link that resolves
+to a document becomes that document's route and is marked so the UI can select
+it without a page load; a link to a non-document file becomes a raw-file URL;
+and a link that resolves to nothing is left exactly as the author wrote it, so a
+dead link stays visibly dead rather than silently navigating somewhere wrong.
+
+Relative segments are resolved against the linking document's folder before
+lookup, and a path that would escape the vault is never rewritten.
 
 ## Relationship ontology
 

@@ -252,7 +252,9 @@ pub(super) fn document_response(state: &AppState, id: &str) -> Result<DocumentRe
         .documents
         .get(&id)
         .ok_or_else(|| ApiError::not_found(format!("document `{id}` does not exist")))?;
-    document_response_from_parts(&id, record.metadata.clone(), &record.markdown_path)
+    let markdown_path = record.markdown_path.clone();
+    let metadata = record.metadata.clone();
+    document_response_from_parts(&id, metadata, &markdown_path, &loaded)
 }
 
 pub(super) fn canonical_folder_response(
@@ -298,6 +300,7 @@ pub(super) fn document_response_from_parts(
     id: &kataan_core::id::CanonicalId,
     metadata: kataan_core::document::DocumentMetadata,
     markdown_path: &std::path::Path,
+    loaded: &kataan_core::vault::LoadedVault,
 ) -> Result<DocumentResponse, ApiError> {
     let markdown = read_text_file(markdown_path)?;
 
@@ -306,12 +309,21 @@ pub(super) fn document_response_from_parts(
     } else {
         id.folder()
     };
-    let html = render_markdown_html(&markdown, Some(base_folder), None)?;
+    let html = render_markdown_html(&markdown, Some(base_folder), None, &|path| match loaded
+        .resolve_path(path)
+    {
+        Some(target) => crate::api::render::LinkTarget::Document(target.as_str().to_owned()),
+        None if regular_descendant_file_path(loaded.root.as_path(), std::path::Path::new(path))
+            .is_some() =>
+        {
+            crate::api::render::LinkTarget::File
+        }
+        None => crate::api::render::LinkTarget::Missing,
+    })?;
 
     Ok(DocumentResponse {
         id: id.as_str().to_owned(),
         type_folder: id.top_level_folder().to_owned(),
-        route_token: kataan_core::vault::route_token_for_id(id),
         metadata,
         markdown,
         html,

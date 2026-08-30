@@ -58,7 +58,6 @@ export type CanonicalFolderResponse = {
 export type DocumentResponse = {
   id: string;
   type_folder: string;
-  route_token: string;
   metadata: Record<string, unknown>;
   markdown: string;
   html: string;
@@ -84,7 +83,6 @@ export type ResolveResponse = {
   id: string;
   folder: string;
   type_folder: string;
-  route_token: string;
   is_folder_index: boolean;
 };
 
@@ -139,7 +137,6 @@ export type SearchResult = {
   type?: string;
   status?: string;
   extension?: string;
-  route_token?: string;
   facets: string[];
   snippet?: string;
   score: number;
@@ -180,6 +177,12 @@ export async function getFolder(id: string) {
   return getJson<CanonicalFolderResponse>(`/api/folder?id=${encodeURIComponent(id)}`);
 }
 
+/// Resolve a vault path (or a canonical id, which is the extensionless form)
+/// to the document it names.
+export async function resolvePath(path: string) {
+  return getJson<ResolveResponse>(`/api/resolve-path?path=${encodeURIComponent(path)}`);
+}
+
 export async function getDocument(id: string) {
   return getJson<DocumentResponse>(`/api/document?id=${encodeURIComponent(id)}`);
 }
@@ -196,12 +199,6 @@ export async function getHighlightedFile(path: string, theme?: string) {
 
 export function getRawFileUrl(path: string) {
   return `${API_BASE}/api/file/raw?path=${encodeURIComponent(path)}`;
-}
-
-export async function resolveRoute(type: string, token: string) {
-  return getJson<ResolveResponse>(
-    `/api/resolve?type=${encodeURIComponent(type)}&token=${encodeURIComponent(token)}`,
-  );
 }
 
 export async function getSchema(kind: string) {

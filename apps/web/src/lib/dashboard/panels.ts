@@ -50,7 +50,6 @@ export function renderMetadata(vaultDocument: DocumentResponse) {
     metadataSection('Internal', [
       property('Markdown', markdown),
       property('Markdown checksum', markdownChecksum),
-      property('Route token', vaultDocument.route_token),
     ]),
   );
 }
