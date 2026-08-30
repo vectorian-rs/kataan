@@ -22,142 +22,118 @@ use crate::{
     Result,
 };
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn validate_nested_folder_recursive(
-    issues: &mut Vec<Diagnostic>,
-    root_folder: &str,
-    root_folder_path: &Path,
-    folder_path: &Path,
-    max_folder_depth: usize,
-    type_registry: Option<&TypeRegistry>,
-    type_folders: &BTreeMap<String, String>,
-    ignore: &ScanIgnore,
-    known_document_ids: &mut BTreeSet<String>,
-    known_document_types: &mut BTreeMap<String, String>,
-    loaded_metadata: &mut Vec<(String, String, DocumentMetadata)>,
-) -> Result<()> {
-    let folder_index = validate_folder_pair(issues, root_folder, root_folder_path, folder_path)?;
+/// What stays fixed for the whole walk of one type folder.
+///
+/// Held together rather than passed as ten arguments because only
+/// `folder_path` varies across the recursion — and because `root_folder_path`
+/// and the current folder are both `&Path`, so as arguments they could be
+/// swapped silently. Getting that pair wrong is what produced `projects//x`.
+pub(super) struct FolderWalk<'a> {
+    pub root_folder: &'a str,
+    pub root_folder_path: &'a Path,
+    pub max_folder_depth: usize,
+    pub type_registry: &'a TypeRegistry,
+    pub type_folders: &'a BTreeMap<String, String>,
+    pub ignore: &'a ScanIgnore,
+}
 
-    let relative = relative_folder_path(root_folder, root_folder_path, folder_path);
-    let mut markdown_slugs = BTreeSet::new();
-    let mut toml_slugs = BTreeSet::new();
-    let mut document_toml_files: Vec<(PathBuf, String)> = Vec::new();
+/// What the walk accumulates.
+pub(super) struct Collected<'a> {
+    pub issues: &'a mut Vec<Diagnostic>,
+    pub known_document_types: &'a mut BTreeMap<String, String>,
+    pub loaded_metadata: &'a mut Vec<(String, DocumentMetadata)>,
+}
 
-    for entry in fs::read_dir(folder_path).map_err(|source| crate::Error::Io {
-        path: folder_path.to_path_buf(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| crate::Error::Io {
+impl FolderWalk<'_> {
+    pub(super) fn folder(&self, out: &mut Collected<'_>, folder_path: &Path) -> Result<()> {
+        let relative = relative_folder_path(self.root_folder, self.root_folder_path, folder_path);
+        let folder_index = validate_optional_folder_index_pair(out.issues, folder_path, &relative)?;
+        let mut markdown_slugs = BTreeSet::new();
+        let mut toml_slugs = BTreeSet::new();
+        let mut document_toml_files: Vec<(PathBuf, String)> = Vec::new();
+
+        for entry in fs::read_dir(folder_path).map_err(|source| crate::Error::Io {
             path: folder_path.to_path_buf(),
             source,
-        })?;
-        let path = entry.path();
+        })? {
+            let entry = entry.map_err(|source| crate::Error::Io {
+                path: folder_path.to_path_buf(),
+                source,
+            })?;
+            let path = entry.path();
 
-        if crate::walk::is_regular_dir(&path) {
-            if ignore.is_ignored(&path, true) {
+            if crate::walk::is_regular_dir(&path) {
+                if self.ignore.is_ignored(&path, true) {
+                    continue;
+                }
+                self.folder(out, &path)?;
                 continue;
             }
-            validate_nested_folder_recursive(
-                issues,
-                root_folder,
-                root_folder_path,
-                &path,
-                max_folder_depth,
-                type_registry,
-                type_folders,
-                ignore,
-                known_document_ids,
-                known_document_types,
-                loaded_metadata,
-            )?;
-            continue;
-        }
 
-        if !crate::walk::is_regular_file(&path) {
-            continue;
-        }
+            if !crate::walk::is_regular_file(&path) {
+                continue;
+            }
 
-        let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str()) else {
-            continue;
-        };
-        if file_name == "index.toml" || file_name == "index.md" {
-            continue;
-        }
+            let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str()) else {
+                continue;
+            };
+            if file_name == "index.toml" || file_name == "index.md" {
+                continue;
+            }
 
-        let relative_path = Path::new(&relative).join(file_name);
-        let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
-            continue;
-        };
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            continue;
-        };
+            let relative_path = Path::new(&relative).join(file_name);
+            let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
+                continue;
+            };
+            let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+                continue;
+            };
 
-        match extension {
-            "md" => {
-                if CanonicalId::from_document_path(&relative_path).is_ok() {
-                    markdown_slugs.insert(stem.to_owned());
+            match extension {
+                "md" => {
+                    if CanonicalId::from_document_path(&relative_path).is_ok() {
+                        markdown_slugs.insert(stem.to_owned());
+                    }
                 }
+                "toml" if CanonicalId::from_document_path(&relative_path).is_ok() => {
+                    toml_slugs.insert(stem.to_owned());
+                    document_toml_files.push((path.clone(), format!("{relative}/{file_name}")));
+                }
+                _ => {}
             }
-            "toml" if CanonicalId::from_document_path(&relative_path).is_ok() => {
-                toml_slugs.insert(stem.to_owned());
-                document_toml_files.push((path.clone(), format!("{relative}/{file_name}")));
-            }
-            _ => {}
         }
+
+        // A `.toml` with no matching `.md` is a standalone file, not a half-written
+        // document: the vault format supports plain artifacts addressable by path,
+        // which are deliberately not documents and not graph nodes. Reporting them
+        // would fire on every legitimate data file a vault carries.
+        document_toml_files.retain(|(path, _)| {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| markdown_slugs.contains(stem))
+        });
+
+        if let Some(folder_index) = folder_index {
+            validate_folder_index(
+                out.issues,
+                &relative,
+                folder_path,
+                &folder_index,
+                &markdown_slugs,
+                &toml_slugs,
+                self.ignore,
+            )?;
+        }
+
+        for (toml_path, relative_toml_path) in document_toml_files {
+            self.document(out, &toml_path, &relative_toml_path)?;
+        }
+
+        Ok(())
     }
-
-    // A `.toml` with no matching `.md` is a standalone file, not a half-written
-    // document: the vault format supports plain artifacts addressable by path,
-    // which are deliberately not documents and not graph nodes. Reporting them
-    // would fire on every legitimate data file a vault carries.
-    document_toml_files.retain(|(path, _)| {
-        path.file_stem()
-            .and_then(|stem| stem.to_str())
-            .is_some_and(|stem| markdown_slugs.contains(stem))
-    });
-
-    if let Some(folder_index) = folder_index {
-        validate_folder_index(
-            issues,
-            &relative,
-            folder_path,
-            &folder_index,
-            &markdown_slugs,
-            &toml_slugs,
-            ignore,
-        )?;
-    }
-
-    for (toml_path, relative_toml_path) in document_toml_files {
-        validate_document_metadata(
-            issues,
-            root_folder,
-            folder_path,
-            &toml_path,
-            &relative_toml_path,
-            max_folder_depth,
-            type_registry,
-            type_folders,
-            known_document_ids,
-            known_document_types,
-            loaded_metadata,
-        )?;
-    }
-
-    Ok(())
 }
 
-fn validate_folder_pair(
-    issues: &mut Vec<Diagnostic>,
-    root_folder: &str,
-    root_folder_path: &Path,
-    folder_path: &Path,
-) -> Result<Option<FolderIndex>> {
-    let relative = relative_folder_path(root_folder, root_folder_path, folder_path);
-    validate_optional_folder_index_pair(issues, folder_path, &relative)
-}
-
-pub(super) fn validate_optional_folder_index_pair(
+fn validate_optional_folder_index_pair(
     issues: &mut Vec<Diagnostic>,
     folder_path: &Path,
     relative: &str,
@@ -190,7 +166,7 @@ pub(super) fn validate_optional_folder_index_pair(
     }
 }
 
-pub(super) fn validate_metadata_markdown_path(
+fn validate_metadata_markdown_path(
     issues: &mut Vec<Diagnostic>,
     toml_path: &Path,
     relative_toml_path: &str,
@@ -235,136 +211,134 @@ fn relative_folder_path(root_folder: &str, root_folder_path: &Path, folder_path:
         .replace('\\', "/")
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_document_metadata(
-    issues: &mut Vec<Diagnostic>,
-    root_folder: &str,
-    folder_path: &Path,
-    toml_path: &Path,
-    relative_toml_path: &str,
-    max_folder_depth: usize,
-    type_registry: Option<&TypeRegistry>,
-    type_folders: &BTreeMap<String, String>,
-    known_document_ids: &mut BTreeSet<String>,
-    known_document_types: &mut BTreeMap<String, String>,
-    loaded_metadata: &mut Vec<(String, String, DocumentMetadata)>,
-) -> Result<()> {
-    let toml_text = fs::read_to_string(toml_path).map_err(|source| crate::Error::Io {
-        path: toml_path.to_path_buf(),
-        source,
-    })?;
-    let metadata: DocumentMetadata = match toml::from_str(&toml_text) {
-        Ok(metadata) => metadata,
-        Err(source) => {
-            issues.push(
-                Diagnostic::error(codes::INVALID_TOML, source.to_string())
+impl FolderWalk<'_> {
+    fn document(
+        &self,
+        out: &mut Collected<'_>,
+        toml_path: &Path,
+        relative_toml_path: &str,
+    ) -> Result<()> {
+        let toml_text = fs::read_to_string(toml_path).map_err(|source| crate::Error::Io {
+            path: toml_path.to_path_buf(),
+            source,
+        })?;
+        let metadata: DocumentMetadata = match toml::from_str(&toml_text) {
+            Ok(metadata) => metadata,
+            Err(source) => {
+                out.issues.push(
+                    Diagnostic::error(codes::INVALID_TOML, source.to_string())
+                        .with_path(relative_toml_path.to_owned()),
+                );
+                return Ok(());
+            }
+        };
+
+        let Some(document_id) = relative_toml_path.strip_suffix(".toml") else {
+            return Ok(());
+        };
+        let document_id = document_id.to_owned();
+        out.known_document_types
+            .insert(document_id.clone(), metadata.r#type.clone());
+        out.loaded_metadata
+            .push((relative_toml_path.to_owned(), metadata.clone()));
+
+        if let Ok(id) = CanonicalId::parse(&document_id) {
+            if id.depth_after_type_folder() > self.max_folder_depth {
+                out.issues.push(
+                    Diagnostic::error(
+                        codes::FOLDER_DEPTH_EXCEEDED,
+                        format!(
+                            "document depth exceeds max_folder_depth `{}`",
+                            self.max_folder_depth
+                        ),
+                    )
                     .with_path(relative_toml_path.to_owned()),
-            );
+                );
+            }
+        }
+
+        if let Some(status) = &metadata.status {
+            if !STATUS_VALUES.contains(&status.as_str()) {
+                out.issues.push(
+                    Diagnostic::error(codes::INVALID_STATUS, format!("unknown status `{status}`"))
+                        .with_path(relative_toml_path.to_owned()),
+                );
+            }
+        }
+
+        validate_timestamps(out.issues, &metadata, relative_toml_path);
+
+        for (field, actor) in [
+            ("created_by", metadata.created_by.as_deref()),
+            ("last_updated_by", metadata.last_updated_by.as_deref()),
+        ] {
+            if let Some(actor) = actor {
+                if !ACTOR_VALUES.contains(&actor) {
+                    out.issues.push(
+                        Diagnostic::error(
+                            codes::INVALID_ACTOR,
+                            format!("{field} has unknown actor `{actor}`"),
+                        )
+                        .with_path(relative_toml_path.to_owned()),
+                    );
+                }
+            }
+        }
+
+        let expected_type_folder = self
+            .type_registry
+            .folder_for(&metadata.r#type)
+            .or_else(|| self.type_folders.get(&metadata.r#type).map(String::as_str));
+
+        match expected_type_folder {
+            Some(expected_folder) if expected_folder != self.root_folder => {
+                out.issues.push(
+                    Diagnostic::error(
+                        codes::TYPE_FOLDER_MISMATCH,
+                        format!(
+                            "document type `{}` belongs in `{expected_folder}`, not `{}`",
+                            metadata.r#type, self.root_folder
+                        ),
+                    )
+                    .with_path(relative_toml_path.to_owned()),
+                );
+            }
+            Some(_) => {}
+            None => {
+                out.issues.push(
+                    Diagnostic::error(
+                        codes::INVALID_TYPE,
+                        format!("unknown type `{}`", metadata.r#type),
+                    )
+                    .with_path(relative_toml_path.to_owned()),
+                );
+            }
+        }
+
+        if !validate_metadata_markdown_path(out.issues, toml_path, relative_toml_path, &metadata) {
             return Ok(());
         }
-    };
-
-    let Some(document_id) = relative_toml_path.strip_suffix(".toml") else {
-        return Ok(());
-    };
-    let document_id = document_id.to_owned();
-    known_document_ids.insert(document_id.clone());
-    known_document_types.insert(document_id.clone(), metadata.r#type.clone());
-    loaded_metadata.push((
-        relative_toml_path.to_owned(),
-        document_id.clone(),
-        metadata.clone(),
-    ));
-
-    if let Ok(id) = CanonicalId::parse(&document_id) {
-        if id.depth_after_type_folder() > max_folder_depth {
-            issues.push(
-                Diagnostic::error(
-                    codes::FOLDER_DEPTH_EXCEEDED,
-                    format!("document depth exceeds max_folder_depth `{max_folder_depth}`"),
-                )
-                .with_path(relative_toml_path.to_owned()),
-            );
-        }
-    }
-
-    if let Some(status) = &metadata.status {
-        if !STATUS_VALUES.contains(&status.as_str()) {
-            issues.push(
-                Diagnostic::error(codes::INVALID_STATUS, format!("unknown status `{status}`"))
-                    .with_path(relative_toml_path.to_owned()),
-            );
-        }
-    }
-
-    validate_timestamps(issues, &metadata, relative_toml_path);
-
-    for (field, actor) in [
-        ("created_by", metadata.created_by.as_deref()),
-        ("last_updated_by", metadata.last_updated_by.as_deref()),
-    ] {
-        if let Some(actor) = actor {
-            if !ACTOR_VALUES.contains(&actor) {
-                issues.push(
-                    Diagnostic::error(
-                        codes::INVALID_ACTOR,
-                        format!("{field} has unknown actor `{actor}`"),
-                    )
-                    .with_path(relative_toml_path.to_owned()),
-                );
+        let markdown_path = toml_path
+            .parent()
+            .unwrap_or(Path::new(""))
+            .join(&metadata.markdown);
+        if markdown_path.exists() {
+            if let Some(expected_checksum) = metadata.markdown_checksum {
+                let actual_checksum = checksum::blake3_file(&markdown_path)?;
+                if actual_checksum != expected_checksum {
+                    out.issues.push(
+                        Diagnostic::error(
+                            codes::CHECKSUM_MISMATCH,
+                            "Markdown checksum does not match file contents",
+                        )
+                        .with_path(relative_toml_path.to_owned()),
+                    );
+                }
             }
         }
-    }
 
-    let expected_type_folder = type_registry
-        .and_then(|registry| registry.folder_for(&metadata.r#type))
-        .or_else(|| type_folders.get(&metadata.r#type).map(String::as_str));
-
-    match expected_type_folder {
-        Some(expected_folder) if expected_folder != root_folder => {
-            issues.push(
-                Diagnostic::error(
-                    codes::TYPE_FOLDER_MISMATCH,
-                    format!(
-                        "document type `{}` belongs in `{expected_folder}`, not `{root_folder}`",
-                        metadata.r#type
-                    ),
-                )
-                .with_path(relative_toml_path.to_owned()),
-            );
-        }
-        Some(_) => {}
-        None => {
-            issues.push(
-                Diagnostic::error(
-                    codes::INVALID_TYPE,
-                    format!("unknown type `{}`", metadata.r#type),
-                )
-                .with_path(relative_toml_path.to_owned()),
-            );
-        }
+        Ok(())
     }
-
-    if !validate_metadata_markdown_path(issues, toml_path, relative_toml_path, &metadata) {
-        return Ok(());
-    }
-    let markdown_path = folder_path.join(&metadata.markdown);
-    if markdown_path.exists() {
-        if let Some(expected_checksum) = metadata.markdown_checksum {
-            let actual_checksum = checksum::blake3_file(&markdown_path)?;
-            if actual_checksum != expected_checksum {
-                issues.push(
-                    Diagnostic::error(
-                        codes::CHECKSUM_MISMATCH,
-                        "Markdown checksum does not match file contents",
-                    )
-                    .with_path(relative_toml_path.to_owned()),
-                );
-            }
-        }
-    }
-
-    Ok(())
 }
 
 fn read_folder_index_with_diagnostic(
@@ -404,7 +378,7 @@ fn read_folder_index_if_present(folder_path: &Path) -> Result<Option<FolderIndex
     Ok(toml::from_str::<FolderIndex>(&text).ok())
 }
 
-pub(super) fn validate_folder_index(
+fn validate_folder_index(
     issues: &mut Vec<Diagnostic>,
     folder: &str,
     folder_path: &Path,
@@ -564,11 +538,7 @@ fn actual_subfolders(folder_path: &Path, ignore: &ScanIgnore) -> Result<Vec<Fold
 
 /// Check the three first-class time fields, reporting a distinct code per
 /// failure mode.
-///
-/// Shared because documents directly in a type folder and documents in nested
-/// folders are validated by two different walkers; a check added to only one of
-/// them silently applies to half the vault.
-pub(super) fn validate_timestamps(
+fn validate_timestamps(
     issues: &mut Vec<Diagnostic>,
     metadata: &DocumentMetadata,
     relative_toml_path: &str,

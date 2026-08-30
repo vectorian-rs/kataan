@@ -118,32 +118,47 @@ impl Ontology {
             if let Some(inverse) = &predicate.inverse {
                 // An inverse is a *label* for the reverse direction, not a
                 // separately defined predicate — `owned_by.inverse = "owns"`
-                // needs no `[edges.owns]`. So existence cannot be required.
-                // What can be caught is a malformed name, and a name that
-                // collides with a real predicate pointing somewhere else.
+                // needs no `[edges.owns]`, which is how the default ontology
+                // works. So existence cannot be required; ambiguity can.
                 if !is_predicate_name(inverse) {
                     diagnostics.push(
                         Diagnostic::error(
                             codes::INVALID_ONTOLOGY_ENTRY,
-                            format!(
-                                "predicate `{name}` declares inverse `{inverse}`, which must use lowercase snake_case"
-                            ),
+                            format!("predicate `{name}` has an invalid inverse name `{inverse}`"),
                         )
                         .with_path(ONTOLOGY_FILE),
                     );
                 }
-                if let Some(other) = self.edges.get(inverse) {
-                    if other.inverse.as_deref() != Some(name.as_str()) {
-                        diagnostics.push(
-                            Diagnostic::error(
-                                codes::INVALID_ONTOLOGY_ENTRY,
-                                format!(
-                                    "predicate `{name}` declares inverse `{inverse}`, but `{inverse}` is itself a predicate that does not declare `{name}` back; incoming edges would be keyed ambiguously"
-                                ),
-                            )
-                            .with_path(ONTOLOGY_FILE),
-                        );
-                    }
+                // "The reverse of p is p" is symmetry, which has its own
+                // spelling. The two are not interchangeable: `symmetric` makes
+                // the graph reachable from both sides as outgoing, while a
+                // self-inverse also records an incoming copy, so a peer shows
+                // up twice.
+                if inverse == name {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            codes::INVALID_ONTOLOGY_ENTRY,
+                            format!(
+                                "predicate `{name}` is its own inverse; use `symmetric = true`"
+                            ),
+                        )
+                        .with_path(ONTOLOGY_FILE),
+                    );
+                } else if self
+                    .edges
+                    .get(inverse)
+                    .is_some_and(|other| other.inverse.as_deref() != Some(name.as_str()))
+                {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            codes::INVALID_ONTOLOGY_ENTRY,
+                            format!(
+                                "predicate `{name}` claims inverse `{inverse}`, which is a \
+                                 predicate with a different inverse"
+                            ),
+                        )
+                        .with_path(ONTOLOGY_FILE),
+                    );
                 }
             }
 
@@ -182,6 +197,29 @@ impl Ontology {
                         .with_path(ONTOLOGY_FILE),
                     );
                 }
+            }
+        }
+
+        // A label reached from two predicates makes `incoming_all` return the
+        // union of two distinct relations under one key, with no way to tell
+        // them apart — the ambiguity the per-predicate check above describes,
+        // but only visible across the whole edge set.
+        let mut inverse_owners: BTreeMap<&str, &str> = BTreeMap::new();
+        for (name, predicate) in &self.edges {
+            let Some(inverse) = predicate.inverse.as_deref() else {
+                continue;
+            };
+            if let Some(previous) = inverse_owners.insert(inverse, name) {
+                diagnostics.push(
+                    Diagnostic::error(
+                        codes::INVALID_ONTOLOGY_ENTRY,
+                        format!(
+                            "predicates `{previous}` and `{name}` both use inverse `{inverse}`; \
+                             their incoming edges would be indistinguishable"
+                        ),
+                    )
+                    .with_path(ONTOLOGY_FILE),
+                );
             }
         }
 
@@ -437,6 +475,79 @@ pub fn validate_node_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An edge predicate with the given inverse, otherwise unconstrained.
+    fn predicate(inverse: Option<&str>) -> EdgePredicate {
+        EdgePredicate {
+            from: vec!["*".to_owned()],
+            to: vec!["*".to_owned()],
+            inverse: inverse.map(str::to_owned),
+            symmetric: false,
+            cardinality: Some("many-to-many".to_owned()),
+            description: None,
+        }
+    }
+
+    fn ontology_with(edges: &[(&str, Option<&str>)]) -> Ontology {
+        Ontology {
+            schema_version: "0.1.0".to_owned(),
+            nodes: BTreeMap::new(),
+            edges: edges
+                .iter()
+                .map(|(name, inverse)| ((*name).to_owned(), predicate(*inverse)))
+                .collect(),
+        }
+    }
+
+    fn codes(ontology: &Ontology) -> Vec<String> {
+        ontology.validate().into_iter().map(|d| d.code).collect()
+    }
+
+    #[test]
+    fn an_inverse_label_needs_no_predicate_of_its_own() {
+        // How the shipped default ontology works: `derived`, `mentioned_in`,
+        // `has_subtopic` are reverse-direction labels, not defined predicates.
+        assert!(codes(&ontology_with(&[("owned_by", Some("owns"))])).is_empty());
+        // A reciprocal pair is equally fine.
+        assert!(codes(&ontology_with(&[
+            ("owned_by", Some("owns")),
+            ("owns", Some("owned_by")),
+        ]))
+        .is_empty());
+    }
+
+    #[test]
+    fn ambiguous_inverses_are_reported() {
+        // The label names a real predicate pointing somewhere else.
+        assert!(!codes(&ontology_with(&[
+            ("owned_by", Some("owns")),
+            ("owns", Some("something_else")),
+        ]))
+        .is_empty());
+
+        // Two predicates sharing one label: `incoming_all` would return the
+        // union of two distinct relations under one key.
+        assert!(!codes(&ontology_with(&[
+            ("authored", Some("authored_by")),
+            ("wrote", Some("authored_by")),
+        ]))
+        .is_empty());
+
+        // "The reverse of p is p" is symmetry, and has its own spelling — the
+        // two behave differently in the graph.
+        assert!(!codes(&ontology_with(&[("related_to", Some("related_to"))])).is_empty());
+    }
+
+    #[test]
+    fn the_shipped_default_ontology_validates() {
+        let ontology: Ontology =
+            toml::from_str(include_str!("../templates/default-ontology.toml")).unwrap();
+        assert!(
+            ontology.validate().is_empty(),
+            "default ontology reports: {:?}",
+            codes(&ontology)
+        );
+    }
 
     #[test]
     fn validates_predicate_shape() {
