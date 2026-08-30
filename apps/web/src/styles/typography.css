@@ -1,1 +1,6 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=DM+Serif+Display:ital@0;1&display=swap");
+/* No webfont import: these assets are embedded in the kataan-server binary and
+   the expected deployment is a local, often offline vault viewer. A
+   fonts.googleapis.com @import would be a third-party request on every page
+   view that simply never resolves offline, leaving the fallback stack anyway.
+   The stacks below name the same faces first, so a machine that has them
+   installed still gets them. */
