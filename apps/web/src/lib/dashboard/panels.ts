@@ -1,8 +1,8 @@
 import { type DocumentResponse, type TomlSchemaResponse } from '../api';
 
+import { emptySectionNote, renderPropertyValue, schemaLine } from './dom';
 import { metadataPanel, schemaPanel } from './elements';
-
-import { emptySectionNote, formatLabel, renderPropertyValue, schemaLine } from './format';
+import { formatLabel } from './format';
 
 export function renderSchema(schema: TomlSchemaResponse) {
   schemaPanel.className = 'schema-content';
@@ -28,18 +28,12 @@ export function renderSchema(schema: TomlSchemaResponse) {
   schemaPanel.replaceChildren(templateLabel, template, details);
 }
 
-export function requiredFields(schema: TomlSchemaResponse) {
+function requiredFields(schema: TomlSchemaResponse) {
   const root = schema.schema as { schema?: { required?: string[] }; required?: string[] };
   return root.schema?.required ?? root.required ?? [];
 }
 
-/// `onSelectEdge` is injected rather than imported: following an edge is a
-/// selection concern, and reaching back into the dashboard from here would
-/// make the two modules circular.
-export function renderMetadata(
-  vaultDocument: DocumentResponse,
-  onSelectEdge: (id: string) => void,
-) {
+export function renderMetadata(vaultDocument: DocumentResponse) {
   const {
     edges,
     markdown,
@@ -52,7 +46,7 @@ export function renderMetadata(
       property('ID', vaultDocument.id),
       ...Object.entries(properties).map(([key, value]) => property(formatLabel(key), value)),
     ]),
-    metadataSection('Edges', renderEdges(edges, onSelectEdge)),
+    metadataSection('Edges', renderEdges(edges)),
     metadataSection('Internal', [
       property('Markdown', markdown),
       property('Markdown checksum', markdownChecksum),
@@ -61,7 +55,7 @@ export function renderMetadata(
   );
 }
 
-export function metadataSection(title: string, children: HTMLElement[]) {
+function metadataSection(title: string, children: HTMLElement[]) {
   const section = document.createElement('section');
   section.className = 'metadata-section';
 
@@ -81,21 +75,17 @@ export function metadataSection(title: string, children: HTMLElement[]) {
   return section;
 }
 
-export function renderEdges(edges: unknown, onSelectEdge: (id: string) => void) {
+function renderEdges(edges: unknown) {
   if (!edges || typeof edges !== 'object' || Array.isArray(edges)) {
     return [];
   }
 
   return Object.entries(edges as Record<string, unknown>)
     .filter(([, targets]) => Array.isArray(targets) && targets.length > 0)
-    .map(([predicate, targets]) => edgeGroup(predicate, targets as unknown[], onSelectEdge));
+    .map(([predicate, targets]) => edgeGroup(predicate, targets as unknown[]));
 }
 
-export function edgeGroup(
-  predicate: string,
-  targets: unknown[],
-  onSelectEdge: (id: string) => void,
-) {
+function edgeGroup(predicate: string, targets: unknown[]) {
   const wrapper = document.createElement('div');
   wrapper.className = 'edge-group';
 
@@ -105,22 +95,26 @@ export function edgeGroup(
 
   const list = document.createElement('div');
   list.className = 'edge-list';
-  list.replaceChildren(...targets.map((target) => edgeTarget(target, onSelectEdge)));
+  list.replaceChildren(...targets.map(edgeTarget));
 
   wrapper.append(label, list);
   return wrapper;
 }
 
-export function edgeTarget(target: unknown, onSelectEdge: (id: string) => void) {
+function edgeTarget(target: unknown) {
   const item = document.createElement('button');
   item.className = 'edge-target';
   item.type = 'button';
   item.textContent = String(target);
-  item.addEventListener('click', () => onSelectEdge(String(target)));
+  // Following an edge is a selection concern. Marking the node and letting the
+  // dashboard delegate keeps this module free of a callback threaded through
+  // three layers, matches the data-folder/data-document rows, and survives
+  // `replaceChildren` without re-attaching a listener per render.
+  item.dataset.edge = String(target);
   return item;
 }
 
-export function property(label: string, value: unknown) {
+function property(label: string, value: unknown) {
   const wrapper = document.createElement('div');
   wrapper.className = 'property';
 

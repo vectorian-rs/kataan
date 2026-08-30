@@ -6,7 +6,7 @@ Kataan is a filesystem-native knowledge workspace. The source of truth is the re
 
 Read:
 
-- `docs/kataan-brief.md`
+- `docs/kataan-brief.md`, `docs/kataan-format.md`, `docs/kataan-operations.md`
 - current implementation code
 - relevant CLI/server/test output
 
@@ -90,7 +90,7 @@ Bullet list of planned behavior not found in code.
 
 ## Drift from spec
 
-List mismatches between implementation and `kataan-brief.md`.
+List mismatches between implementation and `kataan-format.md` / `kataan-operations.md`.
 
 ## Test and command evidence
 

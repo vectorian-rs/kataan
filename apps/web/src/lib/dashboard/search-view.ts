@@ -1,5 +1,6 @@
-import { emptyListNote, listSection } from './format';
 import { type SearchResponse, type SearchStatus } from '../api';
+
+import { emptyListNote, listSection, renderPill } from './dom';
 import { documentsEl, folderTitle, searchStatusEl } from './elements';
 
 export function renderSearchStatus(status: SearchStatus) {
@@ -49,9 +50,8 @@ export function searchSummary(response: SearchResponse) {
 }
 
 export function searchMetaPill(value: string) {
-  const pill = document.createElement('span');
-  pill.className = 'pill search-meta-pill';
-  pill.textContent = value;
+  const pill = renderPill(value);
+  pill.classList.add('search-meta-pill');
   return pill;
 }
 
