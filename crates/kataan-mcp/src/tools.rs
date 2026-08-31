@@ -76,7 +76,7 @@ pub fn list() -> Value {
                     "linked_to": { "type": "string", "description": "Restrict to documents with an edge to this id." },
                     "predicate": { "type": "string", "description": "With linked_to: restrict to one predicate." },
                     "direction": { "type": "string", "enum": ["out", "in", "both"], "description": "With linked_to: which direction to follow." },
-                    "include": { "type": "string", "enum": ["metadata", "markdown"], "description": "Default metadata." },
+                    "include": { "type": "string", "enum": ["metadata", "full", "markdown"], "description": "`metadata` (default) is the summary; `full` adds each document's declared fields, timestamps and edges at no extra cost; `markdown` adds the body, which is one file read per document." },
                     "limit": { "type": "integer", "minimum": 1 },
                     "offset": { "type": "integer", "minimum": 0 }
                 }

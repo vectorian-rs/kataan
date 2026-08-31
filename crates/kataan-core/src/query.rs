@@ -94,11 +94,16 @@ pub const MAX_DOCUMENT_LIMIT: usize = 1000;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Include {
-    /// Summary only. The default: `LoadedVault` is metadata-only by design, so
-    /// anything more costs a filesystem read per document.
+    /// The summary only — enough to render a link or a row.
     #[default]
     Metadata,
-    /// Summary plus the Markdown body, read from disk per document.
+    /// Summary plus the document's full metadata: its declared fields, its
+    /// timestamps, its edges, and any key the vault added that kataan does not
+    /// model. Free: `LoadedVault` already holds all of it in memory, so this
+    /// reads nothing from disk.
+    Full,
+    /// Summary plus the Markdown body. This one *does* cost a filesystem read
+    /// per document, because bodies are deliberately not held in memory.
     Markdown,
 }
 
@@ -146,6 +151,11 @@ pub struct DocumentQuery {
 pub struct DocumentEntry {
     #[serde(flatten)]
     pub summary: DocumentSummary,
+    /// Present when the query asked for `include: full`. Carries the fields a
+    /// summary omits — `occurred_at`, `edges`, and everything the vault
+    /// declared under `[nodes.*]`, which lands in `extra`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<crate::document::DocumentMetadata>,
     /// Present only when the query asked for `include: markdown`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub markdown: Option<String>,
@@ -270,8 +280,15 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
         // A body that cannot be read is reported, not silently dropped: the
         // caller would otherwise get fewer documents than `total` implies with
         // no signal, which is the failure the limit guard exists to prevent.
+        let metadata = match query.include {
+            Include::Full => vault
+                .documents
+                .get(id)
+                .map(|record| record.metadata.clone()),
+            _ => None,
+        };
         let markdown = match query.include {
-            Include::Metadata => None,
+            Include::Metadata | Include::Full => None,
             Include::Markdown => match vault.read_markdown(id) {
                 Ok(markdown) => Some(markdown),
                 Err(_) => {
@@ -280,7 +297,11 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
                 }
             },
         };
-        documents.push(DocumentEntry { summary, markdown });
+        documents.push(DocumentEntry {
+            summary,
+            metadata,
+            markdown,
+        });
     }
 
     Ok(DocumentPage {

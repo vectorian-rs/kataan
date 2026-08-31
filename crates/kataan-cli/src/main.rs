@@ -84,6 +84,10 @@ enum Command {
         predicate: Option<String>,
         #[arg(long, default_value = "both")]
         direction: Direction,
+        /// Include each document's full metadata: declared fields, timestamps
+        /// and edges. Free — it is already in memory.
+        #[arg(long)]
+        full: bool,
         /// Include Markdown bodies (one file read per document).
         #[arg(long)]
         markdown: bool,
@@ -219,6 +223,7 @@ fn main() -> Result<()> {
             linked_to,
             predicate,
             direction,
+            full,
             markdown,
             limit,
             offset,
@@ -235,10 +240,10 @@ fn main() -> Result<()> {
                     predicate,
                     direction,
                 }),
-                include: if markdown {
-                    kataan_core::query::Include::Markdown
-                } else {
-                    kataan_core::query::Include::Metadata
+                include: match (markdown, full) {
+                    (true, _) => kataan_core::query::Include::Markdown,
+                    (false, true) => kataan_core::query::Include::Full,
+                    (false, false) => kataan_core::query::Include::Metadata,
                 },
                 limit,
                 offset,
