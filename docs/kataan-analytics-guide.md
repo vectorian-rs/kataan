@@ -67,9 +67,16 @@ The hard ceiling on `limit` is 1000; above that is an error.
 
 ### `include`
 
-Defaults to metadata only. `include: "markdown"` costs **one filesystem read per
-document**, so a full-vault body pull is thousands of reads. Ask for bodies only
-when you need text.
+| Value | Returns | Cost |
+| :-- | :-- | :-- |
+| `metadata` (default) | the summary: id, type, title, status, labels, `is_folder_index` | free |
+| `full` | the summary plus each document's complete metadata — declared `[nodes.*]` fields, `occurred_at`, `edges`, and any key kataan does not model | **free** |
+| `markdown` | the summary plus the body | one filesystem read per document |
+
+`full` is free because `LoadedVault` already holds every document's metadata in
+memory; only bodies are left on disk. If you are projecting scalars — a
+`website`, a `period`, an `occurred_at` — ask for `full` rather than fetching
+each document individually.
 
 A document whose body cannot be read is reported in `missing`, not silently
 dropped — so `documents.len() + missing.len()` always reconciles against what
@@ -133,6 +140,20 @@ Guarantees worth relying on:
   is not in `nodes`.
 - **Deterministic.** Byte-identical across runs, so `kataan graph export` output
   diffs cleanly and can be committed as a build artifact.
+
+### Two things the edge model will not do for you
+
+**An edge is identified by `(source, predicate, target)`, so a relationship
+cannot repeat.** Someone who worked at an employer, left, and returned is one
+`worked_at` edge, not two. `add_edge` refuses the duplicate on write and the
+graph stores targets in a set, so the second occurrence is not lost late — it is
+never representable. If you need the two spells distinguished, reify the
+relationship as a document with its own interval and point at it.
+
+**`reference` fields are not edges.** `VaultGraph` is built purely from
+`metadata.edges`, so a field declared `{ type = "reference" }` is validated (the
+target must exist, and match `to` if given) but is invisible to `neighbors`,
+`subgraph`, and `linked_to`. Use `[edges]` for anything you intend to traverse.
 
 `subgraph` has no `limit`. A full export of a ~700-document vault is fine over
 HTTP and CLI; over MCP it is a large response, so filter by `types` and
@@ -199,9 +220,26 @@ write, so if you have historical extracts, they are missing these.
 
 A vault can constrain them with `[nodes.*]` schemas in `ontology.toml`, which
 gives you a machine-readable description of what a type carries — useful for
-deciding what is safe to aggregate. Caveat: schemas describe **top-level keys
-only**. A value nested inside a table (`[rate_card]` → `effective_date`) cannot
-be constrained, and in practice a lot of vault dates live there.
+deciding what is safe to aggregate.
+
+The accurate rule about nesting: kataan validates a **table it has a type for**,
+which today means `interval`. So this is checked, including that `to` is not
+before `from`:
+
+```toml
+[nodes.employment.fields]
+period = { type = "interval" }
+```
+
+What it cannot do is reach inside a table it has no type for. Declaring
+`rate_card = { type = "table" }` requires the table to exist and be a table, but
+nothing constrains `rate_card.effective_date`. Model dated things as `interval`
+and they are validated; a lot of vault dates currently sit inside untyped tables
+where they are not.
+
+**`NodeSchema` has no cross-field validation.** `required` is an unconditional
+list and no rule spans two fields, so invariants like "an open interval must
+carry `confirmed_at`" are yours to enforce.
 
 ---
 

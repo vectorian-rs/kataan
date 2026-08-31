@@ -313,6 +313,69 @@ fn linked_to_agrees_with_neighbors() {
 }
 
 #[test]
+fn full_returns_declared_fields_without_reading_the_body() {
+    let root = vault_with_edges("documents-full");
+    // A custom key is exactly what a consumer declares under `[nodes.*]` and
+    // then cannot see through a summary.
+    let id = CanonicalId::parse("topics/rust").unwrap();
+    let path = root.join(id.toml_path());
+    let mut sidecar: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+    sidecar.insert(
+        "homepage".to_owned(),
+        toml::Value::String("rust-lang.org".to_owned()),
+    );
+    sidecar.insert(
+        "occurred_at".to_owned(),
+        toml::Value::String("2010".to_owned()),
+    );
+    std::fs::write(&path, toml::to_string_pretty(&sidecar).unwrap()).unwrap();
+
+    let vault = LoadedVault::load(&root).unwrap();
+    let page = documents(
+        &vault,
+        &q(DocumentQuery {
+            ids: vec!["topics/rust".to_owned()],
+            include: Include::Full,
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+
+    let entry = &page.documents[0];
+    let metadata = entry.metadata.as_ref().expect("full omitted metadata");
+    // The three things a summary cannot carry.
+    assert_eq!(metadata.extra["homepage"].as_str(), Some("rust-lang.org"));
+    assert_eq!(metadata.occurred_at.as_deref(), Some("2010"));
+    assert!(metadata.edges.contains_key("subtopic_of"), "edges missing");
+    // Full is a memory read, so it must not pull the body along with it.
+    assert!(entry.markdown.is_none(), "full should not read the body");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn metadata_is_omitted_unless_asked_for() {
+    let root = vault_with_edges("documents-default-shape");
+    let vault = LoadedVault::load(&root).unwrap();
+    for include in [Include::Metadata, Include::Markdown] {
+        let page = documents(
+            &vault,
+            &q(DocumentQuery {
+                include,
+                limit: Some(MAX_DOCUMENT_LIMIT),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        assert!(
+            page.documents.iter().all(|d| d.metadata.is_none()),
+            "{include:?} leaked full metadata"
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn bodies_are_opt_in() {
     let root = vault_with_edges("documents-include");
     let vault = LoadedVault::load(&root).unwrap();

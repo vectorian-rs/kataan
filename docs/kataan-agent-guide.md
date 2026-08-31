@@ -138,8 +138,9 @@ Choosing a read tool:
 - One document by id — `get_document`.
 - Many documents, or every document of a type — `documents`. It takes `ids` for a
   batch fetch and filters (`type`, `status`, `labels`, `path_prefix`,
-  `linked_to`) for a listing. Returns metadata only unless you ask for
-  `include: "markdown"`, because each body is a separate file read. Matching more
+  `linked_to`) for a listing. `include` defaults to a summary; `full` adds each
+  document's declared fields, timestamps and edges at no cost (that metadata is
+  already in memory); only `markdown` reads a file per document. Matching more
   than `limit` is an error rather than a silent truncation, so a partial result
   can never be mistaken for a complete one.
 - What one document is connected to — `neighbors`. **This is the only way to see
@@ -421,9 +422,15 @@ Two rules worth remembering:
 - **Schemas constrain what they declare, never what they do not.** An undeclared
   key still validates. A type with no schema is entirely unconstrained, so a
   vault can adopt schemas one type at a time.
-- **Only top-level keys can be constrained.** A value nested inside a table
-  (`[rate_card]` → `effective_date`) can be required and checked as a `table`,
-  but its interior is not reachable.
+- **A table is only constrained if kataan has a type for it**, which today means
+  `interval` — those are validated, `to >= from` included. A table declared
+  `{ type = "table" }` must exist and be a table, but nothing checks inside it.
+  Model dated things as `interval` and they are checked.
+- **No rule spans two fields.** `required` is unconditional, so an invariant like
+  "an open interval needs `confirmed_at`" cannot be expressed here.
+- **A `reference` field is not an edge.** It is validated (the target must exist)
+  but the graph is built only from `[edges]`, so a reference is invisible to
+  `neighbors` and `subgraph`. Use an edge for anything you traverse.
 
 Schemas live in the vault, not in kataan, so they version in the same git
 timeline as the documents they describe.
