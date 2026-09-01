@@ -108,6 +108,30 @@ fn rebuild_preserves_a_folder_scope() {
 }
 
 #[test]
+fn rebuild_preserves_a_folder_typed_below_its_root() {
+    let root = fresh_vault();
+    write_scoped_type(&root, "deck", None);
+    write_folder_scope(&root, "projects/acme/decks", "deck = \".\"\n");
+    // The folder index itself is typed `deck`, not `project`. Rebuild walks
+    // from the root type folder, so without preservation it would stamp
+    // `project` back over this and silently undo the typing.
+    let index = root.join("projects/acme/decks/index.toml");
+    let text = fs::read_to_string(&index).unwrap();
+    fs::write(&index, text.replace("type = \"project\"", "type = \"deck\"")).unwrap();
+
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+
+    let rewritten = fs::read_to_string(&index).unwrap();
+    assert!(
+        rewritten.contains("type = \"deck\""),
+        "rebuild reverted the folder type: {rewritten}"
+    );
+    assert!(validate(&root).unwrap().is_ok());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_type_is_not_claimed_outside_the_scope_that_declares_it() {
     let root = fresh_vault();
     write_scoped_type(&root, "deck", None);

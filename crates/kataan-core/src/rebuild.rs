@@ -193,7 +193,7 @@ fn ensure_folder_index_pair(
     }
     if !toml_path.exists() {
         let folder_index = FolderIndexToml {
-            document_type,
+            document_type: header.document_type.as_deref().unwrap_or(document_type),
             markdown: "index.md",
             name,
             description: None,
@@ -265,6 +265,10 @@ fn update_root_updated_at(path: &Path, text: &str) -> Result<()> {
 /// `(String, Option<String>, Option<String>, ...)` gives the reader nothing to
 /// check a mistaken argument order against.
 struct FolderHeader {
+    /// The type this folder already declares. A folder deeper in the tree may
+    /// legitimately carry a type other than its top-level folder's, so the
+    /// rewrite keeps what is there rather than stamping the root type over it.
+    document_type: Option<String>,
     name: String,
     description: Option<String>,
     default_type: Option<String>,
@@ -273,6 +277,7 @@ struct FolderHeader {
 
 fn parse_folder_index_header(text: &str, folder_path: &Path) -> FolderHeader {
     let fallback = |folder_path: &Path| FolderHeader {
+        document_type: None,
         name: title_from_path(folder_path, "folder"),
         description: None,
         default_type: None,
@@ -312,6 +317,10 @@ fn parse_folder_index_header(text: &str, folder_path: &Path) -> FolderHeader {
         })
         .unwrap_or_default();
     FolderHeader {
+        document_type: value
+            .get("type")
+            .and_then(toml::Value::as_str)
+            .map(str::to_owned),
         name,
         description,
         default_type,
@@ -328,7 +337,7 @@ fn write_folder_index(
     subfolders: &[FolderSubfolder],
 ) -> Result<()> {
     let folder_index = FolderIndexToml {
-        document_type,
+        document_type: header.document_type.as_deref().unwrap_or(document_type),
         markdown: "index.md",
         name: header.name.as_str(),
         description: header.description.as_deref(),
