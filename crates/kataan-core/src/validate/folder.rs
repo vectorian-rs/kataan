@@ -18,6 +18,7 @@ use crate::{
     id::CanonicalId,
     index::{FolderDocument, FolderIndex, FolderSubfolder},
     scan::ScanIgnore,
+    scope::{self, TypeScope},
     types::TypeRegistry,
     Result,
 };
@@ -44,85 +45,6 @@ pub(super) struct Collected<'a> {
     pub loaded_metadata: &'a mut Vec<(String, DocumentMetadata)>,
 }
 
-/// One level of type declarations: the vault root, or a folder whose
-/// `index.toml` carries a `[type_folders]` table.
-///
-/// Claims are stored exactly as written, relative to `folder`, and resolved to
-/// vault-relative patterns on lookup. Keeping them unresolved means the
-/// diagnostic can quote what the author actually wrote.
-pub(super) struct TypeScope {
-    /// Vault-relative directory that declared these claims. Empty for the root.
-    folder: String,
-    claims: BTreeMap<String, Vec<String>>,
-}
-
-impl TypeScope {
-    fn resolved_claims(&self, type_name: &str) -> Vec<String> {
-        self.claims
-            .get(type_name)
-            .map(|patterns| {
-                patterns
-                    .iter()
-                    .map(|pattern| join_scope(&self.folder, pattern))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn describe(&self, type_name: &str) -> Vec<String> {
-        let where_ = if self.folder.is_empty() {
-            "root".to_owned()
-        } else {
-            self.folder.clone()
-        };
-        self.claims
-            .get(type_name)
-            .map(|patterns| {
-                patterns
-                    .iter()
-                    .map(|pattern| format!("`{pattern}` ({where_})"))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-}
-
-/// A scope-relative pattern as a vault-relative one.
-fn join_scope(folder: &str, pattern: &str) -> String {
-    let pattern = pattern.trim_start_matches("./");
-    let pattern_is_self = pattern.is_empty() || pattern == ".";
-    match (folder.is_empty(), pattern_is_self) {
-        (true, true) => String::new(),
-        (true, false) => pattern.to_owned(),
-        (false, true) => folder.to_owned(),
-        (false, false) => format!("{folder}/{pattern}"),
-    }
-}
-
-/// Whether any scope in the chain claims `directory` for `type_name`.
-///
-/// Deliberately a union rather than nearest-wins: a deck genuinely does belong
-/// in more than one place, so legality is permissive. Choosing a *default* type
-/// is the nearest-wins half, and lives in `rebuild`.
-fn type_is_claimed(scopes: &[TypeScope], type_name: &str, directory: &str) -> bool {
-    scopes.iter().any(|scope| {
-        scope
-            .resolved_claims(type_name)
-            .iter()
-            .any(|pattern| crate::types::pattern_claims(pattern, directory))
-    })
-}
-
-/// The innermost scope containing `directory`. Scopes are pushed in ancestor
-/// order, so the last match is the nearest.
-fn nearest_scope<'a>(scopes: &'a [TypeScope], directory: &str) -> Option<&'a TypeScope> {
-    scopes.iter().rev().find(|scope| {
-        scope.folder.is_empty()
-            || directory == scope.folder
-            || directory.starts_with(&format!("{}/", scope.folder))
-    })
-}
-
 /// Depth of a document below the scope that types it.
 ///
 /// Measured from the nearest declaring scope rather than the vault root, so
@@ -142,25 +64,7 @@ impl FolderWalk<'_> {
     /// The root scope: `kataan.toml [type_folders]` plus every pattern each
     /// type definition claims.
     pub(super) fn root_scope(&self) -> TypeScope {
-        let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (type_name, folder) in self.type_folders {
-            claims
-                .entry(type_name.clone())
-                .or_default()
-                .push(folder.clone());
-        }
-        for (type_name, definition) in &self.type_registry.definitions {
-            let entry = claims.entry(type_name.clone()).or_default();
-            for pattern in &definition.folders {
-                if !entry.contains(pattern) {
-                    entry.push(pattern.clone());
-                }
-            }
-        }
-        TypeScope {
-            folder: String::new(),
-            claims,
-        }
+        TypeScope::root(self.type_folders, self.type_registry)
     }
 
     /// Turn a folder's `[type_folders]` table into a scope, reporting the
@@ -207,10 +111,7 @@ impl FolderWalk<'_> {
         if claims.is_empty() {
             return None;
         }
-        Some(TypeScope {
-            folder: relative.to_owned(),
-            claims,
-        })
+        Some(TypeScope::new(relative, claims))
     }
 
     pub(super) fn folder(
@@ -450,9 +351,7 @@ impl FolderWalk<'_> {
             .rsplit_once('/')
             .map(|(directory, _)| directory)
             .unwrap_or("");
-        let scope_folder = nearest_scope(scopes, document_directory)
-            .map(|scope| scope.folder.as_str())
-            .unwrap_or("");
+        let scope_folder = scope::nearest_folder(scopes, document_directory);
 
         if CanonicalId::parse(&document_id).is_ok()
             && depth_below_scope(&document_id, scope_folder) > self.max_folder_depth
@@ -510,16 +409,8 @@ impl FolderWalk<'_> {
                 )
                 .with_path(relative_toml_path.to_owned()),
             );
-        } else if !type_is_claimed(scopes, &metadata.r#type, document_directory) {
-            let claims = scopes
-                .iter()
-                .flat_map(|scope| scope.describe(&metadata.r#type))
-                .collect::<Vec<_>>();
-            let claims = if claims.is_empty() {
-                "none".to_owned()
-            } else {
-                claims.join(", ")
-            };
+        } else if !scope::is_claimed(scopes, &metadata.r#type, document_directory) {
+            let claims = scope::describe_claims(scopes, &metadata.r#type);
             out.issues.push(
                 Diagnostic::error(
                     codes::TYPE_FOLDER_MISMATCH,

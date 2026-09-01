@@ -117,7 +117,11 @@ fn rebuild_preserves_a_folder_typed_below_its_root() {
     // `project` back over this and silently undo the typing.
     let index = root.join("projects/acme/decks/index.toml");
     let text = fs::read_to_string(&index).unwrap();
-    fs::write(&index, text.replace("type = \"project\"", "type = \"deck\"")).unwrap();
+    fs::write(
+        &index,
+        text.replace("type = \"project\"", "type = \"deck\""),
+    )
+    .unwrap();
 
     crate::rebuild::rebuild_indexes(&root).unwrap();
 

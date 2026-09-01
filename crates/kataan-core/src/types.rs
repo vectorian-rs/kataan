@@ -29,14 +29,6 @@ pub struct TypeDefinition {
     pub markdown_checksum: Option<String>,
 }
 
-impl TypeDefinition {
-    /// The canonical home: the location `kataan.toml` is expected to agree
-    /// with, and where a new document of this type is created by default.
-    pub fn primary_folder(&self) -> Option<&str> {
-        self.folders.first().map(String::as_str)
-    }
-}
-
 /// Accepts either `folder = "x"` or `folders = ["x", "y"]`.
 fn deserialize_folder_patterns<'de, D>(
     deserializer: D,
@@ -108,21 +100,6 @@ pub struct TypeRegistry {
 impl TypeRegistry {
     pub fn contains(&self, name: &str) -> bool {
         self.definitions.contains_key(name)
-    }
-
-    /// The canonical home of `name`, for callers that need one answer.
-    pub fn folder_for(&self, name: &str) -> Option<&str> {
-        self.definitions
-            .get(name)
-            .and_then(TypeDefinition::primary_folder)
-    }
-
-    /// Every location `name` may occupy.
-    pub fn folders_for(&self, name: &str) -> &[String] {
-        self.definitions
-            .get(name)
-            .map(|definition| definition.folders.as_slice())
-            .unwrap_or(&[])
     }
 
     /// `name` and every supertype above it, nearest first.
@@ -268,7 +245,6 @@ markdown = "project.md"
 
         assert!(registry.definitions.contains_key("project"));
         assert_eq!(registry.definitions["project"].folders, vec!["projects"]);
-        assert_eq!(registry.folder_for("project"), Some("projects"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -304,10 +280,9 @@ markdown = "deck.md"
         let registry = TypeRegistry::load(&vault).unwrap();
 
         assert_eq!(
-            registry.folders_for("project"),
+            registry.definitions["project"].folders,
             ["projects", "companies/*/decks/*"]
         );
-        assert_eq!(registry.folder_for("project"), Some("projects"));
         assert!(registry.is_a("deck", "project"));
         assert!(registry.is_a("deck", "deck"));
         assert!(!registry.is_a("project", "deck"));

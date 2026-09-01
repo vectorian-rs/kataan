@@ -75,23 +75,46 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
     // The type must be registered whether or not a parent was given: placing a
     // document by hand is not a reason to skip the check that makes the result
     // a well-formed vault.
-    let type_folder = vault
-        .index
-        .type_folders
-        .get(&request.r#type)
-        .cloned()
-        .ok_or_else(|| invalid_request(format!("unknown type `{}`", request.r#type)))?;
+    let type_registry = crate::types::TypeRegistry::load(&vault)?;
+    if !type_registry.contains(&request.r#type)
+        && !vault.index.type_folders.contains_key(&request.r#type)
+    {
+        return Err(invalid_request(format!(
+            "unknown type `{}`",
+            request.r#type
+        )));
+    }
     let base_folder = match &request.parent {
         Some(parent) => {
-            if parent != &type_folder && !parent.starts_with(&format!("{type_folder}/")) {
+            // Resolved through the same module the validator uses. Two answers
+            // to "may this type live here" would drift, and the way they drift
+            // is a document that is created and then fails validation.
+            let scopes =
+                crate::scope::chain_for(root, &vault.index.type_folders, &type_registry, parent)?;
+            if !crate::scope::is_claimed(&scopes, &request.r#type, parent) {
                 return Err(invalid_request(format!(
-                    "parent `{parent}` is outside `{type_folder}`, the folder for type `{}`",
-                    request.r#type
+                    "parent `{parent}` is not a home for type `{}`; claims: {}",
+                    request.r#type,
+                    crate::scope::describe_claims(&scopes, &request.r#type)
                 )));
             }
             parent.clone()
         }
-        None => type_folder,
+        // A type placed only by wildcard patterns has no single folder to
+        // default to, so it needs to be told where it goes rather than have a
+        // path invented for it.
+        None => {
+            let scopes = vec![crate::scope::TypeScope::root(
+                &vault.index.type_folders,
+                &type_registry,
+            )];
+            crate::scope::default_home(&scopes, &request.r#type).ok_or_else(|| {
+                invalid_request(format!(
+                    "type `{}` has no folder of its own; pass a parent naming where it goes",
+                    request.r#type
+                ))
+            })?
+        }
     };
     validate_status(request.status.as_deref())?;
     validate_timestamp(request.occurred_at.as_deref())?;
