@@ -337,6 +337,7 @@ pub async fn folder(
         description: None,
         default_type: Some(record.metadata.r#type.clone()),
         folder_checksum: None,
+        type_folders: Default::default(),
         documents: Vec::new(),
         subfolders: Vec::new(),
     };

@@ -243,10 +243,13 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
             let Some(record) = vault.documents.get(*id) else {
                 return false;
             };
+            // Subtypes answer a query for their supertype, so `--type company`
+            // returns customers too. Without `extends` in play this is an
+            // equality test.
             query
                 .r#type
                 .as_ref()
-                .is_none_or(|ty| &record.metadata.r#type == ty)
+                .is_none_or(|ty| vault.type_registry.is_a(&record.metadata.r#type, ty))
                 && query
                     .status
                     .as_ref()
@@ -382,7 +385,12 @@ pub fn neighbors(
 /// only when both endpoints survive the type filter, so the result is always
 /// internally consistent — no link ever points at a node that is not present.
 pub fn subgraph(vault: &LoadedVault, types: &[String], predicates: &[String]) -> Subgraph {
-    let type_matches = |ty: &str| types.is_empty() || types.iter().any(|allowed| allowed == ty);
+    let type_matches = |ty: &str| {
+        types.is_empty()
+            || types
+                .iter()
+                .any(|allowed| vault.type_registry.is_a(ty, allowed))
+    };
 
     let nodes: Vec<DocumentSummary> = vault
         .documents

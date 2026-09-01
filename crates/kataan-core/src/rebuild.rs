@@ -22,6 +22,12 @@ struct FolderIndexToml<'a> {
     default_type: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     folder_checksum: Option<&'a str>,
+    /// Serialized before the arrays of tables so the emitted TOML keeps
+    /// `[type_folders]` at the top level rather than trailing a `[[documents]]`
+    /// block, where a reader would have to know TOML well to see it is not
+    /// nested inside it.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    type_folders: &'a std::collections::BTreeMap<String, String>,
     #[serde(skip_serializing_if = "slice_is_empty")]
     documents: &'a [FolderDocument],
     #[serde(skip_serializing_if = "slice_is_empty")]
@@ -98,8 +104,7 @@ fn rebuild_folder_recursive(
     let folder_markdown_path = folder_path.join("index.md");
     let has_index_pair = folder_index_path.exists() && folder_markdown_path.exists();
     let existing_folder_index = fs::read_to_string(&folder_index_path).unwrap_or_default();
-    let (name, description, default_type) =
-        parse_folder_index_header(&existing_folder_index, folder_path);
+    let header = parse_folder_index_header(&existing_folder_index, folder_path);
 
     let mut markdown_paths = Vec::new();
     for entry in fs::read_dir(folder_path).map_err(|source| Error::Io {
@@ -153,8 +158,7 @@ fn rebuild_folder_recursive(
         &folder_markdown_path,
         &folder_index_path,
         document_type,
-        &name,
-        default_type.as_deref(),
+        &header,
     )?;
 
     let checksum_subfolders = subfolders
@@ -168,9 +172,7 @@ fn rebuild_folder_recursive(
     write_folder_index(
         &folder_index_path,
         document_type,
-        &name,
-        description.as_deref(),
-        default_type.as_deref(),
+        &header,
         &folder_checksum,
         &documents,
         &subfolders,
@@ -183,9 +185,9 @@ fn ensure_folder_index_pair(
     markdown_path: &Path,
     toml_path: &Path,
     document_type: &str,
-    name: &str,
-    default_type: Option<&str>,
+    header: &FolderHeader,
 ) -> Result<()> {
+    let name = header.name.as_str();
     if !markdown_path.exists() {
         write::atomic_write_string(markdown_path, &format!("# {name}\n"))?;
     }
@@ -195,8 +197,9 @@ fn ensure_folder_index_pair(
             markdown: "index.md",
             name,
             description: None,
-            default_type: Some(default_type.unwrap_or(document_type)),
+            default_type: Some(header.default_type.as_deref().unwrap_or(document_type)),
             folder_checksum: None,
+            type_folders: &header.type_folders,
             documents: &[],
             subfolders: &[],
         };
@@ -255,12 +258,28 @@ fn update_root_updated_at(path: &Path, text: &str) -> Result<()> {
     write::atomic_write_string(path, &updated)
 }
 
-fn parse_folder_index_header(
-    text: &str,
-    folder_path: &Path,
-) -> (String, Option<String>, Option<String>) {
+/// The parts of an existing `index.toml` that a rewrite must preserve.
+///
+/// Grouped rather than returned as a tuple because every new preserved field
+/// would otherwise widen the tuple at four call sites, and a
+/// `(String, Option<String>, Option<String>, ...)` gives the reader nothing to
+/// check a mistaken argument order against.
+struct FolderHeader {
+    name: String,
+    description: Option<String>,
+    default_type: Option<String>,
+    type_folders: std::collections::BTreeMap<String, String>,
+}
+
+fn parse_folder_index_header(text: &str, folder_path: &Path) -> FolderHeader {
+    let fallback = |folder_path: &Path| FolderHeader {
+        name: title_from_path(folder_path, "folder"),
+        description: None,
+        default_type: None,
+        type_folders: std::collections::BTreeMap::new(),
+    };
     let Ok(value) = toml::from_str::<toml::Value>(text) else {
-        return (title_from_path(folder_path, "folder"), None, None);
+        return fallback(folder_path);
     };
     let name = value
         .get("name")
@@ -275,16 +294,35 @@ fn parse_folder_index_header(
         .get("default_type")
         .and_then(toml::Value::as_str)
         .map(str::to_owned);
-    (name, description, default_type)
+    // Carried through the rewrite verbatim. `write_folder_index` regenerates
+    // the whole file, so anything not read back here is silently dropped on
+    // the next `rebuild-indexes`.
+    let type_folders = value
+        .get("type_folders")
+        .and_then(toml::Value::as_table)
+        .map(|table| {
+            table
+                .iter()
+                .filter_map(|(ty, pattern)| {
+                    pattern
+                        .as_str()
+                        .map(|pattern| (ty.clone(), pattern.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    FolderHeader {
+        name,
+        description,
+        default_type,
+        type_folders,
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn write_folder_index(
     path: &Path,
     document_type: &str,
-    name: &str,
-    description: Option<&str>,
-    default_type: Option<&str>,
+    header: &FolderHeader,
     folder_checksum: &str,
     documents: &[FolderDocument],
     subfolders: &[FolderSubfolder],
@@ -292,10 +330,11 @@ fn write_folder_index(
     let folder_index = FolderIndexToml {
         document_type,
         markdown: "index.md",
-        name,
-        description,
-        default_type,
+        name: header.name.as_str(),
+        description: header.description.as_deref(),
+        default_type: header.default_type.as_deref(),
         folder_checksum: Some(folder_checksum),
+        type_folders: &header.type_folders,
         documents,
         subfolders,
     };

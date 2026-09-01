@@ -230,19 +230,22 @@ pub fn add_edge(
     // Validating one edge needs only the ontology and the two endpoints — not a
     // full vault walk + graph build.
     let ontology = Ontology::load(root)?;
+    // Subtypes satisfy an edge rule written for their supertype, so the single
+    // edge check needs the registry just as the full walk does.
+    let type_registry = crate::types::TypeRegistry::load(&vault)?;
     let edge = ontology
         .edges
         .get(predicate)
         .ok_or_else(|| invalid_request(format!("unknown predicate `{predicate}`")))?;
     let source_record = vault.load_document_record(source)?;
-    if !ontology::type_allowed(&edge.from, &source_record.metadata.r#type) {
+    if !ontology::type_allowed(&edge.from, &source_record.metadata.r#type, &type_registry) {
         return Err(invalid_request(format!(
             "type `{}` cannot be the source of `{predicate}`",
             source_record.metadata.r#type
         )));
     }
     let target_type = vault.load_document_record(target)?.metadata.r#type;
-    if !ontology::type_allowed(&edge.to, &target_type) {
+    if !ontology::type_allowed(&edge.to, &target_type, &type_registry) {
         return Err(invalid_request(format!(
             "type `{target_type}` cannot be the target of `{predicate}`"
         )));

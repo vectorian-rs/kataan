@@ -44,10 +44,213 @@ pub(super) struct Collected<'a> {
     pub loaded_metadata: &'a mut Vec<(String, DocumentMetadata)>,
 }
 
+/// One level of type declarations: the vault root, or a folder whose
+/// `index.toml` carries a `[type_folders]` table.
+///
+/// Claims are stored exactly as written, relative to `folder`, and resolved to
+/// vault-relative patterns on lookup. Keeping them unresolved means the
+/// diagnostic can quote what the author actually wrote.
+pub(super) struct TypeScope {
+    /// Vault-relative directory that declared these claims. Empty for the root.
+    folder: String,
+    claims: BTreeMap<String, Vec<String>>,
+}
+
+impl TypeScope {
+    fn resolved_claims(&self, type_name: &str) -> Vec<String> {
+        self.claims
+            .get(type_name)
+            .map(|patterns| {
+                patterns
+                    .iter()
+                    .map(|pattern| join_scope(&self.folder, pattern))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn describe(&self, type_name: &str) -> Vec<String> {
+        let where_ = if self.folder.is_empty() {
+            "root".to_owned()
+        } else {
+            self.folder.clone()
+        };
+        self.claims
+            .get(type_name)
+            .map(|patterns| {
+                patterns
+                    .iter()
+                    .map(|pattern| format!("`{pattern}` ({where_})"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// A scope-relative pattern as a vault-relative one.
+fn join_scope(folder: &str, pattern: &str) -> String {
+    let pattern = pattern.trim_start_matches("./");
+    let pattern_is_self = pattern.is_empty() || pattern == ".";
+    match (folder.is_empty(), pattern_is_self) {
+        (true, true) => String::new(),
+        (true, false) => pattern.to_owned(),
+        (false, true) => folder.to_owned(),
+        (false, false) => format!("{folder}/{pattern}"),
+    }
+}
+
+/// Whether any scope in the chain claims `directory` for `type_name`.
+///
+/// Deliberately a union rather than nearest-wins: a deck genuinely does belong
+/// in more than one place, so legality is permissive. Choosing a *default* type
+/// is the nearest-wins half, and lives in `rebuild`.
+fn type_is_claimed(scopes: &[TypeScope], type_name: &str, directory: &str) -> bool {
+    scopes.iter().any(|scope| {
+        scope
+            .resolved_claims(type_name)
+            .iter()
+            .any(|pattern| crate::types::pattern_claims(pattern, directory))
+    })
+}
+
+/// The innermost scope containing `directory`. Scopes are pushed in ancestor
+/// order, so the last match is the nearest.
+fn nearest_scope<'a>(scopes: &'a [TypeScope], directory: &str) -> Option<&'a TypeScope> {
+    scopes.iter().rev().find(|scope| {
+        scope.folder.is_empty()
+            || directory == scope.folder
+            || directory.starts_with(&format!("{}/", scope.folder))
+    })
+}
+
+/// Depth of a document below the scope that types it.
+///
+/// Measured from the nearest declaring scope rather than the vault root, so
+/// nesting a type deeper does not spend the depth budget on merely reaching it.
+/// With no folder-level declarations the nearest scope is the root, the base is
+/// the top-level type folder, and this reduces to the previous rule.
+fn depth_below_scope(document_id: &str, scope_folder: &str) -> usize {
+    let base = if scope_folder.is_empty() {
+        1
+    } else {
+        scope_folder.split('/').count()
+    };
+    document_id.split('/').count().saturating_sub(base)
+}
+
 impl FolderWalk<'_> {
-    pub(super) fn folder(&self, out: &mut Collected<'_>, folder_path: &Path) -> Result<()> {
+    /// The root scope: `kataan.toml [type_folders]` plus every pattern each
+    /// type definition claims.
+    pub(super) fn root_scope(&self) -> TypeScope {
+        let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (type_name, folder) in self.type_folders {
+            claims
+                .entry(type_name.clone())
+                .or_default()
+                .push(folder.clone());
+        }
+        for (type_name, definition) in &self.type_registry.definitions {
+            let entry = claims.entry(type_name.clone()).or_default();
+            for pattern in &definition.folders {
+                if !entry.contains(pattern) {
+                    entry.push(pattern.clone());
+                }
+            }
+        }
+        TypeScope {
+            folder: String::new(),
+            claims,
+        }
+    }
+
+    /// Turn a folder's `[type_folders]` table into a scope, reporting the
+    /// declarations that cannot be honored.
+    fn scope_from_declarations(
+        &self,
+        issues: &mut Vec<Diagnostic>,
+        relative: &str,
+        declarations: &BTreeMap<String, String>,
+    ) -> Option<TypeScope> {
+        if declarations.is_empty() {
+            return None;
+        }
+        let mut claims: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (type_name, pattern) in declarations {
+            if !self.type_registry.contains(type_name) {
+                issues.push(
+                    Diagnostic::error(
+                        codes::TYPE_SCOPE_UNKNOWN_TYPE,
+                        format!("folder declares unknown type `{type_name}`"),
+                    )
+                    .with_path(format!("{relative}/index.toml")),
+                );
+                continue;
+            }
+            if !crate::types::pattern_stays_in_scope(pattern) {
+                issues.push(
+                    Diagnostic::error(
+                        codes::TYPE_SCOPE_ESCAPES,
+                        format!(
+                            "folder declares `{type_name} = \"{pattern}\"`, which reaches outside \
+                             the folder that declared it"
+                        ),
+                    )
+                    .with_path(format!("{relative}/index.toml")),
+                );
+                continue;
+            }
+            claims
+                .entry(type_name.clone())
+                .or_default()
+                .push(pattern.clone());
+        }
+        if claims.is_empty() {
+            return None;
+        }
+        Some(TypeScope {
+            folder: relative.to_owned(),
+            claims,
+        })
+    }
+
+    pub(super) fn folder(
+        &self,
+        out: &mut Collected<'_>,
+        folder_path: &Path,
+        scopes: &mut Vec<TypeScope>,
+    ) -> Result<()> {
         let relative = relative_folder_path(self.root_folder, self.root_folder_path, folder_path);
         let folder_index = validate_optional_folder_index_pair(out.issues, folder_path, &relative)?;
+
+        // Pushed before descending, so this folder's own documents and
+        // everything beneath them resolve against it. The walk visits a parent
+        // before its children, so the stack is always exactly the ancestor
+        // chain of the folder being validated.
+        let declared = folder_index.as_ref().and_then(|index| {
+            self.scope_from_declarations(out.issues, &relative, &index.type_folders)
+        });
+        let pushed = declared.is_some();
+        if let Some(scope) = declared {
+            scopes.push(scope);
+        }
+
+        // Split so the pop runs even when the walk returns early through `?`.
+        let result = self.folder_contents(out, folder_path, &relative, folder_index, scopes);
+
+        if pushed {
+            scopes.pop();
+        }
+        result
+    }
+
+    fn folder_contents(
+        &self,
+        out: &mut Collected<'_>,
+        folder_path: &Path,
+        relative: &str,
+        folder_index: Option<FolderIndex>,
+        scopes: &mut Vec<TypeScope>,
+    ) -> Result<()> {
         let mut markdown_slugs = BTreeSet::new();
         let mut toml_slugs = BTreeSet::new();
         let mut document_toml_files: Vec<(PathBuf, String)> = Vec::new();
@@ -66,7 +269,7 @@ impl FolderWalk<'_> {
                 if self.ignore.is_ignored(&path, true) {
                     continue;
                 }
-                self.folder(out, &path)?;
+                self.folder(out, &path, scopes)?;
                 continue;
             }
 
@@ -116,7 +319,7 @@ impl FolderWalk<'_> {
         if let Some(folder_index) = folder_index {
             validate_folder_index(
                 out.issues,
-                &relative,
+                relative,
                 folder_path,
                 &folder_index,
                 &markdown_slugs,
@@ -126,7 +329,7 @@ impl FolderWalk<'_> {
         }
 
         for (toml_path, relative_toml_path) in document_toml_files {
-            self.document(out, &toml_path, &relative_toml_path)?;
+            self.document(out, &toml_path, &relative_toml_path, scopes)?;
         }
 
         Ok(())
@@ -217,6 +420,7 @@ impl FolderWalk<'_> {
         out: &mut Collected<'_>,
         toml_path: &Path,
         relative_toml_path: &str,
+        scopes: &[TypeScope],
     ) -> Result<()> {
         let toml_text = fs::read_to_string(toml_path).map_err(|source| crate::Error::Io {
             path: toml_path.to_path_buf(),
@@ -242,19 +446,27 @@ impl FolderWalk<'_> {
         out.loaded_metadata
             .push((relative_toml_path.to_owned(), metadata.clone()));
 
-        if let Ok(id) = CanonicalId::parse(&document_id) {
-            if id.depth_after_type_folder() > self.max_folder_depth {
-                out.issues.push(
-                    Diagnostic::error(
-                        codes::FOLDER_DEPTH_EXCEEDED,
-                        format!(
-                            "document depth exceeds max_folder_depth `{}`",
-                            self.max_folder_depth
-                        ),
-                    )
-                    .with_path(relative_toml_path.to_owned()),
-                );
-            }
+        let document_directory = document_id
+            .rsplit_once('/')
+            .map(|(directory, _)| directory)
+            .unwrap_or("");
+        let scope_folder = nearest_scope(scopes, document_directory)
+            .map(|scope| scope.folder.as_str())
+            .unwrap_or("");
+
+        if CanonicalId::parse(&document_id).is_ok()
+            && depth_below_scope(&document_id, scope_folder) > self.max_folder_depth
+        {
+            out.issues.push(
+                Diagnostic::error(
+                    codes::FOLDER_DEPTH_EXCEEDED,
+                    format!(
+                        "document depth exceeds max_folder_depth `{}`",
+                        self.max_folder_depth
+                    ),
+                )
+                .with_path(relative_toml_path.to_owned()),
+            );
         }
 
         if let Some(status) = &metadata.status {
@@ -285,34 +497,39 @@ impl FolderWalk<'_> {
             }
         }
 
-        let expected_type_folder = self
-            .type_registry
-            .folder_for(&metadata.r#type)
-            .or_else(|| self.type_folders.get(&metadata.r#type).map(String::as_str));
-
-        match expected_type_folder {
-            Some(expected_folder) if expected_folder != self.root_folder => {
-                out.issues.push(
-                    Diagnostic::error(
-                        codes::TYPE_FOLDER_MISMATCH,
-                        format!(
-                            "document type `{}` belongs in `{expected_folder}`, not `{}`",
-                            metadata.r#type, self.root_folder
-                        ),
-                    )
-                    .with_path(relative_toml_path.to_owned()),
-                );
-            }
-            Some(_) => {}
-            None => {
-                out.issues.push(
-                    Diagnostic::error(
-                        codes::INVALID_TYPE,
-                        format!("unknown type `{}`", metadata.r#type),
-                    )
-                    .with_path(relative_toml_path.to_owned()),
-                );
-            }
+        // A type is legal here when any scope in the ancestor chain claims
+        // this directory for it. With no folder-level declarations the chain is
+        // just the root, and this is the previous top-level folder check.
+        let known_type = self.type_registry.contains(&metadata.r#type)
+            || self.type_folders.contains_key(&metadata.r#type);
+        if !known_type {
+            out.issues.push(
+                Diagnostic::error(
+                    codes::INVALID_TYPE,
+                    format!("unknown type `{}`", metadata.r#type),
+                )
+                .with_path(relative_toml_path.to_owned()),
+            );
+        } else if !type_is_claimed(scopes, &metadata.r#type, document_directory) {
+            let claims = scopes
+                .iter()
+                .flat_map(|scope| scope.describe(&metadata.r#type))
+                .collect::<Vec<_>>();
+            let claims = if claims.is_empty() {
+                "none".to_owned()
+            } else {
+                claims.join(", ")
+            };
+            out.issues.push(
+                Diagnostic::error(
+                    codes::TYPE_FOLDER_MISMATCH,
+                    format!(
+                        "document type `{}` is not claimed at `{document_directory}`; claims: {claims}",
+                        metadata.r#type
+                    ),
+                )
+                .with_path(relative_toml_path.to_owned()),
+            );
         }
 
         if !validate_metadata_markdown_path(out.issues, toml_path, relative_toml_path, &metadata) {

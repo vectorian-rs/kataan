@@ -88,6 +88,12 @@ pub struct FolderIndex {
     pub default_type: Option<String>,
     pub folder_checksum: Option<String>,
 
+    /// Types this folder declares for its own subtree, as patterns relative to
+    /// this folder. Additive: a declaration here widens what is legal below it
+    /// and is invisible outside it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub type_folders: std::collections::BTreeMap<String, String>,
+
     #[serde(default)]
     pub documents: Vec<FolderDocument>,
     #[serde(default)]

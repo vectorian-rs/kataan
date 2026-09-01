@@ -82,4 +82,5 @@ fn unique_temp_dir() -> PathBuf {
 mod documents;
 mod node_schemas;
 mod structure;
+mod type_scopes;
 mod types_and_edges;

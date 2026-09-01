@@ -77,13 +77,16 @@ fn validate_type_registry(issues: &mut Vec<Diagnostic>, vault: &Vault, registry:
             );
         }
 
-        if definition.folder != *folder {
+        // The root mapping must be one of the locations the type claims. A
+        // type may claim more (patterns, and folder-level scopes), but the
+        // canonical home in kataan.toml has to be among them.
+        if !definition.folders.iter().any(|claimed| claimed == folder) {
             issues.push(
                 Diagnostic::error(
                     codes::TYPE_FOLDER_MISMATCH,
                     format!(
-                        "type definition `{ty}` maps to `{}`, but kataan.toml maps it to `{folder}`",
-                        definition.folder
+                        "type definition `{ty}` claims [{}], which does not include the kataan.toml mapping `{folder}`",
+                        definition.folders.join(", ")
                     ),
                 )
                 .with_path(format!("type/{ty}.toml")),
@@ -91,16 +94,46 @@ fn validate_type_registry(issues: &mut Vec<Diagnostic>, vault: &Vault, registry:
         }
     }
 
-    for ty in registry.definitions.keys() {
-        if !vault.index.type_folders.contains_key(ty) {
+    for (ty, definition) in &registry.definitions {
+        // A type that claims nothing centrally is legal, because a folder-level
+        // `[type_folders]` may place it instead, and those are not knowable
+        // here without a second walk of the vault. Warn rather than error: the
+        // type is inert until some folder declares it, which is worth saying,
+        // but it is not a broken vault.
+        if !vault.index.type_folders.contains_key(ty) && definition.folders.is_empty() {
             issues.push(
-                Diagnostic::error(
+                Diagnostic::warning(
                     codes::MISSING_TYPE_FOLDER,
-                    format!("type definition `{ty}` has no matching type_folders entry"),
+                    format!(
+                        "type definition `{ty}` claims no folders and has no type_folders entry, \
+                         so only a folder-level declaration can place it"
+                    ),
                 )
                 .with_path(format!("type/{ty}.toml")),
             );
         }
+
+        if let Some(parent) = &definition.extends {
+            if !registry.contains(parent) {
+                issues.push(
+                    Diagnostic::error(
+                        codes::TYPE_EXTENDS_UNKNOWN,
+                        format!("type definition `{ty}` extends unknown type `{parent}`"),
+                    )
+                    .with_path(format!("type/{ty}.toml")),
+                );
+            }
+        }
+    }
+
+    for ty in registry.extends_cycles() {
+        issues.push(
+            Diagnostic::error(
+                codes::TYPE_EXTENDS_CYCLE,
+                format!("type definition `{ty}` is in an `extends` cycle"),
+            )
+            .with_path(format!("type/{ty}.toml")),
+        );
     }
 }
 
@@ -202,15 +235,21 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
             known_document_types: &mut known_document_types,
             loaded_metadata: &mut loaded_metadata,
         };
-        walk.folder(&mut collected, &folder_path)?;
+        let mut scopes = vec![walk.root_scope()];
+        walk.folder(&mut collected, &folder_path, &mut scopes)?;
     }
 
     for (path, metadata) in loaded_metadata {
         if let Some(ontology) = &ontology {
             issues.extend(
-                crate::ontology::validate_node_fields(ontology, &metadata, &known_document_types)
-                    .into_iter()
-                    .map(|diagnostic| diagnostic.with_path(path.clone())),
+                crate::ontology::validate_node_fields(
+                    ontology,
+                    &metadata,
+                    &known_document_types,
+                    &type_registry,
+                )
+                .into_iter()
+                .map(|diagnostic| diagnostic.with_path(path.clone())),
             );
 
             for (predicate_name, targets) in &metadata.edges {
@@ -227,7 +266,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                     continue;
                 };
 
-                if !type_allowed(&predicate.from, &metadata.r#type) {
+                if !type_allowed(&predicate.from, &metadata.r#type, &type_registry) {
                     issues.push(
                         Diagnostic::error(
                             codes::PREDICATE_SOURCE_TYPE_MISMATCH,
@@ -252,7 +291,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
                         continue;
                     };
 
-                    if !type_allowed(&predicate.to, target_type) {
+                    if !type_allowed(&predicate.to, target_type, &type_registry) {
                         issues.push(
                             Diagnostic::error(
                                 codes::PREDICATE_TARGET_TYPE_MISMATCH,

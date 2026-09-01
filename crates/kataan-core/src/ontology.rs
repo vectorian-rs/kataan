@@ -271,8 +271,19 @@ impl Ontology {
     }
 }
 
-pub fn type_allowed(allowed: &[String], actual: &str) -> bool {
-    allowed.iter().any(|ty| ty == "*" || ty == actual)
+/// Whether `actual` satisfies a permitted-type list.
+///
+/// Matches `*`, an exact name, or any supertype reachable through `extends`, so
+/// a rule written `from = ["company"]` accepts a `customer` without every
+/// subtype having to be listed in `ontology.toml`.
+pub fn type_allowed(
+    allowed: &[String],
+    actual: &str,
+    registry: &crate::types::TypeRegistry,
+) -> bool {
+    allowed
+        .iter()
+        .any(|ty| ty == "*" || ty == actual || registry.is_a(actual, ty))
 }
 
 pub fn is_predicate_name(value: &str) -> bool {
@@ -411,6 +422,7 @@ pub fn validate_node_fields(
     ontology: &Ontology,
     metadata: &crate::document::DocumentMetadata,
     known_document_types: &BTreeMap<String, String>,
+    registry: &crate::types::TypeRegistry,
 ) -> Vec<Diagnostic> {
     let Some(schema) = ontology.nodes.get(&metadata.r#type) else {
         return Vec::new();
@@ -454,7 +466,9 @@ pub fn validate_node_fields(
                         ));
                         continue;
                     };
-                    if !field_schema.to.is_empty() && !type_allowed(&field_schema.to, target_type) {
+                    if !field_schema.to.is_empty()
+                        && !type_allowed(&field_schema.to, target_type, registry)
+                    {
                         diagnostics.push(Diagnostic::error(
                             codes::FIELD_TYPE_MISMATCH,
                             format!(
