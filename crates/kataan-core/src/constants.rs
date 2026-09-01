@@ -1,4 +1,10 @@
-pub const SCHEMA_VERSION: &str = "0.1.0";
+/// The on-disk schema this build reads and writes.
+///
+/// Bumped to 0.2.0 by nested type scopes: `folders`, `extends`, and
+/// folder-level `[type_folders]`. A vault declaring a newer minor than this is
+/// refused at open, because the alternative is a TOML parser reporting a
+/// missing field, which tells the reader nothing about the real problem.
+pub const SCHEMA_VERSION: &str = "0.2.0";
 pub const VAULT_CONFIG_FILE: &str = "kataan.toml";
 pub const DEFAULT_MAX_FOLDER_DEPTH: usize = 4;
 

@@ -43,7 +43,41 @@ pub fn is_safe_type_folder(folder: &str) -> bool {
             .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
+/// A schema version as `(major, minor)`.
+///
+/// Patch is ignored: a patch release does not change the on-disk shape, so
+/// refusing to open a 0.2.1 vault from a 0.2.0 build would be noise.
+pub fn parse_schema_version(value: &str) -> Option<(u32, u32)> {
+    let mut parts = value.split('.');
+    let major = parts.next()?.trim().parse().ok()?;
+    let minor = match parts.next() {
+        Some(minor) => minor.trim().parse().ok()?,
+        None => 0,
+    };
+    Some((major, minor))
+}
+
 impl VaultConfig {
+    /// Whether `supported` can read a vault declaring `self.schema_version`.
+    ///
+    /// An older vault read by a newer build is fine and stays fine: that is the
+    /// back-compat direction, and every field added since is optional. The
+    /// reverse is not, because the newer vault may use shapes this build cannot
+    /// deserialize at all.
+    ///
+    /// An unparseable version counts as unsupported. kataan writes this field
+    /// itself, so a value it cannot read means the file was damaged by hand,
+    /// and guessing at that is worse than saying so.
+    pub fn schema_is_supported_by(&self, supported: &str) -> bool {
+        match (
+            parse_schema_version(&self.schema_version),
+            parse_schema_version(supported),
+        ) {
+            (Some(found), Some(supported)) => found <= supported,
+            _ => false,
+        }
+    }
+
     /// The type whose `type_folders` mapping points at `folder` (the inverse of
     /// the `type -> folder` map), if any.
     pub fn type_for_folder(&self, folder: &str) -> Option<&str> {

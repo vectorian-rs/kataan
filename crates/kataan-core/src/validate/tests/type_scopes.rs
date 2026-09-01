@@ -281,3 +281,36 @@ fn depth_is_measured_from_the_nearest_scope() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_vault_newer_than_the_build_is_refused_by_version_not_by_parser() {
+    let root = fresh_vault();
+    let config = fs::read_to_string(root.join(VAULT_CONFIG_FILE)).unwrap();
+    fs::write(
+        root.join(VAULT_CONFIG_FILE),
+        config.replace("schema_version = \"0.1.0\"", "schema_version = \"9.0.0\""),
+    )
+    .unwrap();
+
+    // The point of the check: a clear, actionable error instead of a TOML
+    // parser reporting a missing field on some type definition, which says
+    // nothing about the binary being old.
+    let error = validate(&root).unwrap_err();
+    assert!(
+        matches!(error, crate::Error::UnsupportedSchemaVersion { .. }),
+        "expected a version error, got {error}"
+    );
+    assert!(error.to_string().contains("cargo install"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_older_vault_still_opens() {
+    let root = fresh_vault();
+    // The shared fixture declares 0.1.0 while the build is at 0.2.0. Reading
+    // older vaults is the direction that has to keep working.
+    assert!(validate(&root).unwrap().is_ok());
+
+    fs::remove_dir_all(root).unwrap();
+}
