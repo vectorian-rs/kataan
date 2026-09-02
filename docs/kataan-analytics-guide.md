@@ -159,6 +159,27 @@ target must exist, and match `to` if given) but is invisible to `neighbors`,
 HTTP and CLI; over MCP it is a large response, so filter by `types` and
 `predicates`, or prefer `neighbors` when you only need one document.
 
+### Subtypes change what a type filter returns
+
+A type may declare `extends`, and type matching walks that chain. This is not
+cosmetic — it changes counts:
+
+```
+documents(type: "company")   ->  companies *and* customers, partners, ...
+subgraph(types: ["company"]) ->  the same widening, for nodes and their links
+```
+
+The rule is "is a", applied wherever a type meets a set of allowed types: query
+filters, `subgraph` type filters, and an edge's declared `from`/`to`. With no
+`extends` in the vault it degrades to an equality test, so nothing changes until
+someone introduces a subtype — at which point a rollup written against
+`type = "company"` silently starts including the subtypes.
+
+That is the intended semantics: a customer *is* a company, and a total that
+excluded it would be wrong. But if you want the strict type, filter the returned
+`type` field yourself; there is no "exact match" flag. Read `type/*.toml` for the
+`extends` chains in play before treating a per-type count as a partition.
+
 ### `is_folder_index` — do not skip this
 
 Some nodes are folder index documents rather than leaf entities. Most are

@@ -185,7 +185,9 @@ has no `index.toml`). The API serves any such index-less type folder as a
 "file-backed folder" — its subdirs and files are browsable via `/api/folder` and
 `/api/file`, but its contents are not indexed as knowledge documents.
 
-Read `kataan.toml` before creating files. Its `[type_folders]` table is authoritative: a document with `type = "project"` belongs under the mapped project folder, a document with `type = "topic"` belongs under the mapped topic folder, and so on.
+Read `kataan.toml` before creating files. Its `[type_folders]` table is the root declaration: a document with `type = "project"` belongs under the mapped project folder, a document with `type = "topic"` belongs under the mapped topic folder, and so on.
+
+It is no longer the only declaration. A type may claim several locations through `folders` in its own definition, and a folder's `index.toml` may declare types for its own subtree with its own `[type_folders]` table. So before creating a document at depth, check the `index.toml` of the folders above it — a claim there may permit a type the root config says nothing about. `kataan validate` names every claim it considered when it rejects a placement, so a mistake here is self-explaining rather than mysterious.
 
 ## Ignored paths
 
@@ -390,7 +392,7 @@ To add a custom type such as `article`:
    ```toml
    type = "type-definition"
    name = "article"
-   folder = "articles"
+   folders = ["articles"]
    icon = "Newspaper"
    markdown = "article.md"
    created_by = "agent"
@@ -399,6 +401,20 @@ To add a custom type such as `article`:
 
 4. Create the `articles/` folder.
 5. Run `kataan rebuild-indexes <vault-path>` and `kataan validate <vault-path>`.
+
+`folders` is a list of path patterns, so one type can live in more than one place: `folders = ["presentations", "companies/*/decks/*"]`. A `*` matches exactly one path segment and there is no `**`. The older `folder = "articles"` spelling still parses as a one-element list.
+
+### Subtypes
+
+A type may extend another:
+
+```toml
+name = "customer"
+extends = "company"
+folders = ["companies/*/customers/*"]
+```
+
+`extends` means "is a". Every place a type is checked against a set of allowed types walks the chain, so a `customer` satisfies an edge declared `from = ["company"]`, and `--type company` returns customers as well. Adding a subtype therefore does not require touching `ontology.toml` or re-typing anything that already worked. A cycle in the chain is a validation error.
 
 ## Field schemas
 

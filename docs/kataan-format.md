@@ -505,7 +505,19 @@ Users may define additional types such as `article`, `presentation`, `reference`
 
 Type definitions live in `type/`.
 
-To add a custom type, create `type/{name}.md` and `type/{name}.toml`, set `type = "type-definition"`, include `name`, `folder`, and optionally `icon`, add the corresponding `[type_folders]` entry in `vault/kataan.toml`, and create the target folder.
+To add a custom type, create `type/{name}.md` and `type/{name}.toml`, set `type = "type-definition"`, include `name` and `folders`, and optionally `icon`, add the corresponding `[type_folders]` entry in `vault/kataan.toml`, and create the target folder.
+
+A type may claim more than one location. `folders` is a list of vault-root-relative path patterns, where `*` matches exactly one path segment and never crosses a `/`; there is no `**`. `folder = "projects"` remains accepted as an alias for `folders = ["projects"]`, so type definitions written before this existed parse unchanged.
+
+```toml
+folders = ["presentations", "companies/*/decks/*"]
+```
+
+A type may also extend another with `extends`, which forms the subtype relation. Wherever a type is matched against a set of permitted types — an edge's `from`/`to`, a `--type` query filter, a `subgraph` type filter — the match walks the `extends` chain, so a `customer` satisfies a rule written for `company`. A cycle in the chain is a validation error (`type-extends-cycle`).
+
+Types do not have to be declared at the root. A folder's `index.toml` may carry its own `[type_folders]` table, whose keys are type names and whose values are patterns relative to **the declaring folder** (`"."` means that folder and its descendants). The declaration is additive for that subtree and invisible outside it, which is how the ontology grows at depth without the root config gaining an entry for every tree in the vault. A declaration that resolves outside its own subtree is rejected (`type-scope-escapes`), on the same reasoning as `type_folders` at the root: vaults are shared as git repositories, so these values are untrusted.
+
+A document's type is legal at its path if *any* claim in scope matches — legality is a union, because a deck genuinely does belong in more than one place. The *default* type for a folder is the narrower question, and is taken from the nearest declaring scope. See `docs/kataan-type-scopes.md` for the full resolution rules.
 
 `icon` is a Lucide icon export name such as `Inbox`, `Rocket`, `Newspaper`, `Presentation`, `BookOpen`, `ReceiptText`, or `ListTodo`. The UI should use a safe icon allowlist/map and fall back to a generic folder icon when the configured icon ID is unknown.
 
@@ -529,7 +541,7 @@ Example `type/project.toml`:
 ```toml
 type = "type-definition"
 name = "project"
-folder = "projects"
+folders = ["projects"]
 icon = "Rocket"
 
 markdown = "project.md"

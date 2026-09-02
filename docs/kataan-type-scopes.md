@@ -1,10 +1,16 @@
 # Nested type scopes
 
-Status: proposed, schema_version 0.2.0.
+Status: **implemented**, schema_version 0.2.0. Shipped in `feat(types): nested
+type scopes, multi-folder types, and extends`. The resolver lives in
+`kataan-core/src/scope.rs`; this document is kept as the rationale behind it.
 
-## The problem
+Stage 1 of the migration below is done — the resolver landed with full
+back-compat and migrated nothing. Stages 2 and 3 are vault work, not code, and
+have not been started.
 
-A type has exactly one home, and that home must be a first-level directory.
+## The problem it solved
+
+A type had exactly one home, and that home had to be a first-level directory.
 
 `TypeDefinition.folder` is a single `String` (`types.rs`), and
 `validate/folder.rs` compares it against `FolderWalk.root_folder`, which is the
