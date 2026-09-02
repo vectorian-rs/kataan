@@ -503,3 +503,157 @@ markdown = "deck.md"
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Declare a `[nodes.note]` schema on a vault built by `temp_vault`.
+fn with_note_schema(root: &std::path::Path, schema: &str) {
+    let path = root.join("ontology.toml");
+    let existing = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{existing}\n{schema}\n")).unwrap();
+}
+
+/// This module's stated invariant is that `validate` never has to report
+/// something kataan itself wrote. Before this, `[nodes.*]` schemas were checked
+/// only on the next `validate` run — the value was already on disk.
+#[test]
+fn create_document_refuses_what_validate_would_reject() {
+    let root = temp_vault("create-schema");
+    with_note_schema(
+        &root,
+        r#"
+[nodes.note]
+required = ["source_url"]
+
+[nodes.note.fields]
+source_url = { type = "string" }
+reviewed_on = { type = "date" }
+"#,
+    );
+
+    // A required field the caller did not supply.
+    let missing = create_document(&root, note("No Source", "body"));
+    let message = missing.unwrap_err().to_string();
+    assert!(message.contains("source_url"), "{message}");
+
+    // A field whose value is the wrong type.
+    let wrong_type = create_document(
+        &root,
+        NewDocument {
+            extra: BTreeMap::from([("source_url".to_owned(), toml::Value::Integer(7))]),
+            ..note("Numeric Source", "body")
+        },
+    );
+    assert!(wrong_type.is_err(), "an integer is not a string");
+
+    // A date field that is not RFC 3339.
+    let bad_date = create_document(
+        &root,
+        NewDocument {
+            extra: BTreeMap::from([
+                ("source_url".to_owned(), toml::Value::String("x".to_owned())),
+                (
+                    "reviewed_on".to_owned(),
+                    toml::Value::String("2026".to_owned()),
+                ),
+            ]),
+            ..note("Bad Date", "body")
+        },
+    );
+    assert!(bad_date.is_err(), "`2026` is not RFC 3339");
+
+    // Satisfying the schema still writes, and the result validates.
+    let id = create_document(
+        &root,
+        NewDocument {
+            extra: BTreeMap::from([
+                (
+                    "source_url".to_owned(),
+                    toml::Value::String("https://x".to_owned()),
+                ),
+                (
+                    "reviewed_on".to_owned(),
+                    toml::Value::String("2026-08-29".to_owned()),
+                ),
+            ]),
+            ..note("Good", "body")
+        },
+    )
+    .unwrap();
+    assert_eq!(id.as_str(), "notes/good");
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// `occurred_at` was checked for syntax but never against a schema declaring
+/// `instant`, so a bare day was accepted at write and reported later.
+#[test]
+fn create_document_enforces_declared_timestamp_precision() {
+    let root = temp_vault("create-precision");
+    with_note_schema(
+        &root,
+        r#"
+[nodes.note.fields]
+occurred_at = { type = "instant" }
+"#,
+    );
+
+    let day = create_document(
+        &root,
+        NewDocument {
+            occurred_at: Some("2026-08-29".to_owned()),
+            ..note("Day Only", "body")
+        },
+    );
+    assert!(day.is_err(), "a full-date does not satisfy `instant`");
+
+    create_document(
+        &root,
+        NewDocument {
+            occurred_at: Some("2026-08-29T12:00:00Z".to_owned()),
+            ..note("An Instant", "body")
+        },
+    )
+    .unwrap();
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// An update must be held to the same rule, including for keys it did not
+/// touch: a schema can require a field that an unrelated edit leaves missing.
+#[test]
+fn update_document_refuses_what_validate_would_reject() {
+    let root = temp_vault("update-schema");
+    let id = create_document(&root, note("Subject", "body")).unwrap();
+    with_note_schema(
+        &root,
+        r#"
+[nodes.note.fields]
+occurred_at = { type = "instant" }
+"#,
+    );
+
+    let bad = update_document(
+        &root,
+        &id,
+        None,
+        DocumentPatch {
+            occurred_at: Some("2026-08-29".to_owned()),
+            ..Default::default()
+        },
+    );
+    assert!(bad.is_err(), "a full-date does not satisfy `instant`");
+
+    update_document(
+        &root,
+        &id,
+        None,
+        DocumentPatch {
+            occurred_at: Some("2026-08-29T12:00:00Z".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+    std::fs::remove_dir_all(root).unwrap();
+}

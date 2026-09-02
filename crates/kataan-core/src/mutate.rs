@@ -147,6 +147,29 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
 
     let actor = request.actor.unwrap_or_else(|| ACTOR_AGENT.to_owned());
     let now = crate::time::iso8601_utc_now();
+
+    // Built directly rather than round-tripped through TOML: serializing turns
+    // a native datetime in `extra` into a table, which is exactly the value
+    // `validate_quoted_dates` needs to see as a datetime to report it.
+    enforce_document_schema(
+        &vault,
+        &crate::document::DocumentMetadata {
+            r#type: request.r#type.clone(),
+            status: request.status.clone(),
+            markdown: format!("{}.md", id.slug()),
+            markdown_checksum: None,
+            aliases: request.aliases.clone(),
+            labels: request.labels.clone(),
+            edges: BTreeMap::new(),
+            created_by: Some(actor.clone()),
+            last_updated_by: Some(actor.clone()),
+            occurred_at: request.occurred_at.clone(),
+            created_at: Some(now.clone()),
+            updated_at: Some(now.clone()),
+            extra: request.extra.clone(),
+        },
+    )?;
+
     let sidecar = Sidecar {
         r#type: request.r#type,
         status: request.status,
@@ -232,6 +255,15 @@ pub fn update_document(
         toml::Value::String(crate::time::iso8601_utc_now()),
     );
 
+    // The patched table is what will be on disk, so it is what gets checked —
+    // including the keys this call did not touch, since a schema can require a
+    // field that an unrelated edit would otherwise leave missing.
+    let patched: crate::document::DocumentMetadata = sidecar
+        .clone()
+        .try_into()
+        .map_err(|error| invalid_request(format!("patched sidecar is not valid: {error}")))?;
+    enforce_document_schema(&Vault::open(root)?, &patched)?;
+
     write_sidecar_table(&record.toml_path, &sidecar)?;
     rebuild::rebuild_indexes(root)?;
     Ok(())
@@ -315,6 +347,76 @@ pub fn add_edge(
 
 /// Reject a malformed timestamp at the write boundary, so `validate` never has
 /// to report one kataan itself wrote.
+/// Refuse a write that `kataan validate` would reject on its next run.
+///
+/// This module's stated invariant is that a malformed value never reaches disk,
+/// so `validate` never has to report one kataan itself wrote. Two hand-written
+/// guards enforced that for `status` and for timestamp *syntax*. Everything a
+/// vault declares in `[nodes.*]` — required fields, field types, interval
+/// bounds, reference targets, `instant` precision on `occurred_at` — was
+/// checked only by `validate`, after the value was already stored. The general
+/// validator lived one module away.
+///
+/// A vault with no ontology, or one whose ontology does not parse, writes
+/// exactly as it did before: `validate` is the tool that reports a broken
+/// ontology, and refusing every write because of one would be worse than the
+/// problem.
+fn enforce_document_schema(
+    vault: &Vault,
+    metadata: &crate::document::DocumentMetadata,
+) -> Result<()> {
+    let Ok(ontology) = Ontology::load(&vault.root) else {
+        return Ok(());
+    };
+    let registry = crate::types::TypeRegistry::load(vault)?;
+
+    // Only a `reference` field needs to know what else exists, and resolving
+    // that means walking the vault. Most types declare none, so the walk is
+    // paid for only when a schema can actually use it.
+    let known_document_types = if declares_a_reference(&ontology, &metadata.r#type) {
+        vault
+            .load_documents()?
+            .into_iter()
+            .map(|document| (document.id.as_str().to_owned(), document.metadata.r#type))
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+
+    let mut diagnostics = crate::ontology::validate_quoted_dates(metadata);
+    diagnostics.extend(crate::ontology::validate_node_fields(
+        &ontology,
+        metadata,
+        &known_document_types,
+        &registry,
+    ));
+
+    // Warnings describe the schema, not the write — an array declared without
+    // `items` is the vault author's problem, and blocking an unrelated document
+    // on it would be wrong.
+    match diagnostics
+        .into_iter()
+        .find(|diagnostic| diagnostic.severity == crate::diagnostic::Severity::Error)
+    {
+        Some(error) => Err(invalid_request(format!(
+            "{} [{}]",
+            error.message, error.code
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Whether `type_name`'s schema has any field, or array element, that is a
+/// reference — the only thing that makes the document index necessary.
+fn declares_a_reference(ontology: &Ontology, type_name: &str) -> bool {
+    ontology.nodes.get(type_name).is_some_and(|schema| {
+        schema.fields.values().any(|field| {
+            field.r#type == crate::ontology::FieldType::Reference
+                || field.items == Some(crate::ontology::FieldType::Reference)
+        })
+    })
+}
+
 fn validate_timestamp(value: Option<&str>) -> Result<()> {
     match value {
         Some(value) => crate::time::Timestamp::parse(value)
