@@ -65,7 +65,7 @@ fn node_schemas_enforce_required_fields_and_types() {
     write_person(
         &root,
         "nolink",
-        "linkedin = \"x\"\nborn = \"1979\"\nseen_at = \"2026-08-29T12:00:00Z\"\n",
+        "linkedin = \"x\"\nborn = \"1979-05-18\"\nseen_at = \"2026-08-29T12:00:00Z\"\n",
     );
     assert!(
         validate(&root).unwrap().is_ok(),

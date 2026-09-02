@@ -280,23 +280,25 @@ Three optional time fields are validated:
   Stamped automatically by the mutation layer; do not hand-write them.
 
 **Always quote a date.** TOML has native date types, so `signed_on = 2024-01-02`
-unquoted is a date *value*, not a string — and TOML cannot express "2019, month
-unknown", so a native date always asserts a full day. Write `"2024-01-02"`.
-`validate` reports `native-toml-datetime` for any unquoted one, including inside
-a table or an array.
+unquoted is a date *value*, not a string, and it does not survive serialization
+intact — it comes back to consumers as a table keyed `$__toml_private_datetime`.
+Write `"2024-01-02"`. `validate` reports `native-toml-datetime` for any unquoted
+one, including inside a table or an array.
 
-**Never widen precision.** Record only what you know:
+**Dates are RFC 3339, and only RFC 3339.** Two forms:
 
-| You know | Write |
+| You mean | Write |
 | --- | --- |
-| the year | `2006` |
-| the month | `2006-05` |
-| the day | `2006-05-18` |
-| the moment | `2026-08-29T12:00:00Z` |
+| a calendar day | `"2026-08-29"` |
+| a moment | `"2026-08-29T12:00:00Z"` |
 
-Writing `2006-01-01` for a source that said `2006` asserts a day nobody knows,
-so kataan keeps each value exactly as written. Bare Unix epochs, datetimes
-without a timezone, and impossible dates like `2026-02-30` are rejected.
+Anything shorter — `"2026"`, `"2026-08"` — is ISO 8601 but not RFC 3339, and is
+rejected. If you only know the year, the value is not a date: leave the date
+field unset, or model it as a number in a field of its own (`edition = 2026`).
+Do not invent a month and a day to fill the shape.
+
+Bare Unix epochs, datetimes without a timezone, and impossible dates like
+`2026-02-30` are rejected too.
 
 ## Folder knowledge nodes
 
@@ -418,7 +420,7 @@ mentor     = { type = "reference", to = ["person"] }
 Types: `string`, `integer`, `number`, `boolean`, `date`, `instant`, `interval`,
 `reference`, `array`, `table`.
 
-- `date` accepts any precision; `instant` requires a full timestamp.
+- `date` accepts either RFC 3339 form; `instant` requires the `date-time` one.
 - `interval` is a table with `from` and an optional `to`. **Leaving `to` out is
   legal** — an open interval means "still true", not missing data.
 - `reference` is another document's canonical id, optionally restricted by `to`.

@@ -212,7 +212,7 @@ fn rejects_bad_timestamps_with_distinct_codes() {
     crate::rebuild::rebuild_indexes(&root).unwrap();
 
     // Every precision the vocabulary allows is accepted, unwidened.
-    for value in ["2006", "2006-05", "2006-05-18", "2026-08-29T12:00:00Z"] {
+    for value in ["2006-05-18", "2026-08-29T12:00:00Z"] {
         fs::write(root.join("notes/ok.md"), "# x\n").unwrap();
         fs::write(
             root.join("notes/ok.toml"),
@@ -272,7 +272,7 @@ fn native_toml_dates_are_reported_wherever_they_appear() {
 }
 
 #[test]
-fn quoted_dates_pass_at_every_precision() {
+fn quoted_rfc_3339_dates_pass() {
     let root = crate::test_support::unique_temp_dir("quoted-dates");
     crate::init::init_vault(&root, "Test").unwrap();
 
@@ -282,8 +282,6 @@ fn quoted_dates_pass_at_every_precision() {
     fs::write(
         root.join("notes/ok.toml"),
         "type = \"note\"\nmarkdown = \"ok.md\"\n\
-         joined = \"2019\"\n\
-         left = \"2019-05\"\n\
          signed_on = \"2024-01-02\"\n\
          seen_at = \"2024-01-02T09:30:00Z\"\n",
     )
@@ -292,6 +290,59 @@ fn quoted_dates_pass_at_every_precision() {
 
     assert!(
         validate(&root).unwrap().is_ok(),
+        "{:?}",
+        codes_reported(&root)
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_year_is_an_integer_not_a_date() {
+    let root = crate::test_support::unique_temp_dir("year-not-date");
+    crate::init::init_vault(&root, "Test").unwrap();
+
+    // RFC 3339 has no year-only production, so "the year is 2026" is simply not
+    // a date. It is a number, and nothing about the date rule touches it.
+    let ontology = fs::read_to_string(root.join("ontology.toml")).unwrap();
+    fs::write(
+        root.join("ontology.toml"),
+        format!(
+            "{ontology}\n[nodes.note]\n[nodes.note.fields]\n\
+             edition = {{ type = \"integer\" }}\n\
+             published = {{ type = \"date\" }}\n"
+        ),
+    )
+    .unwrap();
+
+    fs::write(root.join("notes/book.md"), "# B\n").unwrap();
+    fs::write(
+        root.join("notes/book.toml"),
+        "type = \"note\"\nmarkdown = \"book.md\"\n\
+         edition = 2026\n\
+         published = \"2026-08-29\"\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+
+    assert!(
+        validate(&root).unwrap().is_ok(),
+        "{:?}",
+        codes_reported(&root)
+    );
+
+    // But a bare year in a field typed `date` is refused, because there is no
+    // month or day to record and inventing them would assert what we do not know.
+    fs::write(
+        root.join("notes/book.toml"),
+        "type = \"note\"\nmarkdown = \"book.md\"\n\
+         edition = 2026\n\
+         published = \"2026\"\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+    assert!(
+        codes_reported(&root).contains(&codes::INVALID_TIMESTAMP.to_owned()),
         "{:?}",
         codes_reported(&root)
     );

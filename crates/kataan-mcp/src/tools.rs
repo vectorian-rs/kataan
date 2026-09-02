@@ -677,8 +677,8 @@ mod tests {
         let dir = temp_vault();
         let vault = dir.path();
 
-        // Precision is the author's to choose and is preserved verbatim.
-        for (title, value) in [("Year Only", "2006"), ("Exact", "2026-08-29T12:00:00Z")] {
+        // Both RFC 3339 productions are accepted and stored verbatim.
+        for (title, value) in [("Day", "2006-05-18"), ("Exact", "2026-08-29T12:00:00Z")] {
             call(
                 vault,
                 "create_document",
@@ -686,16 +686,22 @@ mod tests {
             )
             .unwrap();
         }
-        let doc = json_result(vault, "get_document", json!({ "id": "notes/year-only" }));
-        assert_eq!(doc["metadata"]["occurred_at"], "2006");
+        let doc = json_result(vault, "get_document", json!({ "id": "notes/day" }));
+        assert_eq!(doc["metadata"]["occurred_at"], "2006-05-18");
         // Transaction time is stamped for us, in ISO-8601.
         assert!(doc["metadata"]["created_at"]
             .as_str()
             .unwrap()
             .ends_with('Z'));
 
-        // A Unix epoch is refused at the write boundary, not stored and
-        // reported later by validate.
+        // A Unix epoch, and ISO 8601 reduced precision, are both refused at the
+        // write boundary rather than stored and reported later by validate.
+        assert!(call(
+            vault,
+            "create_document",
+            &json!({ "type": "note", "title": "Year", "body": "x", "occurred_at": "2026" })
+        )
+        .is_err());
         assert!(call(
             vault,
             "create_document",
@@ -705,7 +711,7 @@ mod tests {
         assert!(call(
             vault,
             "update_document",
-            &json!({ "id": "notes/year-only", "occurred_at": "2026-08-29T12:00:00" })
+            &json!({ "id": "notes/day", "occurred_at": "2026-08-29T12:00:00" })
         )
         .is_err());
 
