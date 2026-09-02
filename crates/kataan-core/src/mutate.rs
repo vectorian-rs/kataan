@@ -306,15 +306,115 @@ pub fn add_edge(
         )));
     }
 
-    // As in `update_document`, edit the sidecar in place so sibling keys on the
-    // source document are preserved.
-    let mut sidecar = read_sidecar_table(&source_record.toml_path)?;
-    let edges = sidecar
-        .entry("edges".to_owned())
-        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-        .as_table_mut()
-        .ok_or_else(|| invalid_request(format!("`{source}` has a non-table `edges` value")))?;
-    let targets = edges
+    let target_id = target.as_str().to_owned();
+    edit_edges(root, &source_record, |edges| {
+        let targets = targets_of(edges, predicate, &source_record.id)?;
+        if !targets
+            .iter()
+            .any(|value| value.as_str() == Some(&target_id))
+        {
+            targets.push(toml::Value::String(target_id.clone()));
+        }
+        Ok(())
+    })
+}
+
+/// Remove the forward edge `source --predicate--> target`.
+///
+/// Deliberately unvalidated, unlike [`add_edge`]. An edge worth removing is
+/// often one that should never have been written: the ontology has since
+/// narrowed and now forbids it, or the target document is gone. Requiring it to
+/// be legal before it could be deleted would make exactly the states that need
+/// repairing the ones that cannot be repaired. Only the source has to exist,
+/// because that is the file being edited.
+///
+/// Idempotent: removing an edge that is not there succeeds and changes nothing,
+/// so `updated_at` does not move.
+pub fn remove_edge(
+    root: impl AsRef<Path>,
+    source: &CanonicalId,
+    predicate: &str,
+    target: &CanonicalId,
+) -> Result<()> {
+    let root = root.as_ref();
+    let source_record = Vault::open(root)?.load_document_record(source)?;
+    let target_id = target.as_str().to_owned();
+    edit_edges(root, &source_record, |edges| {
+        if let Some(targets) = existing_targets(edges, predicate, &source_record.id)? {
+            targets.retain(|value| value.as_str() != Some(&target_id));
+        }
+        Ok(())
+    })
+}
+
+/// Set the complete list of targets for one predicate on one source, replacing
+/// whatever was there.
+///
+/// This is how a wrong edge is corrected in a single write: `add_edge` cannot
+/// unsay anything, and remove-then-add leaves the document briefly in a state
+/// neither the caller nor `validate` asked for.
+///
+/// Every incoming target is validated as [`add_edge`] would validate it — these
+/// are edges being written. What is being replaced is not, for the reason
+/// [`remove_edge`] gives. An empty list removes the predicate entirely.
+pub fn replace_edges_for_predicate(
+    root: impl AsRef<Path>,
+    source: &CanonicalId,
+    predicate: &str,
+    targets: &[CanonicalId],
+) -> Result<()> {
+    let root = root.as_ref();
+    let vault = Vault::open(root)?;
+    let ontology = Ontology::load(root)?;
+    let type_registry = crate::types::TypeRegistry::load(&vault)?;
+    let edge = ontology
+        .edges
+        .get(predicate)
+        .ok_or_else(|| invalid_request(format!("unknown predicate `{predicate}`")))?;
+
+    let source_record = vault.load_document_record(source)?;
+    if !ontology::type_allowed(&edge.from, &source_record.metadata.r#type, &type_registry) {
+        return Err(invalid_request(format!(
+            "type `{}` cannot be the source of `{predicate}`",
+            source_record.metadata.r#type
+        )));
+    }
+    for target in targets {
+        let target_type = vault.load_document_record(target)?.metadata.r#type;
+        if !ontology::type_allowed(&edge.to, &target_type, &type_registry) {
+            return Err(invalid_request(format!(
+                "type `{target_type}` cannot be the target of `{predicate}`"
+            )));
+        }
+    }
+
+    // Written in the order given, deduplicated: an edge is identified by
+    // (source, predicate, target), so a repeat in the request is one edge.
+    let mut wanted: Vec<toml::Value> = Vec::new();
+    for target in targets {
+        let id = target.as_str();
+        if !wanted.iter().any(|value| value.as_str() == Some(id)) {
+            wanted.push(toml::Value::String(id.to_owned()));
+        }
+    }
+
+    edit_edges(root, &source_record, |edges| {
+        if wanted.is_empty() {
+            edges.remove(predicate);
+        } else {
+            edges.insert(predicate.to_owned(), toml::Value::Array(wanted));
+        }
+        Ok(())
+    })
+}
+
+/// The target array for `predicate`, creating it if absent.
+fn targets_of<'a>(
+    edges: &'a mut toml::Table,
+    predicate: &str,
+    source: &CanonicalId,
+) -> Result<&'a mut Vec<toml::Value>> {
+    edges
         .entry(predicate.to_owned())
         .or_insert_with(|| toml::Value::Array(Vec::new()))
         .as_array_mut()
@@ -322,13 +422,62 @@ pub fn add_edge(
             invalid_request(format!(
                 "`{source}` has a non-array `edges.{predicate}` value"
             ))
-        })?;
-    let target_id = target.as_str();
-    if !targets
-        .iter()
-        .any(|value| value.as_str() == Some(target_id))
-    {
-        targets.push(toml::Value::String(target_id.to_owned()));
+        })
+}
+
+/// The target array for `predicate`, or `None` when the predicate is absent —
+/// so a removal does not create the key it is about to empty.
+fn existing_targets<'a>(
+    edges: &'a mut toml::Table,
+    predicate: &str,
+    source: &CanonicalId,
+) -> Result<Option<&'a mut Vec<toml::Value>>> {
+    match edges.get_mut(predicate) {
+        None => Ok(None),
+        Some(toml::Value::Array(targets)) => Ok(Some(targets)),
+        Some(_) => Err(invalid_request(format!(
+            "`{source}` has a non-array `edges.{predicate}` value"
+        ))),
+    }
+}
+
+/// Apply `edit` to the source document's `edges` table and write the sidecar
+/// back — but only if something actually changed.
+///
+/// As in `update_document`, the on-disk table is edited in place so sibling
+/// keys survive, and a call that changes nothing leaves `updated_at` alone
+/// rather than dirtying the file for git to notice.
+fn edit_edges(
+    root: &Path,
+    source_record: &crate::vault::DocumentRecord,
+    edit: impl FnOnce(&mut toml::Table) -> Result<()>,
+) -> Result<()> {
+    let mut sidecar = read_sidecar_table(&source_record.toml_path)?;
+    let before = sidecar.clone();
+
+    let mut edges = match sidecar.get("edges") {
+        Some(toml::Value::Table(table)) => table.clone(),
+        Some(_) => {
+            return Err(invalid_request(format!(
+                "`{}` has a non-table `edges` value",
+                source_record.id
+            )))
+        }
+        None => toml::Table::new(),
+    };
+    edit(&mut edges)?;
+
+    // A predicate with no targets left says nothing; keeping the empty array
+    // would make a removal look different on disk from never having added it.
+    edges.retain(|_, targets| targets.as_array().is_none_or(|list| !list.is_empty()));
+    if edges.is_empty() {
+        sidecar.remove("edges");
+    } else {
+        sidecar.insert("edges".to_owned(), toml::Value::Table(edges));
+    }
+
+    if sidecar == before {
+        return Ok(());
     }
 
     sidecar.insert(

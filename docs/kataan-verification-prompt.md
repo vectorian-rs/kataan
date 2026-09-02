@@ -30,7 +30,7 @@ Either the entire code or the recent changes. Ask back if the user did not defin
 - Single-writer guarantee (mpsc command queue; no concurrent mutation paths around it)
 - Write serialization (single-writer command queue; every write followed by index rebuild so state stays consistent)
 - Agent write path (writes go through the validated mutation layer; no silent overwrite of human edits; destructive file deletion is a human decision)
-- Edge mutation safety (ontology validated before commit; `add_edge` only — edges are append-only, see issue #20)
+- Edge mutation safety: `add_edge` and every target of `replace_edges_for_predicate` are ontology-validated before commit; `remove_edge` is not, by design, so a wrong or now-illegal edge can still be deleted
 - MCP surface (read + write tools; writes routed through the validated mutation layer; illegal requests rejected as `isError`, never written)
 - Read-only-on-error boot (validation failure degrades to diagnostics + rebuild, never partial writes)
 - Cross-process hazard posture (no file lock in v1; documented and reconcilable via watcher)

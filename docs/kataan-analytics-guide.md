@@ -304,7 +304,10 @@ matches nothing rather than returning the whole vault.
 set, so they change as you page. Do not build a facet sidebar on them yet.
 
 **Writes are MCP-only.** The HTTP API is read-only apart from `validate` and
-`rebuild-indexes`. Edges are append-only — there is no `remove_edge`.
+`rebuild-indexes`. Edges can be added, removed, and replaced wholesale for one
+predicate (`add_edge`, `remove_edge`, `replace_edges_for_predicate`); only
+`add_edge` and the replacement's incoming targets are ontology-validated, since
+an edge worth removing is often one the ontology now forbids.
 
 ---
 

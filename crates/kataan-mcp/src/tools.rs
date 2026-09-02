@@ -147,7 +147,7 @@ pub fn list() -> Value {
                     "aliases": { "type": "array", "items": { "type": "string" } },
                     "labels": { "type": "array", "items": { "type": "string" } },
                     "status": { "type": "string", "description": "One of the allowed status values." },
-                    "occurred_at": { "type": "string", "description": "When the thing this document describes happened. ISO-8601 UTC (2026-08-29T12:00:00Z), or a less precise 2026 / 2026-08 / 2026-08-29 when that is all that is known — precision is preserved, never widened." },
+                    "occurred_at": { "type": "string", "description": "When the thing this document describes happened. RFC 3339, and only RFC 3339: a calendar day (2026-08-29) or a moment (2026-08-29T12:00:00Z). A bare 2026 or 2026-08 is ISO 8601 but not RFC 3339 and is rejected." },
                     "fields": {
                         "type": "object",
                         "description": "Extra top-level sidecar keys to write, e.g. {\"linkedin\": \"https://...\"}. Keys kataan defines (type, status, markdown, aliases, labels, edges, ...) are rejected."
@@ -165,7 +165,7 @@ pub fn list() -> Value {
                     "id": { "type": "string", "description": "Canonical id of the document to update." },
                     "body": { "type": "string", "description": "New Markdown body (omit to keep)." },
                     "status": { "type": "string" },
-                    "occurred_at": { "type": "string", "description": "When the thing this document describes happened. ISO-8601 UTC (2026-08-29T12:00:00Z), or a less precise 2026 / 2026-08 / 2026-08-29 when that is all that is known — precision is preserved, never widened." },
+                    "occurred_at": { "type": "string", "description": "When the thing this document describes happened. RFC 3339, and only RFC 3339: a calendar day (2026-08-29) or a moment (2026-08-29T12:00:00Z). A bare 2026 or 2026-08 is ISO 8601 but not RFC 3339 and is rejected." },
                     "aliases": { "type": "array", "items": { "type": "string" } },
                     "labels": { "type": "array", "items": { "type": "string" } }
                 },
@@ -183,6 +183,35 @@ pub fn list() -> Value {
                 ],
                 &["source", "predicate", "target"],
             ),
+        ),
+        tool(
+            "remove_edge",
+            "Remove the edge source --predicate--> target. Not ontology-validated: an edge worth removing is often one the ontology now forbids, or whose target is gone. Removing an edge that is not there succeeds and changes nothing.",
+            object(
+                &[
+                    ("source", "string", "Source document id."),
+                    ("predicate", "string", "Edge predicate."),
+                    ("target", "string", "Target document id."),
+                ],
+                &["source", "predicate", "target"],
+            ),
+        ),
+        tool(
+            "replace_edges_for_predicate",
+            "Set the complete list of targets for one predicate on one source, replacing whatever was there. Every new target is ontology-validated. An empty list removes the predicate. Use this to correct a wrong edge in one write.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "source": { "type": "string", "description": "Source document id." },
+                    "predicate": { "type": "string", "description": "Edge predicate (must exist in the ontology)." },
+                    "targets": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "The complete set of target ids for this predicate. Empty removes it."
+                    }
+                },
+                "required": ["source", "predicate", "targets"]
+            }),
         ),
     ])
 }
@@ -203,6 +232,8 @@ pub fn call(vault: &Path, name: &str, args: &Value) -> Result<String> {
         "create_document" => create_document(vault, args),
         "update_document" => update_document(vault, args),
         "add_edge" => add_edge(vault, args),
+        "remove_edge" => remove_edge(vault, args),
+        "replace_edges_for_predicate" => replace_edges_for_predicate(vault, args),
         other => Err(anyhow!("unknown tool `{other}`")),
     }
 }
@@ -360,6 +391,36 @@ fn update_document(vault: &Path, args: &Value) -> Result<String> {
     mutate::update_document(vault, &id, opt_str(args, "body"), patch)?;
     refresh_search_after_write(vault);
     to_pretty(&json!({ "id": id.as_str(), "updated": true }))
+}
+
+fn remove_edge(vault: &Path, args: &Value) -> Result<String> {
+    let source = parse_id(args, "source")?;
+    let target = parse_id(args, "target")?;
+    let predicate = str_arg(args, "predicate")?;
+    mutate::remove_edge(vault, &source, &predicate, &target)?;
+    refresh_search_after_write(vault);
+    to_pretty(
+        &json!({ "source": source.as_str(), "predicate": predicate, "target": target.as_str(), "removed": true }),
+    )
+}
+
+fn replace_edges_for_predicate(vault: &Path, args: &Value) -> Result<String> {
+    let source = parse_id(args, "source")?;
+    let predicate = str_arg(args, "predicate")?;
+    let targets = str_vec(args, "targets")
+        .into_iter()
+        .map(|target| {
+            kataan_core::id::CanonicalId::parse(&target)
+                .map_err(|error| anyhow!("invalid target `{target}`: {error}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    mutate::replace_edges_for_predicate(vault, &source, &predicate, &targets)?;
+    refresh_search_after_write(vault);
+    to_pretty(&json!({
+        "source": source.as_str(),
+        "predicate": predicate,
+        "targets": targets.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+    }))
 }
 
 fn add_edge(vault: &Path, args: &Value) -> Result<String> {
@@ -524,6 +585,78 @@ mod tests {
 
         let document = json_result(vault, "get_document", json!({ "id": "notes/edit-me" }));
         assert_eq!(document["markdown"], "after");
+    }
+
+    /// Edges were append-only through every surface: a wrong one could only be
+    /// corrected by hand-editing TOML, which bypasses ontology validation.
+    #[test]
+    fn edges_can_be_removed_and_replaced_over_mcp() {
+        let dir = temp_vault();
+        let vault = dir.path();
+
+        for (title, ty) in [("Src", "note"), ("First", "topic"), ("Second", "topic")] {
+            call(
+                vault,
+                "create_document",
+                &json!({ "type": ty, "title": title, "body": "x" }),
+            )
+            .unwrap();
+        }
+        let src = "notes/src";
+        let first = "topics/first";
+        let second = "topics/second";
+
+        let neighbors = |vault: &Path| {
+            json_result(vault, "neighbors", json!({ "id": src }))["out"]["related_to"]
+                .as_array()
+                .map(|targets| {
+                    targets
+                        .iter()
+                        .map(|node| node["id"].as_str().unwrap().to_owned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+
+        call(
+            vault,
+            "add_edge",
+            &json!({ "source": src, "predicate": "related_to", "target": first }),
+        )
+        .unwrap();
+        assert_eq!(neighbors(vault), vec![first.to_owned()]);
+
+        // Replace: the wrong target out and the right one in, in one write.
+        call(
+            vault,
+            "replace_edges_for_predicate",
+            &json!({ "source": src, "predicate": "related_to", "targets": [second] }),
+        )
+        .unwrap();
+        assert_eq!(neighbors(vault), vec![second.to_owned()]);
+
+        // Remove, and then remove again — the second call is not an error.
+        call(
+            vault,
+            "remove_edge",
+            &json!({ "source": src, "predicate": "related_to", "target": second }),
+        )
+        .unwrap();
+        call(
+            vault,
+            "remove_edge",
+            &json!({ "source": src, "predicate": "related_to", "target": second }),
+        )
+        .unwrap();
+        assert!(neighbors(vault).is_empty());
+
+        // A replacement is still ontology-validated, unlike a removal.
+        assert!(call(
+            vault,
+            "replace_edges_for_predicate",
+            &json!({ "source": src, "predicate": "no_such_predicate", "targets": [second] })
+        )
+        .is_err());
     }
 
     #[test]

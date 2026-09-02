@@ -119,6 +119,8 @@ Tools exposed by `kataan-mcp`:
 | `create_document` | write | `type`, `title`, `body`, `parent?`, `aliases?`, `labels?`, `status?`, `occurred_at?`, `fields?` | Create a new document and return its canonical id. `fields` writes extra top-level sidecar keys. |
 | `update_document` | write | `id`, `body?`, `status?`, `aliases?`, `labels?`, `occurred_at?` | Update an existing document's body and/or metadata. Omitted fields are left unchanged. |
 | `add_edge` | write | `source`, `predicate`, `target` | Add an ontology-validated edge from one document to another. |
+| `remove_edge` | write | `source`, `predicate`, `target` | Remove an edge. Not ontology-validated, so an edge the ontology now forbids can still be deleted. Idempotent. |
+| `replace_edges_for_predicate` | write | `source`, `predicate`, `targets` | Set the complete target list for one predicate, replacing what was there. Empty removes the predicate. |
 
 `neighbors` answers questions `get_document` cannot: it returns raw outgoing edges
 only, so "who works at this organization" is unanswerable from it — that edge is

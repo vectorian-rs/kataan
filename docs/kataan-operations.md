@@ -12,7 +12,7 @@ interact with a vault two ways:
 - **MCP server (`kataan-mcp`).** The primary write path. It exposes the vault to
   MCP clients (Claude Desktop, IDE agents) as typed tools over stdio, backed by
   the validated mutation layer (`kataan_core::mutate`): `create_document`,
-  `update_document`, and `add_edge` produce guaranteed-well-formed changes, and
+  `update_document`, and the edge writes produce guaranteed-well-formed changes, and
   ontology-illegal requests are rejected rather than written.
 - **Editing files + repair.** Agents can also edit the Markdown/TOML pairs
   directly and then run `rebuild-indexes` + `validate` (or the equivalent server
@@ -82,7 +82,9 @@ The HTTP API is read-only apart from maintenance operations (`validate`,
 editing files directly; an HTTP write path is not implemented (see issue #21).
 The single-writer design described below is the intended shape for it.
 
-The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`. Edge writes support `add_edge`, which validates against `ontology.toml` before commit. Edges are currently append-only: `remove_edge` and `replace_edges_for_predicate` are not implemented (see issue #20).
+The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`. Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate`.
+
+`add_edge` validates against `ontology.toml` before commit, as does every target written by `replace_edges_for_predicate`. `remove_edge` deliberately does not: an edge worth removing is often one the ontology has since come to forbid, or whose target no longer exists, and requiring it to be legal before it could be deleted would make exactly the states that need repairing the ones that cannot be repaired. Removing an edge that is not there succeeds and changes nothing.
 
 ## MCP surface
 
@@ -92,7 +94,8 @@ stdio (no SDK dependency). It is **read + write**:
 - Reads: `search`, `get_document`, `documents`, `list_folders`, `get_folder`,
   `resolve`, `resolve_path`, `neighbors`, `subgraph`, `schema`, `vault_info` —
   returning JSON.
-- Writes: `create_document`, `update_document`, `add_edge` — routed through the
+- Writes: `create_document`, `update_document`, `add_edge`, `remove_edge`,
+  `replace_edges_for_predicate` — routed through the
   validated mutation layer, with the search index refreshed after each write.
 
 Graph and bulk reads are shared with the HTTP API and the CLI over one

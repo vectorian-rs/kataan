@@ -128,7 +128,9 @@ Tools:
   (return JSON).
 - Writes — `create_document` (type, title, body, optional parent/aliases/labels/
   status/occurred_at/fields), `update_document` (id, optional body/status/
-  aliases/labels/occurred_at), and `add_edge` (source, predicate, target).
+  aliases/labels/occurred_at), `add_edge` (source, predicate, target),
+  `remove_edge` (same arguments), and `replace_edges_for_predicate` (source,
+  predicate, and the complete target list — empty removes the predicate).
   Illegal requests (unknown type, id collision, ontology-forbidden edge, invalid
   status, malformed timestamp) are rejected rather than written. Writes are
   attributed to the `agent` actor.

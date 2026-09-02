@@ -209,13 +209,15 @@ mod tests {
         let message = request(2, "tools/list", Value::Null);
         let response = handle_message(no_vault(), &message).unwrap();
         let tools = response["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 13);
+        assert_eq!(tools.len(), 15);
         for expected in [
             "create_document",
             "neighbors",
             "subgraph",
             "resolve_path",
             "documents",
+            "remove_edge",
+            "replace_edges_for_predicate",
         ] {
             assert!(
                 tools.iter().any(|tool| tool["name"] == expected),
