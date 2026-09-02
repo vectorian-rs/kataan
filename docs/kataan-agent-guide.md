@@ -279,6 +279,12 @@ Three optional time fields are validated:
 - `created_at`, `updated_at` — when the record was written and last changed.
   Stamped automatically by the mutation layer; do not hand-write them.
 
+**Always quote a date.** TOML has native date types, so `signed_on = 2024-01-02`
+unquoted is a date *value*, not a string — and TOML cannot express "2019, month
+unknown", so a native date always asserts a full day. Write `"2024-01-02"`.
+`validate` reports `native-toml-datetime` for any unquoted one, including inside
+a table or an array.
+
 **Never widen precision.** Record only what you know:
 
 | You know | Write |

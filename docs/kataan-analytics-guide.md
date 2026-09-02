@@ -200,6 +200,12 @@ than letting a parser invent January.
 Values are validated on write and by `kataan validate`: bare Unix epochs,
 zoneless datetimes, and impossible dates like `2026-02-30` are rejected.
 
+Dates are always **quoted strings**, never TOML's native date type. An unquoted
+`signed_on = 2024-01-02` is a distinct TOML value that cannot express reduced
+precision and does not survive serialization intact; `validate` reports it as
+`native-toml-datetime`. So every date you read is a string, at one of the four
+precisions above.
+
 **Not yet available:** `after` / `before` / `order` filters on `documents()`.
 Sort client-side for now. A root time index sorted on `(occurred_at, type, id)`
 is planned.

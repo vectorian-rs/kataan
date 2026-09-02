@@ -8,6 +8,7 @@ pub const FIELD_TYPE_MISMATCH: &str = "field-type-mismatch";
 pub const INVALID_INTERVAL: &str = "invalid-interval";
 pub const MISSING_REQUIRED_FIELD: &str = "missing-required-field";
 pub const UNRESOLVED_FIELD_REFERENCE: &str = "unresolved-field-reference";
+pub const NATIVE_TOML_DATETIME: &str = "native-toml-datetime";
 pub const INVALID_TIMESTAMP: &str = "invalid-timestamp";
 pub const UNIX_EPOCH_TIMESTAMP: &str = "unix-epoch-timestamp";
 pub const ZONELESS_TIMESTAMP: &str = "zoneless-timestamp";

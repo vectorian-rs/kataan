@@ -240,6 +240,13 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
     }
 
     for (path, metadata) in loaded_metadata {
+        // Independent of any `[nodes.*]` schema: a native TOML date is wrong
+        // wherever it appears.
+        issues.extend(
+            crate::ontology::validate_quoted_dates(&metadata)
+                .into_iter()
+                .map(|diagnostic| diagnostic.with_path(path.clone())),
+        );
         if let Some(ontology) = &ontology {
             issues.extend(
                 crate::ontology::validate_node_fields(

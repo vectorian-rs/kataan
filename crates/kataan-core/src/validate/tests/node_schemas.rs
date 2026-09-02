@@ -33,15 +33,6 @@ fn write_person(root: &std::path::Path, slug: &str, extra: &str) {
     crate::rebuild::rebuild_indexes(root).unwrap();
 }
 
-fn codes_reported(root: &std::path::Path) -> Vec<String> {
-    validate(root)
-        .unwrap()
-        .diagnostics
-        .iter()
-        .map(|d| d.code.clone())
-        .collect()
-}
-
 #[test]
 fn node_schemas_enforce_required_fields_and_types() {
     let root = vault_with_node_schemas("schema-basics");
