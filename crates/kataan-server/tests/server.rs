@@ -92,3 +92,88 @@ fn server_binary_boots_and_serves_the_api() {
 
     drop(server);
 }
+
+/// Heavy requests must not stall unrelated ones.
+///
+/// Every handler used to do its filesystem and CPU work directly on the tokio
+/// runtime, which has one worker per core. Enough concurrent
+/// `/api/file/highlight` requests — each reading a large file and tokenising it
+/// — occupied every worker, and the whole API stopped answering, `/api/health`
+/// included. That is the opposite of what a health check is for.
+#[test]
+fn a_slow_request_does_not_stall_the_rest_of_the_api() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    kataan_core::init::init_vault(&vault, "Test Vault").unwrap();
+
+    // Something genuinely expensive to highlight: large, and real syntax.
+    let code_dir = vault.join("code");
+    std::fs::create_dir_all(&code_dir).unwrap();
+    let unit =
+        "pub fn compute(value: u64) -> u64 { value.wrapping_mul(2718281828).rotate_left(7) }\n";
+    std::fs::write(code_dir.join("big.rs"), unit.repeat(6_000)).unwrap();
+
+    let addr = "127.0.0.1:38801";
+    let server = ServerGuard(
+        Command::new(env!("CARGO_BIN_EXE_kataan-server"))
+            .args(["--vault"])
+            .arg(&vault)
+            .args(["--bind", addr])
+            .spawn()
+            .expect("spawn kataan-server"),
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if http_get(addr, "/api/health").is_ok() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "server never became reachable");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // Confirm the file is actually reachable and expensive, so a later pass
+    // cannot be "the request 404'd instantly".
+    let probe = Instant::now();
+    let highlighted = http_get(addr, "/api/file/highlight?path=code/big.rs").expect("highlight");
+    assert!(
+        highlighted.contains("200 OK"),
+        "highlight status: {}",
+        &highlighted[..highlighted.len().min(300)]
+    );
+    let single = probe.elapsed();
+
+    // Saturate: more concurrent highlights than the runtime has workers.
+    let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let load: Vec<_> = (0..workers * 2)
+        .map(|_| {
+            std::thread::spawn(move || {
+                let _ = http_get(addr, "/api/file/highlight?path=code/big.rs");
+            })
+        })
+        .collect();
+
+    // While they run, health must still answer promptly.
+    std::thread::sleep(Duration::from_millis(150));
+    let started = Instant::now();
+    let health = http_get(addr, "/api/health").expect("health during load");
+    let latency = started.elapsed();
+
+    for worker in load {
+        let _ = worker.join();
+    }
+    drop(server);
+
+    assert!(health.contains("200 OK"), "health under load: {health}");
+    // The bound is scaled to the machine rather than absolute, and the two
+    // outcomes are nowhere near it: measured on this hardware, health answers
+    // in ~10ms with the work offloaded and ~3s without, against one highlight
+    // taking ~1.5s. Anything approaching the cost of a highlight means health
+    // queued behind it.
+    let bound = (single / 4).max(Duration::from_millis(250));
+    assert!(
+        latency < bound,
+        "health took {latency:?} under load (bound {bound:?}) while one highlight \
+         takes {single:?} — it queued behind the blocking work"
+    );
+}

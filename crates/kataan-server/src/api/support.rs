@@ -212,11 +212,31 @@ pub(super) fn read_dir_entries(dir: &std::path::Path) -> Result<Vec<std::fs::Dir
     Ok(entries)
 }
 
+/// Read a text file into memory, refusing one larger than the preview limit.
+///
+/// The cap lives here rather than only at the call sites because that is where
+/// it was missed: file previews each call `ensure_preview_size` first, but the
+/// two Markdown reads — a document's body and a folder index's — did not, so
+/// they were the only reads in the API with no bound at all, and every fenced
+/// block in them is then syntax-highlighted. Callers that need a different
+/// limit (images and PDFs, at 50 MB) still check their own first, and get the
+/// better message for it, since they know the vault-relative path.
 pub(super) fn read_text_file(path: &std::path::Path) -> Result<String, ApiError> {
     if !is_regular_file(path) {
         return Err(ApiError::not_found(format!(
             "file `{}` does not exist",
             path.display()
+        )));
+    }
+    let size = std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    if size > MAX_TEXT_PREVIEW_BYTES {
+        return Err(ApiError::too_large(format!(
+            "file `{}` is {} and exceeds the {} limit",
+            path.display(),
+            format_megabytes(size),
+            format_megabytes(MAX_TEXT_PREVIEW_BYTES)
         )));
     }
     std::fs::read_to_string(path).map_err(|source| {

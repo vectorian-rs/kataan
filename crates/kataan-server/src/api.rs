@@ -241,6 +241,29 @@ async fn api_only_root() -> &'static str {
     "Kataan API server is running.\n\nThis binary was built without the embedded web UI, so `/` is not the app.\nUse `/api/health` for the API, run `bun run dev:web` for the web UI (default http://127.0.0.1:3003), or build/install `kataan-server` with the `embed-ui` feature.\n"
 }
 
+/// Run blocking work on the blocking pool instead of an async worker thread.
+///
+/// Every handler below does synchronous filesystem I/O, and several also do
+/// real CPU work — syntax highlighting a 10 MB file, walking and rewriting the
+/// whole vault. On the async runtime that occupies a worker for the duration,
+/// and tokio has one worker per core. A handful of concurrent highlight
+/// requests could therefore stall *every* route, `/api/health` included, which
+/// is the opposite of what a health check is for.
+async fn blocking<T, F>(work: F) -> Result<T, ApiError>
+where
+    F: FnOnce() -> Result<T, ApiError> + Send + 'static,
+    T: Send + 'static,
+{
+    match tokio::task::spawn_blocking(work).await {
+        Ok(result) => result,
+        // The only ways this resolves to an error are a panic in the closure or
+        // runtime shutdown. Neither is the caller's fault, so neither is a 4xx.
+        Err(error) => Err(ApiError::from(anyhow::anyhow!(
+            "request handler failed: {error}"
+        ))),
+    }
+}
+
 pub async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let loaded = state.vault.read().is_ok();
     Json(HealthResponse { ok: true, loaded })
@@ -259,19 +282,21 @@ pub async fn search(
     State(state): State<AppState>,
     Query(query): Query<kataan_search::SearchQuery>,
 ) -> Result<Json<kataan_search::SearchResponse>, ApiError> {
-    state
-        .search
-        .search(&query)
+    // SQLite is a blocking API however small the query.
+    blocking(move || state.search.search(&query).map_err(ApiError::from))
+        .await
         .map(Json)
-        .map_err(ApiError::from)
 }
 
 pub async fn search_status(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_search::SearchStatus>, ApiError> {
-    kataan_search::SearchIndex::status_for_vault(state.vault_path.as_ref())
-        .map(Json)
-        .map_err(ApiError::from)
+    blocking(move || {
+        kataan_search::SearchIndex::status_for_vault(state.vault_path.as_ref())
+            .map_err(ApiError::from)
+    })
+    .await
+    .map(Json)
 }
 
 pub async fn search_reindex(
@@ -279,12 +304,13 @@ pub async fn search_reindex(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_search::ReindexResponse>, ApiError> {
     reject_cross_site(&headers)?;
-    let loaded = read_loaded_vault(&state)?;
-    state
-        .search
-        .reindex_loaded(&loaded)
-        .map(Json)
-        .map_err(ApiError::from)
+    // Reads and rewrites the index for every document in the vault.
+    blocking(move || {
+        let loaded = read_loaded_vault(&state)?;
+        state.search.reindex_loaded(&loaded).map_err(ApiError::from)
+    })
+    .await
+    .map(Json)
 }
 
 pub async fn vault(
@@ -362,35 +388,45 @@ pub async fn folder_by_id(
     State(state): State<AppState>,
     Query(query): Query<IdQuery>,
 ) -> Result<Json<CanonicalFolderResponse>, ApiError> {
-    canonical_folder_response(&state, &query.id).map(Json)
+    blocking(move || canonical_folder_response(&state, &query.id))
+        .await
+        .map(Json)
 }
 
 pub async fn document_by_id(
     State(state): State<AppState>,
     Query(query): Query<IdQuery>,
 ) -> Result<Json<DocumentResponse>, ApiError> {
-    document_response(&state, &query.id, query.theme.as_deref()).map(Json)
+    blocking(move || document_response(&state, &query.id, query.theme.as_deref()))
+        .await
+        .map(Json)
 }
 
 pub async fn file_by_path(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<FileResponse>, ApiError> {
-    file_response(&state, &query.path).map(Json)
+    blocking(move || file_response(&state, &query.path))
+        .await
+        .map(Json)
 }
 
 pub async fn highlight_file_by_path(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<HighlightResponse>, ApiError> {
-    highlight_response(&state, &query.path, query.theme.as_deref()).map(Json)
+    // Reads up to 10 MB and tokenises it — the worst offender of the set.
+    blocking(move || highlight_response(&state, &query.path, query.theme.as_deref()))
+        .await
+        .map(Json)
 }
 
 pub async fn raw_file_by_path(
     State(state): State<AppState>,
     Query(query): Query<FileQuery>,
 ) -> Result<axum::response::Response, ApiError> {
-    raw_file_response(&state, &query.path)
+    // Reads up to 50 MB into memory.
+    blocking(move || raw_file_response(&state, &query.path)).await
 }
 
 pub async fn resolve_path(
@@ -448,7 +484,17 @@ pub async fn documents(
     State(state): State<AppState>,
     Query(query): Query<DocumentsQuery>,
 ) -> Result<Json<kataan_core::query::DocumentPage>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
+    // `include=markdown` reads one file per matched document.
+    blocking(move || documents_response(&state, query))
+        .await
+        .map(Json)
+}
+
+fn documents_response(
+    state: &AppState,
+    query: DocumentsQuery,
+) -> Result<kataan_core::query::DocumentPage, ApiError> {
+    let loaded = read_loaded_vault(state)?;
     let request = kataan_core::query::DocumentQuery {
         ids: comma_separated(query.ids.as_ref()),
         r#type: query.r#type,
@@ -464,13 +510,11 @@ pub async fn documents(
         limit: query.limit,
         offset: query.offset,
     };
-    kataan_core::query::documents(&loaded, &request)
-        .map(Json)
-        .map_err(|error| match error {
-            // A bad filter or an over-limit result is the caller's mistake.
-            kataan_core::Error::InvalidRequest(message) => ApiError::bad_request(message),
-            other => ApiError::from(other),
-        })
+    kataan_core::query::documents(&loaded, &request).map_err(|error| match error {
+        // A bad filter or an over-limit result is the caller's mistake.
+        kataan_core::Error::InvalidRequest(message) => ApiError::bad_request(message),
+        other => ApiError::from(other),
+    })
 }
 
 pub async fn neighbors(
@@ -508,7 +552,9 @@ pub async fn document(
     Path(id): Path<String>,
     Query(query): Query<ThemeQuery>,
 ) -> Result<Json<DocumentResponse>, ApiError> {
-    document_response(&state, &id, query.theme.as_deref()).map(Json)
+    blocking(move || document_response(&state, &id, query.theme.as_deref()))
+        .await
+        .map(Json)
 }
 
 pub async fn schema(
@@ -553,23 +599,30 @@ pub async fn validate(
 ) -> Result<Json<ValidateResponse>, ApiError> {
     reject_cross_site(&headers)?;
     debug!(vault = %state.vault_path.display(), "validating vault");
-    let report =
-        kataan_core::validate::validate(state.vault_path.as_ref()).map_err(ApiError::from)?;
-    let ok = report.is_ok();
-    let diagnostics = report
-        .diagnostics
-        .iter()
-        .map(DiagnosticResponse::from)
-        .collect();
+    // Walks every folder and parses every sidecar in the vault.
+    blocking(move || {
+        let report =
+            kataan_core::validate::validate(state.vault_path.as_ref()).map_err(ApiError::from)?;
+        let ok = report.is_ok();
+        let diagnostics = report
+            .diagnostics
+            .iter()
+            .map(DiagnosticResponse::from)
+            .collect();
 
-    match state.reload() {
-        Ok(()) => debug!(vault = %state.vault_path.display(), "reloaded vault after validation"),
-        Err(error) => {
-            debug!(vault = %state.vault_path.display(), error = %error, "vault reload after validation skipped")
+        match state.reload() {
+            Ok(()) => {
+                debug!(vault = %state.vault_path.display(), "reloaded vault after validation")
+            }
+            Err(error) => {
+                debug!(vault = %state.vault_path.display(), error = %error, "vault reload after validation skipped")
+            }
         }
-    }
 
-    Ok(Json(ValidateResponse { ok, diagnostics }))
+        Ok(ValidateResponse { ok, diagnostics })
+    })
+    .await
+    .map(Json)
 }
 
 pub async fn rebuild_indexes(
@@ -578,10 +631,15 @@ pub async fn rebuild_indexes(
 ) -> Result<Json<OkResponse>, ApiError> {
     reject_cross_site(&headers)?;
     info!(vault = %state.vault_path.display(), "rebuilding indexes");
-    kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(ApiError::from)?;
-    state.reload().map_err(ApiError::from)?;
-    info!(vault = %state.vault_path.display(), "reloaded vault after rebuild");
-    Ok(Json(OkResponse { ok: true }))
+    // Rewrites every folder index in the vault.
+    blocking(move || {
+        kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(ApiError::from)?;
+        state.reload().map_err(ApiError::from)?;
+        info!(vault = %state.vault_path.display(), "reloaded vault after rebuild");
+        Ok(OkResponse { ok: true })
+    })
+    .await
+    .map(Json)
 }
 
 /// An API failure carrying the HTTP status it should map to. Handlers build the
