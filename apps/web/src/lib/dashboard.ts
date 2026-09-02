@@ -60,7 +60,7 @@ import {
   isHighlightableFile,
 } from './dashboard/format';
 import { folderIcon } from './dashboard/icons';
-import { renderMetadata, renderSchema } from './dashboard/panels';
+import { clearPanels, renderMetadata, renderSchema } from './dashboard/panels';
 import {
   appendSafeSnippet,
   renderMissingSearchIndex,
@@ -147,6 +147,13 @@ metadataPanel.addEventListener('click', (event) => {
   if (id) {
     void runAction(() => selectDocument(id));
   }
+});
+
+// The URL is the whole of the app's navigation state, so back and forward are
+// just "read the URL again". Without this the address bar moved and the view
+// did not, because `pushState` alone does not re-render anything.
+window.addEventListener('popstate', () => {
+  void runAction(restoreRouteSelection);
 });
 
 window.addEventListener('kataan:theme-change', () => {
@@ -612,11 +619,25 @@ async function selectDocument(id: string, options: { updateUrl?: boolean } = {})
   renderSchema(await getSchema('document'));
 }
 
+/// Which restore is current. A restore awaits several fetches, so two of them
+/// racing — holding the back button down — would otherwise interleave and leave
+/// the view showing whichever *finished* last rather than whichever was asked
+/// for last.
+let routeGeneration = 0;
+
 async function restoreRouteSelection() {
+  const generation = ++routeGeneration;
+  const stale = () => generation !== routeGeneration;
+
   const locator = currentRouteLocator();
-  if (!locator) return;
+  if (!locator) {
+    clearRouteSelection();
+    return;
+  }
 
   const resolved = await resolvePath(locator);
+  if (stale()) return;
+
   if (resolved.is_folder_index) {
     await selectFolder(resolved.id, { selectFirst: false });
     return;
@@ -624,8 +645,29 @@ async function restoreRouteSelection() {
 
   for (const folder of folderChain(resolved.folder)) {
     await selectFolder(folder, { selectFirst: false });
+    if (stale()) return;
   }
   await selectDocument(resolved.id, { updateUrl: false });
+}
+
+/// The view with nothing selected, as the page ships. Reached by going back
+/// past the first document opened in this session.
+function clearRouteSelection() {
+  selectedDocument = null;
+  selectedFile = null;
+  breadcrumb.textContent = 'No document selected';
+  documentTitle.textContent = 'Document';
+  documentBody.className = 'reader-body empty-state';
+
+  const card = document.createElement('div');
+  card.className = 'empty-card';
+  const heading = document.createElement('strong');
+  heading.textContent = 'Select a document';
+  card.append(heading, 'Choose a folder and document to preview its Markdown content.');
+  documentBody.replaceChildren(card);
+
+  clearPanels();
+  updateActiveRows();
 }
 
 /// The path *is* the canonical id, so a URL can be read and shared.

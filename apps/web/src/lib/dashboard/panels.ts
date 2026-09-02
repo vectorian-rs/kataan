@@ -126,3 +126,15 @@ function property(label: string, value: unknown) {
   wrapper.append(labelEl, valueEl);
   return wrapper;
 }
+
+/// Return both property panels to the state the page ships with.
+///
+/// Needed when navigation lands on no document at all — going back past the
+/// first selection — where there is nothing to render but the previous
+/// document's properties are still on screen.
+export function clearPanels() {
+  metadataPanel.className = 'metadata-content';
+  metadataPanel.replaceChildren(emptySectionNote('No document selected.'));
+  schemaPanel.className = 'schema-content';
+  schemaPanel.replaceChildren(emptySectionNote('No document selected.'));
+}
