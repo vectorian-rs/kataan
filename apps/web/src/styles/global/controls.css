@@ -1,0 +1,103 @@
+/* toolbar, buttons, and the search form
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+
+.toolbar {
+  display: flex;
+  gap: var(--size-2);
+  padding: var(--size-3);
+  border-block-start: 1px solid var(--border);
+}
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--size-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  min-block-size: 34px;
+  padding: var(--size-1) var(--size-2);
+  font-size: var(--font-size-0);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ui-button svg {
+  flex: 0 0 auto;
+}
+
+.button-primary {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.button-primary:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-subtle) 82%, var(--accent));
+  color: var(--accent);
+}
+
+.button-secondary {
+  background: var(--surface-1);
+  color: var(--text-2);
+}
+
+.button-secondary:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.toolbar-button {
+  flex: 1;
+}
+
+.search-panel {
+  display: grid;
+  gap: var(--size-2);
+  padding: var(--size-3);
+  border-block-end: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 36%, transparent);
+}
+
+.search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--size-2);
+}
+
+.search-input {
+  min-inline-size: 0;
+  block-size: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  padding: var(--size-1) var(--size-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-size: var(--font-size-0);
+}
+
+.search-input::placeholder {
+  color: var(--text-3);
+}
+
+.search-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: 1px;
+}
+
+.search-status {
+  min-inline-size: 0;
+  overflow: hidden;
+  padding-inline: var(--size-1);
+  font-size: var(--font-size-0);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

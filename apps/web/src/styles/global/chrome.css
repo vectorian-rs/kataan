@@ -1,0 +1,97 @@
+/* app header, vault identity, section framing, and icon buttons
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+
+.app-header {
+  gap: var(--size-2);
+  padding-inline: var(--size-3);
+}
+
+.app-header > div {
+  min-inline-size: 0;
+}
+
+.app-header .icon-button {
+  flex: 0 0 auto;
+  margin-block-start: 1px;
+}
+
+.app-subtitle {
+  display: grid;
+  gap: var(--size-1);
+  min-inline-size: 0;
+  color: var(--text-1);
+  font-size: var(--font-size-1);
+  line-height: var(--font-lineheight-1);
+}
+
+.vault-title-line {
+  display: flex;
+  min-inline-size: 0;
+  color: var(--text-1);
+  font-size: var(--font-size-2);
+  font-weight: var(--font-weight-7);
+  letter-spacing: -0.04em;
+  line-height: var(--font-lineheight-1);
+  white-space: nowrap;
+}
+
+.vault-product {
+  flex: 0 0 auto;
+  color: var(--text-2);
+}
+
+.vault-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vault-schema {
+  color: var(--text-2);
+  font-size: var(--font-size-0);
+  text-transform: lowercase;
+}
+
+.muted {
+  color: var(--text-2);
+}
+
+.section {
+  padding: var(--size-4) var(--size-3);
+}
+
+.section + .section {
+  border-block-start: 1px solid var(--border);
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 var(--size-3);
+  padding-inline: var(--size-1);
+  color: var(--text-2);
+  font-size: var(--font-size-0);
+  font-weight: var(--font-weight-7);
+  letter-spacing: var(--font-letterspacing-2);
+  line-height: var(--font-lineheight-1);
+  text-transform: uppercase;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 28px;
+  block-size: 28px;
+  border: 0;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  color: var(--text-1);
+}

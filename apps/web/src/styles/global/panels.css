@@ -1,0 +1,177 @@
+/* empty states, metadata and schema panels, edges, diagnostics
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+
+.empty-state {
+  display: grid;
+  place-items: center;
+  min-block-size: calc(100vh - 56px);
+  color: var(--text-2);
+  text-align: center;
+}
+
+.empty-card {
+  max-inline-size: 24rem;
+}
+
+.empty-card strong {
+  display: block;
+  margin-block-end: var(--size-2);
+  color: var(--text-1);
+  font-family: "DM Serif Display", Georgia, serif;
+  font-size: var(--font-size-5);
+  font-weight: 400;
+}
+
+.metadata-sections {
+  display: grid;
+}
+
+.metadata-section,
+.schema-panel {
+  border-block-end: 1px solid var(--border);
+  padding: var(--size-4) var(--size-3);
+}
+
+.metadata-section:last-child {
+  border-block-end: 1px solid var(--border);
+}
+
+.metadata-grid {
+  display: grid;
+}
+
+.schema-panel {
+  border-block-start: 0;
+}
+
+.schema-content {
+  display: grid;
+  gap: var(--size-3);
+}
+
+.schema-template {
+  overflow: auto;
+  max-block-size: 180px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  padding: var(--size-3);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-family: "DM Mono", var(--font-mono);
+  font-size: var(--font-size-0);
+  line-height: var(--font-lineheight-3);
+  white-space: pre-wrap;
+}
+
+.schema-details {
+  display: grid;
+  gap: var(--size-2);
+}
+
+.schema-line {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: var(--size-2);
+  font-size: var(--font-size-0);
+}
+
+.schema-line span:first-child {
+  color: var(--text-2);
+  text-transform: uppercase;
+}
+
+.schema-line span:last-child {
+  overflow-wrap: anywhere;
+  color: var(--text-1);
+}
+
+.property {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 0.8fr) minmax(0, 1fr);
+  gap: var(--size-3);
+  padding: var(--size-2) var(--size-4);
+}
+
+.property-label {
+  color: var(--text-2);
+  font-size: var(--font-size-0);
+  letter-spacing: var(--font-letterspacing-2);
+  text-transform: uppercase;
+}
+
+.property-value {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: var(--font-size-0);
+  text-align: end;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edge-group {
+  display: grid;
+  gap: var(--size-2);
+  padding: var(--size-2) var(--size-4);
+}
+
+.edge-list {
+  display: grid;
+  gap: var(--size-1);
+}
+
+.edge-target {
+  overflow: hidden;
+  inline-size: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  padding: var(--size-1) var(--size-2);
+  background: var(--surface-2);
+  color: var(--text-1);
+  cursor: pointer;
+  font-size: var(--font-size-0);
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edge-target:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.pill-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: var(--size-1);
+}
+
+.pill {
+  border-radius: var(--radius-round);
+  padding: 1px 7px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.diagnostic {
+  border-inline-start: 2px solid var(--text-3);
+  padding: var(--size-2);
+  color: var(--text-2);
+  font-size: var(--font-size-0);
+}
+
+.diagnostic.error {
+  border-inline-start-color: var(--danger);
+}
+
+.diagnostic.warning {
+  border-inline-start-color: var(--warning);
+}
+
+.diagnostic.info {
+  border-inline-start-color: var(--info);
+}

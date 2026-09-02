@@ -1,6 +1,20 @@
+/* Open Props supplies the primitive scales (--size-*, --font-size-*,
+   --font-weight-*). It is a build-time import: Vite inlines it into the single
+   hashed stylesheet, which is then embedded in the kataan-server binary, so
+   there is no runtime @import and no third-party request. */
 @import "open-props/open-props.min.css";
+
 @import "./typography.css";
-@import "./global/part-1.css";
-@import "./global/part-2.css";
-@import "./global/part-3.css";
-@import "./global/part-4.css";
+
+/* Order is load-bearing — the cascade resolves same-specificity conflicts by
+   position, so these travel from the most general to the most specific. */
+@import "./global/tokens.css";
+@import "./global/base.css";
+@import "./global/layout.css";
+@import "./global/chrome.css";
+@import "./global/navigation.css";
+@import "./global/controls.css";
+@import "./global/results.css";
+@import "./global/reader.css";
+@import "./global/panels.css";
+@import "./global/responsive.css";

@@ -1,0 +1,31 @@
+/* animation and the narrow-viewport layout
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (width < 1100px) {
+  .app-shell {
+    /* prettier-ignore -- Prettier oscillates between two wrappings of this value */
+    grid-template-columns:
+      clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+      minmax(0, 1fr);
+  }
+
+  .list-panel,
+  .properties-panel {
+    display: none;
+  }
+}

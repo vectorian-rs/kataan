@@ -1,0 +1,47 @@
+/* variables: palette, spacing, and the dark-theme overrides
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+:root {
+  color-scheme: light;
+  --surface-1: #fafaf8;
+  --surface-2: #f2f1ee;
+  --surface-3: #e8e6e1;
+  --text-1: #1a1916;
+  --text-2: #4a4844;
+  --text-3: #807c74;
+  --accent: #2d7a4f;
+  --accent-subtle: #e8f3ed;
+  --border: #dddbd5;
+  --danger: #b74343;
+  --warning: #a66520;
+  --info: #3469a6;
+  --top-bar-height: 64px;
+  --top-bar-padding-block: 14px;
+  --sidebar-width: 220px;
+  --sidebar-min-width: 160px;
+  --sidebar-max-width: 420px;
+  --list-width: 320px;
+  --list-min-width: 220px;
+  --list-max-width: 560px;
+  --properties-width: 260px;
+  --properties-min-width: 220px;
+  --properties-max-width: 420px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-1: #141412;
+  --surface-2: #1e1d1a;
+  --surface-3: #272521;
+  --text-1: #f0ede8;
+  --text-2: #9b9790;
+  --text-3: #77726a;
+  --accent: #4caf78;
+  --accent-subtle: #1a2e22;
+  --border: #2e2c28;
+  --danger: #ff8a8a;
+  --warning: #e4a85f;
+  --info: #8ab4ff;
+}

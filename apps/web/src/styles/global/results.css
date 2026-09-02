@@ -1,0 +1,211 @@
+/* search results, file rows, and shared row typography
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+
+.search-results-panel {
+  display: grid;
+}
+
+.folder-contents {
+  display: grid;
+}
+
+.content-list-section {
+  padding-block: var(--size-3);
+  border-block-end: 1px solid var(--border);
+}
+
+.content-list-section:last-child {
+  border-block-end: 0;
+}
+
+.empty-list-note,
+.empty-section-note {
+  padding: var(--size-2) var(--size-4);
+  font-size: var(--font-size-0);
+}
+
+.empty-section-note {
+  color: var(--text-2);
+}
+
+.document-row,
+.file-row,
+.search-result-row {
+  display: grid;
+  gap: var(--size-1);
+  padding: var(--size-3) var(--size-4);
+  border-inline-start: 2px solid transparent;
+  border-block-end: 1px solid var(--border);
+}
+
+.file-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.search-result-row {
+  cursor: pointer;
+}
+
+.search-result-topline {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2);
+  min-inline-size: 0;
+}
+
+.search-kind {
+  flex: 0 0 auto;
+  border-radius: var(--radius-round);
+  padding: 1px 7px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: var(--font-weight-7);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.search-kind-document {
+  color: var(--accent);
+}
+
+.search-kind-folder {
+  color: var(--info);
+}
+
+.search-result-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-metadata,
+.search-facet-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-1);
+}
+
+.search-meta-pill,
+.search-facet-button {
+  font-size: 10px;
+}
+
+.search-facet-button {
+  border: 0;
+  cursor: pointer;
+}
+
+.search-result-snippet {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-0);
+  line-height: var(--font-lineheight-2);
+}
+
+.search-result-snippet mark {
+  border-radius: var(--radius-1);
+  padding-inline: 2px;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.file-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-2);
+}
+
+.file-text {
+  display: grid;
+  gap: var(--size-1);
+  min-inline-size: 0;
+}
+
+.document-row strong,
+.document-row span,
+.file-row strong,
+.file-row span,
+.search-result-row strong,
+.search-result-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: transform 0.15s ease;
+}
+
+.document-row strong,
+.file-row strong,
+.search-result-row strong {
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: var(--font-weight-7);
+}
+
+.document-row span,
+.file-row span,
+.search-result-row span {
+  color: var(--text-2);
+  font-size: var(--font-size-0);
+}
+
+.file-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2);
+}
+
+.file-extension-label {
+  flex: 0 0 auto;
+  font-weight: var(--font-weight-7);
+  letter-spacing: 0.04em;
+}
+
+.file-path {
+  min-inline-size: 0;
+}
+
+.file-ext-pdf .file-extension-label {
+  color: #ef4444;
+}
+
+.file-ext-doc .file-extension-label,
+.file-ext-docx .file-extension-label {
+  color: #2563eb;
+}
+
+.file-ext-svg .file-extension-label {
+  color: #f59e0b;
+}
+
+.file-ext-jpg .file-extension-label,
+.file-ext-jpeg .file-extension-label,
+.file-ext-png .file-extension-label,
+.file-ext-webp .file-extension-label,
+.file-ext-gif .file-extension-label {
+  color: #10b981;
+}
+
+.file-ext-html .file-extension-label,
+.file-ext-htm .file-extension-label {
+  color: #f97316;
+}
+
+.document-row:hover strong,
+.file-row:hover strong,
+.search-result-row:hover strong {
+  transform: translateX(2px);
+}
+
+.document-row.active {
+  border-inline-start-color: var(--accent);
+}
+
+.file-row:hover,
+.search-result-row:hover {
+  color: var(--accent);
+}

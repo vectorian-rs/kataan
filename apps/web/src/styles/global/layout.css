@@ -1,0 +1,124 @@
+/* the app shell: panes, resizable columns, and panel framing
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+
+.app-shell {
+  display: grid;
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+    clamp(var(--list-min-width), var(--list-width), var(--list-max-width))
+    minmax(0, 1fr)
+    clamp(var(--properties-min-width), var(--properties-width), var(--properties-max-width));
+  block-size: 100vh;
+  overflow: hidden;
+  background: var(--surface-1);
+}
+
+.app-shell.properties-hidden {
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+    clamp(var(--list-min-width), var(--list-width), var(--list-max-width))
+    minmax(0, 1fr);
+}
+
+.app-shell.properties-hidden .properties-panel {
+  display: none;
+}
+
+.sidebar,
+.list-panel,
+.content-pane,
+.properties-panel {
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.sidebar,
+.list-panel,
+.content-pane {
+  border-inline-end: 1px solid var(--border);
+}
+
+.sidebar,
+.list-panel,
+.properties-panel {
+  background: var(--surface-1);
+}
+
+.sidebar,
+.list-panel,
+.properties-panel {
+  position: relative;
+}
+
+.column-resize-handle {
+  position: absolute;
+  inset-block: 0;
+  z-index: 2;
+  inline-size: 8px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.column-resize-handle.resize-inline-end {
+  inset-inline-end: 0;
+}
+
+.column-resize-handle.resize-inline-start {
+  inset-inline-start: 0;
+}
+
+.column-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inline-size: 2px;
+  background: transparent;
+}
+
+.column-resize-handle.resize-inline-end::after {
+  inset-inline-end: 0;
+}
+
+.column-resize-handle.resize-inline-start::after {
+  inset-inline-start: 0;
+}
+
+.column-resize-handle:hover::after,
+.column-resize-handle:focus-visible::after,
+.column-resize-handle.is-resizing::after {
+  background: var(--accent);
+}
+
+body.column-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.content-pane {
+  background: var(--surface-2);
+}
+
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  block-size: var(--top-bar-height);
+  padding: var(--top-bar-padding-block) var(--size-4);
+  border-block-end: 1px solid var(--border);
+  min-inline-size: 0;
+}
+
+.panel-title {
+  margin: 0;
+  color: var(--text-1);
+  font-family: "DM Mono", var(--font-mono);
+  font-size: var(--font-size-2);
+  font-weight: var(--font-weight-7);
+  letter-spacing: -0.04em;
+}

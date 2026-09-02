@@ -1,0 +1,229 @@
+/* the content pane: header, Markdown body, previews, and tables
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+
+.content-shell {
+  animation: fade-up 0.2s ease;
+}
+
+.content-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4);
+  block-size: var(--top-bar-height);
+  padding: var(--top-bar-padding-block) var(--size-8) 0;
+}
+
+.content-header-main {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  flex: 1;
+}
+
+.properties-toggle {
+  flex: 0 0 auto;
+}
+
+.breadcrumb {
+  margin-block-end: var(--size-2);
+  color: var(--text-2);
+  font-size: var(--font-size-1);
+  line-height: var(--font-lineheight-2);
+  overflow-wrap: anywhere;
+}
+
+.reader-body {
+  max-inline-size: 680px;
+  margin-inline: auto;
+  padding: var(--size-5) var(--size-8) var(--size-7);
+  color: var(--text-1);
+  font-size: var(--font-size-2);
+  line-height: var(--font-lineheight-4);
+}
+
+.app-shell.properties-hidden .reader-body:not(.file-reader-body) {
+  max-inline-size: 920px;
+}
+
+.reader-body h1,
+.reader-body h2,
+.reader-body h3 {
+  color: var(--text-1);
+  font-family: "DM Serif Display", Georgia, serif;
+  font-weight: 400;
+  line-height: var(--font-lineheight-1);
+}
+
+.reader-body h1 {
+  margin-block: 0 var(--size-5);
+  font-size: var(--font-size-5);
+}
+
+.reader-body h2 {
+  margin-block-start: var(--size-7);
+  font-size: var(--font-size-4);
+}
+
+.reader-body p,
+.reader-body ul,
+.reader-body ol {
+  margin-block: 0 var(--size-4);
+}
+
+.reader-body a {
+  color: var(--accent);
+}
+
+.reader-body code {
+  border-radius: var(--radius-2);
+  padding: 0.1em 0.32em;
+  background: var(--surface-3);
+  font-family: "DM Mono", var(--font-mono);
+  font-size: 0.9em;
+}
+
+.reader-body pre {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  padding: var(--size-4);
+  background: var(--surface-1);
+  font-size: var(--font-size-1);
+}
+
+.reader-body img {
+  display: block;
+  inline-size: auto;
+  max-inline-size: 100%;
+  block-size: auto;
+  margin-block: var(--size-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  background: var(--surface-1);
+}
+
+.reader-body p:has(> img:only-child) {
+  margin-block: var(--size-5);
+}
+
+.reader-body p:has(> img:only-child) > img {
+  margin-block: 0;
+}
+
+.file-reader-body {
+  max-inline-size: none;
+  margin-inline: 0;
+  padding-inline: var(--size-6);
+}
+
+.image-reader-body {
+  display: grid;
+  place-items: start center;
+}
+
+.image-preview {
+  max-inline-size: 100%;
+  max-block-size: calc(100vh - var(--top-bar-height) - var(--size-10));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  background: var(--surface-1);
+}
+
+.html-reader-body {
+  padding: var(--size-4);
+}
+
+.html-preview {
+  display: block;
+  inline-size: 100%;
+  min-block-size: calc(100vh - var(--top-bar-height) - var(--size-8));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  background: white;
+}
+
+.pdf-reader-body {
+  padding: var(--size-4);
+}
+
+.pdf-preview {
+  display: block;
+  inline-size: 100%;
+  min-block-size: calc(100vh - var(--top-bar-height) - var(--size-8));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  background: var(--surface-1);
+}
+
+.file-preview,
+.highlight-preview {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  white-space: pre-wrap;
+}
+
+.highlight-preview {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+  padding: var(--size-3) var(--size-4);
+  background: transparent !important;
+  font-size: var(--font-size-1);
+}
+
+.highlight-preview code {
+  display: block;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  font-size: inherit;
+}
+
+.reader-body table {
+  inline-size: 100%;
+  margin-block: var(--size-5);
+  border: 1px solid var(--border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: var(--radius-3);
+  overflow: hidden;
+  font-size: var(--font-size-1);
+  line-height: var(--font-lineheight-3);
+}
+
+.reader-body th,
+.reader-body td {
+  padding: var(--size-2) var(--size-3);
+  border-block-end: 1px solid var(--border);
+  border-inline-end: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.reader-body th:last-child,
+.reader-body td:last-child {
+  border-inline-end: 0;
+}
+
+.reader-body tr:last-child td {
+  border-block-end: 0;
+}
+
+.reader-body thead th {
+  background: var(--surface-3);
+  color: var(--text-1);
+  font-family: "DM Mono", var(--font-mono);
+  font-size: var(--font-size-0);
+  font-weight: var(--font-weight-7);
+  letter-spacing: 0.02em;
+}
+
+.reader-body tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--surface-3) 48%, transparent);
+}
+
+.reader-body tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}

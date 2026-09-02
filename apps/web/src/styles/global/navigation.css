@@ -1,0 +1,84 @@
+/* folder tree and document lists
+
+   Cut from one stylesheet on rule boundaries; concatenating these files in
+   global.css import order reproduces it byte for byte, so nothing moved in the
+   cascade. */
+
+.list {
+  display: grid;
+  gap: 1px;
+}
+
+.nav-row,
+.document-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  inline-size: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+  text-align: start;
+}
+
+.nav-row {
+  justify-content: space-between;
+  min-block-size: 34px;
+  padding: 0 var(--size-2) 0 calc(var(--size-3) + (var(--depth, 0) * var(--size-4)));
+  border-inline-start: 2px solid transparent;
+  font-size: 13px;
+}
+
+.nav-row.nested {
+  color: var(--text-2);
+}
+
+.nav-row:hover {
+  color: var(--accent);
+}
+
+.nav-row.active {
+  border-inline-start-color: transparent;
+  color: var(--accent);
+}
+
+.nav-row.active::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 7px;
+  inline-size: 2px;
+  block-size: calc(100% - 14px);
+  border-radius: var(--radius-round);
+  background: var(--accent);
+}
+
+.folder-name {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2);
+  min-inline-size: 0;
+}
+
+.folder-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: currentColor;
+}
+
+.folder-icon svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.badge {
+  min-inline-size: 1.45rem;
+  border-radius: var(--radius-round);
+  padding: 1px 6px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--font-size-0);
+  text-align: center;
+}
