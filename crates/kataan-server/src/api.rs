@@ -129,6 +129,15 @@ pub struct ValidateResponse {
 #[derive(Debug, Deserialize)]
 pub struct IdQuery {
     pub id: String,
+    /// Which syntax-highlighting theme fenced code blocks render with. Absent
+    /// means dark, matching the file preview.
+    pub theme: Option<String>,
+}
+
+/// Just the theme, for routes that take their id from the path.
+#[derive(Debug, Deserialize)]
+pub struct ThemeQuery {
+    pub theme: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -360,7 +369,7 @@ pub async fn document_by_id(
     State(state): State<AppState>,
     Query(query): Query<IdQuery>,
 ) -> Result<Json<DocumentResponse>, ApiError> {
-    document_response(&state, &query.id).map(Json)
+    document_response(&state, &query.id, query.theme.as_deref()).map(Json)
 }
 
 pub async fn file_by_path(
@@ -497,8 +506,9 @@ pub async fn subgraph(
 pub async fn document(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<ThemeQuery>,
 ) -> Result<Json<DocumentResponse>, ApiError> {
-    document_response(&state, &id).map(Json)
+    document_response(&state, &id, query.theme.as_deref()).map(Json)
 }
 
 pub async fn schema(

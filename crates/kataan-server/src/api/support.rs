@@ -245,7 +245,11 @@ pub(super) fn file_kind(extension: Option<&str>) -> &'static str {
     }
 }
 
-pub(super) fn document_response(state: &AppState, id: &str) -> Result<DocumentResponse, ApiError> {
+pub(super) fn document_response(
+    state: &AppState,
+    id: &str,
+    theme: Option<&str>,
+) -> Result<DocumentResponse, ApiError> {
     let id = kataan_core::id::CanonicalId::parse(id).map_err(ApiError::bad_request)?;
     let loaded = read_loaded_vault(state)?;
     let record = loaded
@@ -254,7 +258,7 @@ pub(super) fn document_response(state: &AppState, id: &str) -> Result<DocumentRe
         .ok_or_else(|| ApiError::not_found(format!("document `{id}` does not exist")))?;
     let markdown_path = record.markdown_path.clone();
     let metadata = record.metadata.clone();
-    document_response_from_parts(&id, metadata, &markdown_path, &loaded)
+    document_response_from_parts(&id, metadata, &markdown_path, &loaded, theme)
 }
 
 pub(super) fn canonical_folder_response(
@@ -301,6 +305,7 @@ pub(super) fn document_response_from_parts(
     metadata: kataan_core::document::DocumentMetadata,
     markdown_path: &std::path::Path,
     loaded: &kataan_core::vault::LoadedVault,
+    theme: Option<&str>,
 ) -> Result<DocumentResponse, ApiError> {
     let markdown = read_text_file(markdown_path)?;
 
@@ -309,7 +314,7 @@ pub(super) fn document_response_from_parts(
     } else {
         id.folder()
     };
-    let html = render_markdown_html(&markdown, Some(base_folder), None, &|path| match loaded
+    let html = render_markdown_html(&markdown, Some(base_folder), theme, &|path| match loaded
         .resolve_path(path)
     {
         Some(target) => crate::api::render::LinkTarget::Document(target.as_str().to_owned()),

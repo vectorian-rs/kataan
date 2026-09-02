@@ -183,8 +183,12 @@ export async function resolvePath(path: string) {
   return getJson<ResolveResponse>(`/api/resolve-path?path=${encodeURIComponent(path)}`);
 }
 
-export async function getDocument(id: string) {
-  return getJson<DocumentResponse>(`/api/document?id=${encodeURIComponent(id)}`);
+export async function getDocument(id: string, theme?: string) {
+  const params = new URLSearchParams({ id });
+  // Fenced code blocks are highlighted server-side, so the theme has to travel
+  // with the request; without it every block renders dark in light mode.
+  if (theme) params.set('theme', theme);
+  return getJson<DocumentResponse>(`/api/document?${params}`);
 }
 
 export async function getFile(path: string) {

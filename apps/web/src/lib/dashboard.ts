@@ -72,6 +72,33 @@ import {
   setSearchStatusMessage,
 } from './dashboard/search-view';
 
+/// Which navigation is current.
+///
+/// Selecting a folder, a document or a file awaits several fetches, so two
+/// clicks in quick succession — or a click landing while a back-button restore
+/// is still in flight — would otherwise interleave, and the pane would settle
+/// on whichever request *finished* last rather than whichever was asked for
+/// last. The row highlight is set synchronously, so the symptom is a reader
+/// showing one document while a different row is marked active.
+///
+/// Every entry point takes a token and re-checks it after each await. A nested
+/// call inherits its caller's token, so a folder selecting its first document
+/// does not invalidate the folder load that started it.
+let navigationGeneration = 0;
+
+type Stale = () => boolean;
+
+interface SelectOptions {
+  selectFirst?: boolean;
+  updateUrl?: boolean;
+  stale?: Stale;
+}
+
+function beginNavigation(): Stale {
+  const generation = ++navigationGeneration;
+  return () => generation !== navigationGeneration;
+}
+
 let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
 let selectedFile: FolderFile | null = null;
@@ -136,7 +163,7 @@ documentBody.addEventListener('click', (event) => {
     return;
   }
   event.preventDefault();
-  void runAction(() => selectDocument(id));
+  void runAction(() => selectDocument(id), { owns: 'document' });
 });
 
 // Edge targets are re-rendered wholesale on every document, so the listener
@@ -145,7 +172,7 @@ metadataPanel.addEventListener('click', (event) => {
   const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-edge]');
   const id = target?.dataset.edge;
   if (id) {
-    void runAction(() => selectDocument(id));
+    void runAction(() => selectDocument(id), { owns: 'document' });
   }
 });
 
@@ -153,12 +180,19 @@ metadataPanel.addEventListener('click', (event) => {
 // just "read the URL again". Without this the address bar moved and the view
 // did not, because `pushState` alone does not re-render anything.
 window.addEventListener('popstate', () => {
-  void runAction(restoreRouteSelection);
+  void runAction(restoreRouteSelection, { owns: 'document' });
 });
 
+// Code blocks are highlighted server-side, so a theme switch has to re-fetch
+// whatever is on screen — a document as much as a file preview.
 window.addEventListener('kataan:theme-change', () => {
   if (selectedFile) {
-    void runAction(() => selectFile(selectedFile as FolderFile));
+    void runAction(() => selectFile(selectedFile as FolderFile), { owns: 'document' });
+    return;
+  }
+  if (selectedDocument) {
+    const id = selectedDocument;
+    void runAction(() => selectDocument(id, { updateUrl: false }), { owns: 'document' });
   }
 });
 
@@ -295,7 +329,9 @@ function renderSearchResult(result: SearchResult) {
   }
 
   row.append(topLine, path, metadata, snippet);
-  row.addEventListener('click', () => runAction(() => openSearchResult(result)));
+  row.addEventListener('click', () =>
+    runAction(() => openSearchResult(result), { owns: 'document' }),
+  );
   return row;
 }
 
@@ -329,18 +365,21 @@ async function runSearchWithFacet(facet: string) {
 async function openSearchResult(result: SearchResult) {
   searchInput.value = '';
   activeSearchRequest += 1;
+  const stale = beginNavigation();
   if (result.kind === 'document' && result.id) {
     const folder = result.id.split('/').slice(0, -1).join('/');
     for (const chainFolder of folderChain(folder)) {
-      await selectFolder(chainFolder, { selectFirst: false });
+      await selectFolder(chainFolder, { selectFirst: false, stale });
+      if (stale()) return;
     }
-    await selectDocument(result.id);
+    await selectDocument(result.id, { stale });
     return;
   }
 
   if (result.kind === 'folder' && result.id) {
     for (const chainFolder of folderChain(result.id)) {
-      await selectFolder(chainFolder, { selectFirst: false });
+      await selectFolder(chainFolder, { selectFirst: false, stale });
+      if (stale()) return;
     }
   }
 }
@@ -372,7 +411,9 @@ function renderFolderButton(folder: FolderSummary) {
   badge.textContent = String(folder.document_count);
 
   button.append(label, badge);
-  button.addEventListener('click', () => runAction(() => handleFolderClick(folder.folder)));
+  button.addEventListener('click', () =>
+    runAction(() => handleFolderClick(folder.folder), { owns: 'document' }),
+  );
   return button;
 }
 
@@ -386,12 +427,14 @@ async function handleFolderClick(folder: string) {
   await selectFolder(folder);
 }
 
-async function selectFolder(folder: string, options: { selectFirst?: boolean } = {}) {
+async function selectFolder(folder: string, options: SelectOptions = {}) {
   const selectFirst = options.selectFirst ?? true;
+  const stale = options.stale ?? beginNavigation();
   selectedFolder = folder;
   updateActiveRows();
 
   const response = await getFolder(folder);
+  if (stale()) return;
   folderTitle.textContent = folderTitleFromResponse(response.id, response.metadata);
   renderChildFolders(folder, response.folders);
 
@@ -402,7 +445,7 @@ async function selectFolder(folder: string, options: { selectFirst?: boolean } =
     return;
   }
   if (selectFirst) {
-    await selectDocument(response.documents[0].id);
+    await selectDocument(response.documents[0].id, { stale });
   }
 }
 
@@ -451,7 +494,9 @@ function renderChildFolderButton(folder: FolderChild, depth: number) {
 
   label.append(icon, name);
   button.append(label);
-  button.addEventListener('click', () => runAction(() => handleFolderClick(folder.id)));
+  button.addEventListener('click', () =>
+    runAction(() => handleFolderClick(folder.id), { owns: 'document' }),
+  );
   return button;
 }
 
@@ -517,7 +562,9 @@ function renderDocumentButton(vaultDocument: FolderDocument) {
   meta.textContent = vaultDocument.id;
 
   button.append(title, meta);
-  button.addEventListener('click', () => runAction(() => selectDocument(vaultDocument.id)));
+  button.addEventListener('click', () =>
+    runAction(() => selectDocument(vaultDocument.id), { owns: 'document' }),
+  );
   return button;
 }
 
@@ -552,11 +599,12 @@ function renderFileRow(file: FolderFile) {
   text.append(title, meta);
 
   row.append(icon, text);
-  row.addEventListener('click', () => runAction(() => selectFile(file)));
+  row.addEventListener('click', () => runAction(() => selectFile(file), { owns: 'document' }));
   return row;
 }
 
-async function selectFile(file: FolderFile) {
+async function selectFile(file: FolderFile, options: SelectOptions = {}) {
+  const stale = options.stale ?? beginNavigation();
   selectedDocument = null;
   selectedFile = file;
   updateActiveRows();
@@ -564,6 +612,7 @@ async function selectFile(file: FolderFile) {
   if (isHighlightableFile(file)) {
     try {
       const highlighted = await getHighlightedFile(file.path, currentTheme());
+      if (stale()) return;
       breadcrumb.textContent = highlighted.path.replaceAll('/', ' › ');
       documentTitle.textContent = highlighted.name;
       renderHighlightedFile(highlighted.html);
@@ -574,6 +623,7 @@ async function selectFile(file: FolderFile) {
   }
 
   const vaultFile = await getFile(file.path);
+  if (stale()) return;
   breadcrumb.textContent = vaultFile.path.replaceAll('/', ' › ');
   documentTitle.textContent = vaultFile.name;
   renderFileBody(vaultFile);
@@ -602,13 +652,16 @@ function setPropertiesVisible(visible: boolean, options: { persist?: boolean } =
   }
 }
 
-async function selectDocument(id: string, options: { updateUrl?: boolean } = {}) {
+async function selectDocument(id: string, options: SelectOptions = {}) {
   const updateUrl = options.updateUrl ?? true;
+  const stale = options.stale ?? beginNavigation();
   selectedDocument = id;
   selectedFile = null;
   updateActiveRows();
 
-  const vaultDocument = await getDocument(id);
+  // The theme travels with the request: code blocks are highlighted server-side.
+  const vaultDocument = await getDocument(id, currentTheme());
+  if (stale()) return;
   breadcrumb.textContent = vaultDocument.id.replaceAll('/', ' › ');
   documentTitle.textContent = basenameFromId(vaultDocument.id);
   if (updateUrl) {
@@ -616,18 +669,13 @@ async function selectDocument(id: string, options: { updateUrl?: boolean } = {})
   }
   renderDocumentBody(vaultDocument);
   renderMetadata(vaultDocument);
-  renderSchema(await getSchema('document'));
+  const schema = await getSchema('document');
+  if (stale()) return;
+  renderSchema(schema);
 }
 
-/// Which restore is current. A restore awaits several fetches, so two of them
-/// racing — holding the back button down — would otherwise interleave and leave
-/// the view showing whichever *finished* last rather than whichever was asked
-/// for last.
-let routeGeneration = 0;
-
 async function restoreRouteSelection() {
-  const generation = ++routeGeneration;
-  const stale = () => generation !== routeGeneration;
+  const stale = beginNavigation();
 
   const locator = currentRouteLocator();
   if (!locator) {
@@ -639,15 +687,15 @@ async function restoreRouteSelection() {
   if (stale()) return;
 
   if (resolved.is_folder_index) {
-    await selectFolder(resolved.id, { selectFirst: false });
+    await selectFolder(resolved.id, { selectFirst: false, stale });
     return;
   }
 
   for (const folder of folderChain(resolved.folder)) {
-    await selectFolder(folder, { selectFirst: false });
+    await selectFolder(folder, { selectFirst: false, stale });
     if (stale()) return;
   }
-  await selectDocument(resolved.id, { updateUrl: false });
+  await selectDocument(resolved.id, { updateUrl: false, stale });
 }
 
 /// The view with nothing selected, as the page ships. Reached by going back
@@ -696,11 +744,19 @@ function renderDocumentBody(vaultDocument: DocumentResponse) {
   documentBody.innerHTML = vaultDocument.html;
 }
 
-async function runAction(action: () => Promise<void>) {
+/// Run an action, reporting a failure where the user was looking.
+///
+/// `owns: 'document'` marks the actions whose job *is* to put something in the
+/// reader — selecting a document or a file. Only those may replace it on
+/// failure. Everything else (validate, reindex, search, the theme toggle)
+/// reports into the diagnostics list and leaves the open document alone;
+/// previously a failed validate wiped the reader and mislabelled the failure as
+/// "Unable to load document".
+async function runAction(action: () => Promise<void>, options: { owns?: 'document' } = {}) {
   try {
     await action();
   } catch (error) {
-    renderError(error);
+    renderError(error, options.owns === 'document');
   }
 }
 
@@ -722,7 +778,7 @@ function renderDiagnostic(diagnostic: Diagnostic) {
   return item;
 }
 
-function renderError(error: unknown) {
+function renderError(error: unknown, replacesDocument = false) {
   const message = error instanceof Error ? error.message : String(error);
 
   diagnosticsEl.className = 'list';
@@ -731,6 +787,7 @@ function renderError(error: unknown) {
   item.textContent = message;
   diagnosticsEl.replaceChildren(item);
 
+  if (!replacesDocument) return;
   documentTitle.textContent = 'Unable to load document';
   documentBody.className = 'reader-body';
   documentBody.textContent = message;

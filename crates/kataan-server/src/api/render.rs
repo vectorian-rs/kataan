@@ -33,6 +33,10 @@ pub(super) fn render_markdown_html(
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
 
+    // Highlighted code is held aside and re-inserted after sanitizing. See
+    // `restore_code_blocks`.
+    let nonce = code_block_nonce(markdown);
+    let mut code_blocks: Vec<String> = Vec::new();
     let mut events = Vec::new();
     let mut parser = Parser::new_ext(markdown, options);
 
@@ -53,10 +57,13 @@ pub(super) fn render_markdown_html(
                         _ => {}
                     }
                 }
-                events.push(Event::Html(CowStr::Boxed(
-                    render_code_block_html(&code, language_hint.as_deref(), theme_preference)?
-                        .into_boxed_str(),
-                )));
+                code_blocks.push(render_code_block_html(
+                    &code,
+                    language_hint.as_deref(),
+                    theme_preference,
+                )?);
+                let placeholder = format!("<p>{}-{}</p>", nonce, code_blocks.len() - 1);
+                events.push(Event::Html(CowStr::Boxed(placeholder.into_boxed_str())));
             }
             Event::Start(Tag::Image {
                 link_type,
@@ -121,7 +128,52 @@ pub(super) fn render_markdown_html(
 
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events.into_iter());
-    Ok(sanitize_vault_html(&html))
+    Ok(restore_code_blocks(
+        &sanitize_vault_html(&html),
+        &nonce,
+        &code_blocks,
+    ))
+}
+
+/// A per-document token standing in for a code block during sanitizing.
+///
+/// Derived from the document's own text so an author cannot practically write
+/// the token for the document they are writing. A collision would only swap
+/// their prose for a code block anyway — the substituted HTML is our own
+/// highlighter's, so forging the token grants nothing.
+fn code_block_nonce(markdown: &str) -> String {
+    format!(
+        "kataan-code-{}",
+        &kataan_core::checksum::blake3_bytes(markdown.as_bytes()).trim_start_matches("blake3:")
+            [..16]
+    )
+}
+
+/// Put the highlighted code blocks back after the sanitizer has run.
+///
+/// The highlighter emits inline `style` attributes, which `ammonia` strips —
+/// it is configured for *untrusted* Markdown, and rightly refuses styling from
+/// it. But this HTML is not untrusted: it is produced by lumis from code that
+/// lumis has already escaped, so it must not pass through that filter at all.
+/// Sanitizing around it, rather than over it, is what lets a fenced block keep
+/// its colours — and its theme.
+fn restore_code_blocks(html: &str, nonce: &str, blocks: &[String]) -> String {
+    let mut restored = html.to_owned();
+    for (index, block) in blocks.iter().enumerate() {
+        // `push_html` wraps the placeholder as a paragraph; the sanitizer keeps
+        // it. Match both spellings so a future markup change cannot silently
+        // leave the token visible.
+        for candidate in [
+            format!("<p>{nonce}-{index}</p>"),
+            format!("{nonce}-{index}"),
+        ] {
+            if restored.contains(&candidate) {
+                restored = restored.replace(&candidate, block);
+                break;
+            }
+        }
+    }
+    restored
 }
 
 /// Strip anything executable from Markdown-derived HTML.
@@ -477,6 +529,48 @@ mod tests {
             html.contains("class="),
             "highlight classes stripped: {html}"
         );
+    }
+
+    /// Sanitizing *around* code blocks must not become a hole in sanitizing.
+    ///
+    /// The placeholder is substituted after `ammonia` runs, so the two things
+    /// that must hold are: code content stays escaped, and an author cannot
+    /// smuggle markup in by writing a placeholder themselves.
+    #[test]
+    fn holding_code_blocks_out_of_the_sanitizer_does_not_let_markup_through() {
+        let hostile = "```html\n<script>alert(1)</script>\n```";
+        let html = render_markdown_html(hostile, None, None, &|_| LinkTarget::Missing).unwrap();
+        assert!(!html.contains("<script>"), "{html}");
+        assert!(html.contains("&lt;script&gt;"), "{html}");
+
+        // Forging the token: the author writes what a placeholder looks like.
+        // It is keyed to the document's own text, so this cannot resolve — and
+        // even a collision would only substitute our own highlighter output.
+        let forged = "kataan-code-0000000000000000-0\n\n<script>alert(1)</script>";
+        let html = render_markdown_html(forged, None, None, &|_| LinkTarget::Missing).unwrap();
+        assert!(!html.contains("<script>"), "{html}");
+    }
+
+    /// The theme is chosen server-side, because highlighting happens
+    /// server-side. Before this was plumbed through `/api/document`, every
+    /// fenced block rendered with the dark palette's inline colours regardless
+    /// of the UI theme, so light mode showed dark code.
+    #[test]
+    fn a_fenced_block_is_highlighted_in_the_requested_theme() {
+        let markdown = "```rust\nfn main() {}\n```";
+        let render =
+            |theme| render_markdown_html(markdown, None, theme, &|_| LinkTarget::Missing).unwrap();
+
+        let light = render(Some("light"));
+        let dark = render(Some("dark"));
+        let default = render(None);
+
+        // Highlighting actually ran: a plain fence carries no inline colour.
+        assert!(light.contains("color:"), "{light}");
+        assert_ne!(light, dark, "light and dark must not render identically");
+        // An absent preference keeps the previous behaviour rather than
+        // silently switching every existing caller to light.
+        assert_eq!(default, dark);
     }
 }
 

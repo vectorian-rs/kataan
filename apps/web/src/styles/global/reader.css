@@ -164,12 +164,16 @@
   white-space: pre-wrap;
 }
 
+/* No background override here. The highlighter sets one inline, matching the
+   theme it was asked for, and an `!important: transparent` used to throw that
+   away — which was reasonable while every block came back in the dark palette
+   regardless of the UI theme, and is wrong now that it does not. A block with
+   no highlighting falls through to `.reader-body pre` and takes --surface-1. */
 .highlight-preview {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-3);
   padding: var(--size-3) var(--size-4);
-  background: transparent !important;
   font-size: var(--font-size-1);
 }
 
