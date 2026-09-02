@@ -14,6 +14,7 @@ pub mod query;
 pub mod rebuild;
 pub mod scan;
 pub mod schema;
+pub mod scope;
 pub mod time;
 pub mod title;
 pub mod types;

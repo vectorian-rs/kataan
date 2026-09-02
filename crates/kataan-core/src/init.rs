@@ -234,7 +234,10 @@ mod tests {
         fs::write(root.join("code/tool.py"), "print('hello')\n").unwrap();
 
         let root_index = fs::read_to_string(root.join("kataan.toml")).unwrap();
-        assert!(root_index.contains("schema_version = \"0.1.0\""));
+        // Against the constant, not a literal: a fresh vault is written at the
+        // schema this build supports, and pinning the number here only means
+        // this test fails on every future bump for no reason.
+        assert!(root_index.contains(&format!("schema_version = \"{SCHEMA_VERSION}\"")));
         assert!(root_index.contains("name = \"My Knowledgebase\""));
 
         for folder in ["intake", "projects", "people", "notes", "topics", "type"] {

@@ -133,10 +133,20 @@ impl Vault {
             path: index_path.clone(),
             source,
         })?;
-        let index = toml::from_str(&index_text).map_err(|source| Error::TomlParse {
-            path: index_path,
-            source,
-        })?;
+        let index: crate::index::VaultConfig =
+            toml::from_str(&index_text).map_err(|source| Error::TomlParse {
+                path: index_path.clone(),
+                source,
+            })?;
+        // Before anything else reads the vault. Every entry point opens through
+        // here, so one check covers the CLI, the server and the MCP.
+        if !index.schema_is_supported_by(crate::constants::SCHEMA_VERSION) {
+            return Err(Error::UnsupportedSchemaVersion {
+                path: index_path,
+                found: index.schema_version.clone(),
+                supported: crate::constants::SCHEMA_VERSION.to_owned(),
+            });
+        }
         Ok(Self { root, index })
     }
 

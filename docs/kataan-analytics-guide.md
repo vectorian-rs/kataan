@@ -183,22 +183,28 @@ Three optional fields on every document:
 | `created_at` | when the record was written (transaction time) | the mutation layer |
 | `updated_at` | when the record last changed | the mutation layer |
 
-**Precision is preserved and never widened.** A value may be any of:
+**Dates are RFC 3339, and only RFC 3339.** A value is one of:
 
 ```
-2006                    year precision
-2006-05                 month precision
-2006-05-18              a calendar day
-2026-08-29T12:00:00Z    an exact instant
+2026-08-29                 a calendar day  (RFC 3339 full-date)
+2026-08-29T12:00:00Z       a moment        (RFC 3339 date-time)
 ```
 
-This matters for bucketing. `2006` does **not** mean `2006-01-01`; it means the
-day is unknown. If you bucket by month, a year-precision value has no month —
-decide explicitly whether to drop it, spread it, or report it separately, rather
-than letting a parser invent January.
+Reduced precision — `2026`, `2026-08` — is ISO 8601 but not RFC 3339 and is
+rejected, so you never have to decide how to bucket a value whose month is
+unknown. A year on its own is not a date; it appears as a number in its own
+field.
 
 Values are validated on write and by `kataan validate`: bare Unix epochs,
 zoneless datetimes, and impossible dates like `2026-02-30` are rejected.
+
+Dates are always **quoted strings**, never TOML's native date type. An unquoted
+`signed_on = 2024-01-02` is a distinct TOML value that does not survive
+serialization intact — `toml` renders it as a table keyed
+`$__toml_private_datetime`, so a consumer round-tripping metadata sees a table
+where the author wrote a date. `validate` reports it as `native-toml-datetime`,
+including inside nested tables and arrays. So every date you read is a string,
+in one of the two forms above.
 
 **Not yet available:** `after` / `before` / `order` filters on `documents()`.
 Sort client-side for now. A root time index sorted on `(occurred_at, type, id)`

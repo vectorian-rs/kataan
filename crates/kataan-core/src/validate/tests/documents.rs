@@ -212,7 +212,7 @@ fn rejects_bad_timestamps_with_distinct_codes() {
     crate::rebuild::rebuild_indexes(&root).unwrap();
 
     // Every precision the vocabulary allows is accepted, unwidened.
-    for value in ["2006", "2006-05", "2006-05-18", "2026-08-29T12:00:00Z"] {
+    for value in ["2006-05-18", "2026-08-29T12:00:00Z"] {
         fs::write(root.join("notes/ok.md"), "# x\n").unwrap();
         fs::write(
             root.join("notes/ok.toml"),
@@ -225,6 +225,127 @@ fn rejects_bad_timestamps_with_distinct_codes() {
             "`{value}` should validate"
         );
     }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_toml_dates_are_reported_wherever_they_appear() {
+    let root = crate::test_support::unique_temp_dir("native-dates");
+    crate::init::init_vault(&root, "Test").unwrap();
+
+    fs::write(root.join("notes/dated.md"), "# D\n").unwrap();
+    fs::write(
+        root.join("notes/dated.toml"),
+        // Unquoted: these are native TOML date values, not strings. Nested and
+        // in an array too, since a date one level down is the same problem.
+        "type = \"note\"\nmarkdown = \"dated.md\"\n\
+         signed_on = 2024-01-02\n\
+         seen = [2024-03-04]\n\n\
+         [rate_card]\n\
+         effective = 2024-05-06\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+
+    let report = validate(&root).unwrap();
+    let dated: Vec<&str> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == codes::NATIVE_TOML_DATETIME)
+        .map(|d| d.message.as_str())
+        .collect();
+
+    assert_eq!(
+        dated.len(),
+        3,
+        "expected top-level, array and nested: {dated:?}"
+    );
+    assert!(dated.iter().any(|m| m.contains("`signed_on`")), "{dated:?}");
+    assert!(dated.iter().any(|m| m.contains("`seen[0]`")), "{dated:?}");
+    assert!(
+        dated.iter().any(|m| m.contains("`rate_card.effective`")),
+        "{dated:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn quoted_rfc_3339_dates_pass() {
+    let root = crate::test_support::unique_temp_dir("quoted-dates");
+    crate::init::init_vault(&root, "Test").unwrap();
+
+    // The whole point of quoting: TOML cannot express "2019, month unknown",
+    // so a native date would force a day nobody knows.
+    fs::write(root.join("notes/ok.md"), "# D\n").unwrap();
+    fs::write(
+        root.join("notes/ok.toml"),
+        "type = \"note\"\nmarkdown = \"ok.md\"\n\
+         signed_on = \"2024-01-02\"\n\
+         seen_at = \"2024-01-02T09:30:00Z\"\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+
+    assert!(
+        validate(&root).unwrap().is_ok(),
+        "{:?}",
+        codes_reported(&root)
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_year_is_an_integer_not_a_date() {
+    let root = crate::test_support::unique_temp_dir("year-not-date");
+    crate::init::init_vault(&root, "Test").unwrap();
+
+    // RFC 3339 has no year-only production, so "the year is 2026" is simply not
+    // a date. It is a number, and nothing about the date rule touches it.
+    let ontology = fs::read_to_string(root.join("ontology.toml")).unwrap();
+    fs::write(
+        root.join("ontology.toml"),
+        format!(
+            "{ontology}\n[nodes.note]\n[nodes.note.fields]\n\
+             edition = {{ type = \"integer\" }}\n\
+             published = {{ type = \"date\" }}\n"
+        ),
+    )
+    .unwrap();
+
+    fs::write(root.join("notes/book.md"), "# B\n").unwrap();
+    fs::write(
+        root.join("notes/book.toml"),
+        "type = \"note\"\nmarkdown = \"book.md\"\n\
+         edition = 2026\n\
+         published = \"2026-08-29\"\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+
+    assert!(
+        validate(&root).unwrap().is_ok(),
+        "{:?}",
+        codes_reported(&root)
+    );
+
+    // But a bare year in a field typed `date` is refused, because there is no
+    // month or day to record and inventing them would assert what we do not know.
+    fs::write(
+        root.join("notes/book.toml"),
+        "type = \"note\"\nmarkdown = \"book.md\"\n\
+         edition = 2026\n\
+         published = \"2026\"\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+    assert!(
+        codes_reported(&root).contains(&codes::INVALID_TIMESTAMP.to_owned()),
+        "{:?}",
+        codes_reported(&root)
+    );
 
     fs::remove_dir_all(root).unwrap();
 }

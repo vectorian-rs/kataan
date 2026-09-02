@@ -391,6 +391,7 @@ pub(super) fn file_backed_folder_index(
             .type_for_folder(id.top_level_folder())
             .map(str::to_owned),
         folder_checksum: None,
+        type_folders: Default::default(),
         documents: Vec::new(),
         subfolders: Vec::new(),
     }

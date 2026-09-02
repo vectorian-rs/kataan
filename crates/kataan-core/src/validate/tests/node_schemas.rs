@@ -33,15 +33,6 @@ fn write_person(root: &std::path::Path, slug: &str, extra: &str) {
     crate::rebuild::rebuild_indexes(root).unwrap();
 }
 
-fn codes_reported(root: &std::path::Path) -> Vec<String> {
-    validate(root)
-        .unwrap()
-        .diagnostics
-        .iter()
-        .map(|d| d.code.clone())
-        .collect()
-}
-
 #[test]
 fn node_schemas_enforce_required_fields_and_types() {
     let root = vault_with_node_schemas("schema-basics");
@@ -74,7 +65,7 @@ fn node_schemas_enforce_required_fields_and_types() {
     write_person(
         &root,
         "nolink",
-        "linkedin = \"x\"\nborn = \"1979\"\nseen_at = \"2026-08-29T12:00:00Z\"\n",
+        "linkedin = \"x\"\nborn = \"1979-05-18\"\nseen_at = \"2026-08-29T12:00:00Z\"\n",
     );
     assert!(
         validate(&root).unwrap().is_ok(),

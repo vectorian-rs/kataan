@@ -271,8 +271,19 @@ impl Ontology {
     }
 }
 
-pub fn type_allowed(allowed: &[String], actual: &str) -> bool {
-    allowed.iter().any(|ty| ty == "*" || ty == actual)
+/// Whether `actual` satisfies a permitted-type list.
+///
+/// Matches `*`, an exact name, or any supertype reachable through `extends`, so
+/// a rule written `from = ["company"]` accepts a `customer` without every
+/// subtype having to be listed in `ontology.toml`.
+pub fn type_allowed(
+    allowed: &[String],
+    actual: &str,
+    registry: &crate::types::TypeRegistry,
+) -> bool {
+    allowed
+        .iter()
+        .any(|ty| ty == "*" || ty == actual || registry.is_a(actual, ty))
 }
 
 pub fn is_predicate_name(value: &str) -> bool {
@@ -407,10 +418,59 @@ fn check_interval(field: &str, value: &toml::Value) -> std::result::Result<(), D
 /// top-level and nested document walkers.
 ///
 /// Diagnostics come back without a path; the caller attaches it.
+/// Report any sidecar key written as a native TOML date rather than a quoted
+/// string.
+///
+/// TOML has first-class date types, so `signed_on = 2024-01-02` unquoted is a
+/// distinct *value type*, not a string. Three reasons kataan refuses it:
+///
+/// - The fields kataan models are `Option<String>` and already reject it with a
+///   raw parse error that fails the whole document. Letting extra keys accept
+///   it makes the same syntax mean two different things.
+/// - It cannot express reduced precision. TOML has no way to write "2019, month
+///   unknown", so a native date always asserts a full day — the widening the
+///   time vocabulary exists to prevent.
+/// - It does not survive serialization: `toml` renders a datetime inside a
+///   struct as a table keyed `$__toml_private_datetime`, so anything
+///   round-tripping metadata sees a table where the author wrote a date.
+pub fn validate_quoted_dates(metadata: &crate::document::DocumentMetadata) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for (name, value) in &metadata.extra {
+        collect_native_dates(name, value, &mut diagnostics);
+    }
+    diagnostics
+}
+
+/// Walk a value looking for dates, including inside tables and arrays — one
+/// nested in `[rate_card]` is the same problem a level down.
+fn collect_native_dates(path: &str, value: &toml::Value, out: &mut Vec<Diagnostic>) {
+    match value {
+        toml::Value::Datetime(datetime) => out.push(Diagnostic::error(
+            codes::NATIVE_TOML_DATETIME,
+            format!(
+                "`{path}` is a native TOML date; quote it (`\"{datetime}\"`) so its \
+                 precision is preserved"
+            ),
+        )),
+        toml::Value::Table(table) => {
+            for (key, nested) in table {
+                collect_native_dates(&format!("{path}.{key}"), nested, out);
+            }
+        }
+        toml::Value::Array(items) => {
+            for (index, nested) in items.iter().enumerate() {
+                collect_native_dates(&format!("{path}[{index}]"), nested, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn validate_node_fields(
     ontology: &Ontology,
     metadata: &crate::document::DocumentMetadata,
     known_document_types: &BTreeMap<String, String>,
+    registry: &crate::types::TypeRegistry,
 ) -> Vec<Diagnostic> {
     let Some(schema) = ontology.nodes.get(&metadata.r#type) else {
         return Vec::new();
@@ -454,7 +514,9 @@ pub fn validate_node_fields(
                         ));
                         continue;
                     };
-                    if !field_schema.to.is_empty() && !type_allowed(&field_schema.to, target_type) {
+                    if !field_schema.to.is_empty()
+                        && !type_allowed(&field_schema.to, target_type, registry)
+                    {
                         diagnostics.push(Diagnostic::error(
                             codes::FIELD_TYPE_MISMATCH,
                             format!(

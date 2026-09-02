@@ -95,10 +95,6 @@ impl CanonicalId {
             .unwrap_or(self.0.as_str())
     }
 
-    pub fn depth_after_type_folder(&self) -> usize {
-        self.0.split('/').count().saturating_sub(1)
-    }
-
     pub fn ancestors(&self) -> Vec<&str> {
         let segments = self.0.split('/').collect::<Vec<_>>();
         if segments.len() <= 2 {
@@ -179,7 +175,6 @@ mod tests {
         assert_eq!(id.top_level_folder(), "projects");
         assert_eq!(id.folder(), "projects/company-x/internal");
         assert_eq!(id.slug(), "q2-launch");
-        assert_eq!(id.depth_after_type_folder(), 3);
         assert_eq!(id.ancestors(), vec!["company-x", "internal"]);
         assert_eq!(
             id.path_keywords(),

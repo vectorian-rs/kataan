@@ -460,3 +460,46 @@ fn add_edge_records_when_it_changed_the_document() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn create_document_can_place_a_scope_typed_document() {
+    let root = temp_vault("create-scoped");
+    // A type placed by patterns and by a folder scope, exactly as the deck
+    // migration does it: no `kataan.toml [type_folders]` entry at all.
+    std::fs::write(root.join("type/deck.md"), "# Deck\n").unwrap();
+    std::fs::write(
+        root.join("type/deck.toml"),
+        r#"type = "type-definition"
+name = "deck"
+extends = "project"
+folders = ["projects/*/decks"]
+markdown = "deck.md"
+"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("projects/acme/decks")).unwrap();
+    std::fs::write(root.join("projects/acme/decks/index.md"), "# Decks\n").unwrap();
+    std::fs::write(
+        root.join("projects/acme/decks/index.toml"),
+        "type = \"project\"\nmarkdown = \"index.md\"\nname = \"Decks\"\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+
+    let id = create_document(
+        &root,
+        NewDocument {
+            r#type: "deck".to_owned(),
+            title: "Launch".to_owned(),
+            body: "# Launch\n".to_owned(),
+            parent: Some("projects/acme/decks".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(id.as_str(), "projects/acme/decks/launch");
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+    std::fs::remove_dir_all(root).unwrap();
+}

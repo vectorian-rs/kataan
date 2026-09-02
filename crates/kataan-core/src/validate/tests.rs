@@ -82,4 +82,15 @@ fn unique_temp_dir() -> PathBuf {
 mod documents;
 mod node_schemas;
 mod structure;
+mod type_scopes;
 mod types_and_edges;
+
+/// Diagnostic codes a vault reports, for assertions that name one.
+fn codes_reported(root: &std::path::Path) -> Vec<String> {
+    validate(root)
+        .unwrap()
+        .diagnostics
+        .iter()
+        .map(|d| d.code.clone())
+        .collect()
+}
