@@ -563,6 +563,44 @@ labels = ["local-first"]
     fs::remove_dir_all(root).unwrap();
 }
 
+/// The HTTP surface must answer the same discovery questions as MCP: what does
+/// this type require, and what may connect to what.
+#[tokio::test]
+async fn schema_and_ontology_serve_the_vaults_own_model() {
+    let root = test_vault();
+    let path = root.join("ontology.toml");
+    let existing = fs::read_to_string(&path).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "{existing}\n[nodes.person]\nrequired = [\"email\"]\n\n\
+             [nodes.person.fields]\nemail = {{ type = \"string\" }}\n"
+        ),
+    )
+    .unwrap();
+
+    let response = request(test_app(&root), "GET", "/api/schema/person").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let schema: serde_json::Value = json_response(response).await;
+    assert_eq!(schema["node_schema"]["required"][0], "email");
+
+    let response = request(test_app(&root), "GET", "/api/ontology").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let ontology: serde_json::Value = json_response(response).await;
+    assert!(ontology["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|ty| ty["name"] == "person"));
+    assert!(!ontology["links"].as_array().unwrap().is_empty());
+
+    // A kind that is neither a kataan schema nor a vault type is still a 404.
+    let response = request(test_app(&root), "GET", "/api/schema/nonsense").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 async fn json_response<T: serde::de::DeserializeOwned>(response: axum::response::Response) -> T {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await

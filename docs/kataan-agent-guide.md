@@ -418,6 +418,39 @@ folders = ["companies/*/customers/*"]
 
 `extends` means "is a". Every place a type is checked against a set of allowed types walks the chain, so a `customer` satisfies an edge declared `from = ["company"]`, and `--type company` returns customers as well. Adding a subtype therefore does not require touching `ontology.toml` or re-typing anything that already worked. A cycle in the chain is a validation error.
 
+## Discovering what a type needs
+
+Before writing a document, ask what its type requires. The write boundary
+enforces `[nodes.*]` schemas, so a document that violates one is refused — and
+guessing is a poor way to find out.
+
+```sh
+kataan ontology <vault>                       # the whole model, one call
+curl .../api/schema/person                    # one type
+curl .../api/ontology
+```
+
+MCP: the `schema` tool takes a vault type name (`person`, `project`) as well as
+kataan's own kinds, and returns that type's `[nodes.*]` declaration — which
+fields are required and what type each must be — plus a `toml_template` with
+every required field already present at the right TOML shape. The `ontology`
+tool returns the whole model at once.
+
+`ontology` gives you three things:
+
+- `types` — each with `folders`, `extends`, `required`, `fields`, and how many
+  documents exist (`document_count`, and `folder_index_count` of those that are
+  folder indexes rather than leaf entities — reported, not subtracted, because
+  kataan cannot tell which folder indexes are real entities).
+- `edges` — every predicate with its permitted `from`/`to` types, `inverse`,
+  `symmetric` and `cardinality`.
+- `links` — the type-level graph: one entry per legal
+  `source --predicate--> target`. This is what *may* connect to what, as
+  opposed to `subgraph`, which is what currently does.
+
+The model is small — it is the ontology and the type registry, not the
+documents — so reading all of it up front is cheaper than one rejected write.
+
 ## Field schemas
 
 `ontology.toml` can describe what documents of a type carry, alongside the

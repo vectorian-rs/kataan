@@ -20,6 +20,7 @@ inside the vault repo, HTTP if you have a server, MCP if you are an LLM agent.
 | One document's relationships | `neighbors(id)` |
 | The whole graph, once | `subgraph()` / `kataan graph export` |
 | An id from a filesystem path | `resolve_path(path)` |
+| The vault's own model | `ontology()` / `kataan ontology` |
 | Full-text ranked hits | `search(q)` |
 
 Before these existed, rebuilding a graph artifact cost one round trip per

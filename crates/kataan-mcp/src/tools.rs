@@ -102,8 +102,13 @@ pub fn list() -> Value {
         ),
         tool(
             "schema",
-            "Return the TOML schema for a document kind (e.g. document, ontology, index).",
-            object(&[("kind", "string", "Schema kind to describe.")], &["kind"]),
+            "Describe what a document of some kind must contain. Pass one of kataan's own kinds (document, folder-index, vault, type-definition, ontology, edge-predicate) or, more usefully, one of this vault's document types (person, project, ...) — that returns the type's `[nodes.*]` declaration: which fields are required, and what type each must be. The write boundary enforces exactly this, so checking here is how you avoid a rejected write.",
+            object(&[("kind", "string", "A kataan schema kind, or one of this vault's document types.")], &["kind"]),
+        ),
+        tool(
+            "ontology",
+            "The vault's whole model in one call: every document type with the fields it declares and how many documents it has, every edge predicate with its permitted endpoint types, and `links` — the type-level graph of what may connect to what. Read this once before writing, rather than discovering the rules by being rejected.",
+            object(&[], &[]),
         ),
         tool("vault_info", "Return the vault configuration (index).", object(&[], &[])),
         tool(
@@ -226,6 +231,7 @@ pub fn call(vault: &Path, name: &str, args: &Value) -> Result<String> {
         "get_folder" => get_folder(vault, args),
         "resolve_path" => resolve_path(vault, args),
         "schema" => schema(vault, args),
+        "ontology" => ontology(vault),
         "vault_info" => vault_info(vault),
         "neighbors" => neighbors(vault, args),
         "subgraph" => subgraph(vault, args),
@@ -330,6 +336,11 @@ fn schema(vault: &Path, args: &Value) -> Result<String> {
     let response = schema_response(&kind, loaded.as_ref())
         .ok_or_else(|| anyhow!("unknown schema kind `{kind}`"))?;
     to_pretty(&response)
+}
+
+fn ontology(vault: &Path) -> Result<String> {
+    let loaded = LoadedVault::load(vault)?;
+    to_pretty(&kataan_core::schema::ontology_response(&loaded))
 }
 
 fn vault_info(vault: &Path) -> Result<String> {
@@ -589,6 +600,59 @@ mod tests {
 
     /// Edges were append-only through every surface: a wrong one could only be
     /// corrected by hand-editing TOML, which bypasses ontology validation.
+    /// An agent has to be able to learn a type's rules before writing, now
+    /// that the write boundary enforces them.
+    #[test]
+    fn schema_and_ontology_expose_the_vaults_own_model() {
+        let dir = temp_vault();
+        let vault = dir.path();
+        let path = vault.join("ontology.toml");
+        let existing = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "{existing}\n[nodes.person]\nrequired = [\"email\"]\n\n\
+                 [nodes.person.fields]\nemail = {{ type = \"string\" }}\n"
+            ),
+        )
+        .unwrap();
+
+        // Asking for a vault type returns that type's declaration, not the
+        // generic document struct.
+        let person = json_result(vault, "schema", json!({ "kind": "person" }));
+        assert_eq!(person["node_schema"]["required"][0], "email");
+        assert!(person["toml_template"]
+            .as_str()
+            .unwrap()
+            .contains("email = \"\""));
+
+        // And the whole model arrives in one call.
+        let ontology = json_result(vault, "ontology", json!({}));
+        let types = ontology["types"].as_array().unwrap();
+        assert!(types.iter().any(|ty| ty["name"] == "person"));
+        assert!(ontology["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["predicate"] == "related_to"));
+        assert!(!ontology["links"].as_array().unwrap().is_empty());
+
+        // Writing blind is refused; writing what the schema described is not.
+        assert!(call(
+            vault,
+            "create_document",
+            &json!({ "type": "person", "title": "Blind", "body": "x" })
+        )
+        .is_err());
+        call(
+            vault,
+            "create_document",
+            &json!({ "type": "person", "title": "Informed", "body": "x",
+                     "fields": { "email": "informed@example.com" } }),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn edges_can_be_removed_and_replaced_over_mcp() {
         let dir = temp_vault();

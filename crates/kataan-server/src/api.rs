@@ -214,6 +214,7 @@ pub fn router(state: AppState) -> Router {
         .route("/graph/neighbors", get(neighbors))
         .route("/graph/subgraph", get(subgraph))
         .route("/schema/:kind", get(schema))
+        .route("/ontology", get(ontology))
         .route("/folders/:folder", get(folder))
         .route("/documents/*id", get(document))
         .route("/validate", post(validate))
@@ -555,6 +556,15 @@ pub async fn document(
     blocking(move || document_response(&state, &id, query.theme.as_deref()))
         .await
         .map(Json)
+}
+
+/// The vault's whole model — types, their declared fields, and the legal edges
+/// between them — in one call.
+pub async fn ontology(
+    State(state): State<AppState>,
+) -> Result<Json<kataan_core::schema::OntologyResponse>, ApiError> {
+    let loaded = read_loaded_vault(&state)?;
+    Ok(Json(kataan_core::schema::ontology_response(&loaded)))
 }
 
 pub async fn schema(

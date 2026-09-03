@@ -118,6 +118,7 @@ Tools exposed by `kataan-mcp`:
 | `subgraph` | read | `types?`, `predicates?` | Export `{nodes, links}` for the vault. Each edge appears once, in the direction it was authored. |
 | `create_document` | write | `type`, `title`, `body`, `parent?`, `aliases?`, `labels?`, `status?`, `occurred_at?`, `fields?` | Create a new document and return its canonical id. `fields` writes extra top-level sidecar keys. |
 | `update_document` | write | `id`, `body?`, `status?`, `aliases?`, `labels?`, `occurred_at?` | Update an existing document's body and/or metadata. Omitted fields are left unchanged. |
+| `ontology` | read | — | The vault's whole model in one call: types with their declared fields and document counts, edge predicates, and the type-level graph of what may connect to what. |
 | `add_edge` | write | `source`, `predicate`, `target` | Add an ontology-validated edge from one document to another. |
 | `remove_edge` | write | `source`, `predicate`, `target` | Remove an edge. Not ontology-validated, so an edge the ontology now forbids can still be deleted. Idempotent. |
 | `replace_edges_for_predicate` | write | `source`, `predicate`, `targets` | Set the complete target list for one predicate, replacing what was there. Empty removes the predicate. |

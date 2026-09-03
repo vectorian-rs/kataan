@@ -58,6 +58,11 @@ enum Command {
     RebuildIndexes {
         path: PathBuf,
     },
+    /// The vault's model as JSON: types and their declared fields, edge
+    /// predicates, and the type-level graph of what may connect to what.
+    Ontology {
+        path: PathBuf,
+    },
     /// Graph queries over the vault, emitted as JSON on stdout.
     Graph {
         #[command(subcommand)]
@@ -189,6 +194,11 @@ fn main() -> Result<()> {
         Command::RebuildIndexes { path } => {
             kataan_core::rebuild::rebuild_indexes(&path)?;
             info!(path = %path.display(), "rebuilt indexes");
+        }
+        Command::Ontology { path } => {
+            let vault = kataan_core::vault::LoadedVault::load(&path)?;
+            let response = kataan_core::schema::ontology_response(&vault);
+            print_line(&serde_json::to_string_pretty(&response)?)?;
         }
         Command::Graph { command } => match command {
             GraphCommand::Export {
