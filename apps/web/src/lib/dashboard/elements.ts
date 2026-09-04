@@ -23,6 +23,7 @@ export const documentTitle = requireElement<HTMLElement>('document-title');
 export const documentBody = requireElement<HTMLElement>('document-body');
 export const metadataPanel = requireElement<HTMLElement>('metadata-panel');
 export const schemaPanel = requireElement<HTMLElement>('schema-panel');
+export const ontologyButton = requireElement<HTMLButtonElement>('ontology-button');
 export const validateButton = requireElement<HTMLButtonElement>('validate-button');
 export const rebuildButton = requireElement<HTMLButtonElement>('rebuild-button');
 export const searchForm = requireElement<HTMLFormElement>('search-form');

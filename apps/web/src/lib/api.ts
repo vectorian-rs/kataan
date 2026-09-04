@@ -8,6 +8,45 @@ export type VaultIndex = {
   type_folders: Record<string, string>;
 };
 
+export type FieldSchema = {
+  type: string;
+  items?: string | null;
+  to?: string[];
+  description?: string | null;
+};
+
+export type OntologyType = {
+  name: string;
+  extends?: string;
+  folders: string[];
+  required: string[];
+  fields: Record<string, FieldSchema>;
+  document_count: number;
+  folder_index_count: number;
+};
+
+export type OntologyEdge = {
+  predicate: string;
+  from: string[];
+  to: string[];
+  inverse?: string;
+  symmetric: boolean;
+  cardinality?: string;
+  description?: string;
+};
+
+export type OntologyLink = {
+  source: string;
+  predicate: string;
+  target: string;
+};
+
+export type OntologyResponse = {
+  types: OntologyType[];
+  edges: OntologyEdge[];
+  links: OntologyLink[];
+};
+
 export type FolderSummary = {
   type: string;
   folder: string;
@@ -181,6 +220,10 @@ export async function getFolder(id: string) {
 /// to the document it names.
 export async function resolvePath(path: string) {
   return getJson<ResolveResponse>(`/api/resolve-path?path=${encodeURIComponent(path)}`);
+}
+
+export async function getOntology() {
+  return getJson<OntologyResponse>('/api/ontology');
 }
 
 export async function getDocument(id: string, theme?: string) {

@@ -2,6 +2,7 @@ import { File, PanelRightClose, PanelRightOpen, createElement } from 'lucide';
 
 import {
   getDocument,
+  getOntology,
   getFile,
   getFolder,
   getHighlightedFile,
@@ -43,6 +44,7 @@ import {
   folderTitle,
   foldersEl,
   metadataPanel,
+  ontologyButton,
   propertiesToggle,
   rebuildButton,
   searchForm,
@@ -61,6 +63,7 @@ import {
 } from './dashboard/format';
 import { folderIcon } from './dashboard/icons';
 import { clearPanels, renderMetadata, renderSchema } from './dashboard/panels';
+import { renderOntology } from './dashboard/ontology-view';
 import {
   appendSafeSnippet,
   renderMissingSearchIndex,
@@ -116,6 +119,24 @@ setPropertiesVisible(propertiesVisible, { persist: false });
 
 propertiesToggle.addEventListener('click', () => {
   setPropertiesVisible(!propertiesVisible, { persist: true });
+});
+
+// The model, not the data: what types exist and what may link to what. Read
+// only — it is generated from ontology.toml and the type registry.
+ontologyButton.addEventListener('click', () => {
+  void runAction(
+    async () => {
+      const stale = beginNavigation();
+      selectedDocument = null;
+      selectedFile = null;
+      updateActiveRows();
+      const ontology = await getOntology();
+      if (stale()) return;
+      renderOntology(ontology);
+      clearPanels();
+    },
+    { owns: 'document' },
+  );
 });
 
 validateButton.addEventListener('click', async () => {

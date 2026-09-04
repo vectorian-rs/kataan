@@ -1,0 +1,154 @@
+/* the vault-model view: type cards, predicate tables, and the connection list
+
+   Scoped under .ontology-view so none of it can reach the reader, which shares
+   the same container and renders untrusted vault Markdown into it. */
+
+.ontology-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-6);
+}
+
+.ontology-summary {
+  margin: 0;
+  font-size: var(--font-size-1);
+}
+
+.ontology-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-3);
+}
+
+.ontology-section > h2 {
+  margin: 0;
+  font-size: var(--font-size-2);
+  font-weight: var(--font-weight-7);
+}
+
+.ontology-type {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2);
+  padding: var(--size-2) var(--size-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+}
+
+/* A type with nothing declared is one line, not a card with an empty middle. */
+.ontology-type-bare {
+  flex-flow: row wrap;
+  align-items: baseline;
+  gap: var(--size-1) var(--size-3);
+}
+
+/* Its own row: sharing one with the meta line left two ragged columns. */
+.ontology-outgoing {
+  flex-basis: 100%;
+}
+
+/* The view shares its container with the reader, which sets article
+   typography. Neutralise it: this is a reference table, not prose. */
+.ontology-view p {
+  margin: 0;
+}
+
+.ontology-view h3 {
+  margin: 0;
+}
+
+.ontology-type > h3 {
+  display: flex;
+  align-items: baseline;
+  gap: var(--size-2);
+  margin: 0;
+  font-size: var(--font-size-1);
+  font-weight: var(--font-weight-7);
+}
+
+.ontology-extends,
+.ontology-required,
+.ontology-warning {
+  padding: 0 var(--size-2);
+  border-radius: var(--radius-2);
+  font-size: var(--font-size-0);
+  font-weight: var(--font-weight-4);
+}
+
+.ontology-extends {
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+
+.ontology-required {
+  margin-inline-start: var(--size-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+
+/* A predicate naming a type nothing defines. Legal to write, impossible to
+   satisfy — so it reads as a problem rather than as decoration. */
+.ontology-warning {
+  margin-inline-start: var(--size-2);
+  border: 1px solid var(--danger, var(--border));
+  color: var(--danger, var(--text-2));
+}
+
+.ontology-meta {
+  margin: 0;
+  font-size: var(--font-size-0);
+}
+
+/* Tables can be wider than the pane; they scroll themselves rather than making
+   the whole page scroll sideways. */
+.ontology-table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  inline-size: 100%;
+  font-size: var(--font-size-0);
+}
+
+.ontology-table th,
+.ontology-table td {
+  padding: var(--size-2) var(--size-3);
+  border-block-end: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.ontology-table td:last-child {
+  white-space: normal;
+}
+
+.ontology-table th {
+  color: var(--text-2);
+  font-weight: var(--font-weight-6);
+}
+
+.ontology-table tr:last-child td {
+  border-block-end: none;
+}
+
+.ontology-connections {
+  display: grid;
+  gap: var(--size-3);
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+}
+
+.ontology-connection {
+  padding: var(--size-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-3);
+}
+
+.ontology-connection ul {
+  margin: var(--size-2) 0 0;
+  padding-inline-start: var(--size-4);
+  font-size: var(--font-size-0);
+}
+
+.ontology-connection li {
+  margin-block-start: var(--size-1);
+}
