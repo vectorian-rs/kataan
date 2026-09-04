@@ -27,6 +27,27 @@
   display: none;
 }
 
+/* The middle column is the document/file list. Hiding it gives the reader the
+   width, which is what you want once you have found the document — the folder
+   tree is still there to navigate with. */
+.app-shell.list-hidden {
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+    minmax(0, 1fr)
+    clamp(var(--properties-min-width), var(--properties-width), var(--properties-max-width));
+}
+
+.app-shell.list-hidden.properties-hidden {
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width))
+    minmax(0, 1fr);
+}
+
+/* The list's resize handle lives inside the panel, so it goes with it. */
+.app-shell.list-hidden .list-panel {
+  display: none;
+}
+
 .sidebar,
 .list-panel,
 .content-pane,

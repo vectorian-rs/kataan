@@ -12,6 +12,7 @@ export const appShell = requireElement<HTMLElement>('app-shell');
 export const sidebarResizeHandle = requireElement<HTMLElement>('sidebar-resize-handle');
 export const listResizeHandle = requireElement<HTMLElement>('list-resize-handle');
 export const propertiesResizeHandle = requireElement<HTMLElement>('properties-resize-handle');
+export const listToggle = requireElement<HTMLButtonElement>('list-toggle');
 export const propertiesToggle = requireElement<HTMLButtonElement>('properties-toggle');
 export const vaultSummary = requireElement<HTMLElement>('vault-summary');
 export const foldersEl = requireElement<HTMLElement>('folders');

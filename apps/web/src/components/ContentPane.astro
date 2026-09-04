@@ -5,15 +5,26 @@
         <div id="breadcrumb" class="breadcrumb">No document selected</div>
         <h2 id="document-title" class="panel-title visually-hidden">Document</h2>
       </div>
-      <button
-        id="properties-toggle"
-        class="ui-button button-primary properties-toggle"
-        type="button"
-        aria-pressed="false"
-        aria-label="Open properties sidebar"
-      >
-        Sidebar
-      </button>
+      <div class="content-header-actions">
+        <button
+          id="list-toggle"
+          class="ui-button button-secondary properties-toggle"
+          type="button"
+          aria-pressed="true"
+          aria-label="Hide document list"
+        >
+          List
+        </button>
+        <button
+          id="properties-toggle"
+          class="ui-button button-primary properties-toggle"
+          type="button"
+          aria-pressed="false"
+          aria-label="Open properties sidebar"
+        >
+          Sidebar
+        </button>
+      </div>
     </header>
     <article id="document-body" class="reader-body empty-state">
       <div class="empty-card">

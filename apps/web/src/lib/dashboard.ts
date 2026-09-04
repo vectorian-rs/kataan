@@ -1,4 +1,11 @@
-import { File, PanelRightClose, PanelRightOpen, createElement } from 'lucide';
+import {
+  File,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  createElement,
+} from 'lucide';
 
 import {
   getDocument,
@@ -43,6 +50,7 @@ import {
   documentsEl,
   folderTitle,
   foldersEl,
+  listToggle,
   metadataPanel,
   ontologyButton,
   propertiesToggle,
@@ -106,6 +114,7 @@ let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
 let selectedFile: FolderFile | null = null;
 let propertiesVisible = localStorage.getItem('kataan:properties-visible') === 'true';
+let listVisible = localStorage.getItem('kataan:list-visible') !== 'false';
 let searchStatus: SearchStatus | null = null;
 let searchDebounce: number | undefined;
 let activeSearchRequest = 0;
@@ -116,9 +125,14 @@ for (const column of RESIZABLE_COLUMNS) {
   initColumnResizing(column);
 }
 setPropertiesVisible(propertiesVisible, { persist: false });
+setListVisible(listVisible, { persist: false });
 
 propertiesToggle.addEventListener('click', () => {
   setPropertiesVisible(!propertiesVisible, { persist: true });
+});
+
+listToggle.addEventListener('click', () => {
+  setListVisible(!listVisible, { persist: true });
 });
 
 // The model, not the data: what types exist and what may link to what. Read
@@ -648,6 +662,29 @@ async function selectFile(file: FolderFile, options: SelectOptions = {}) {
   breadcrumb.textContent = vaultFile.path.replaceAll('/', ' › ');
   documentTitle.textContent = vaultFile.name;
   renderFileBody(vaultFile);
+}
+
+/// Show or hide the middle column, which holds the folder's documents and
+/// files. Mirrors `setPropertiesVisible`; the grid drops the column and the
+/// panel's own resize handle goes with it, since the handle lives inside it.
+function setListVisible(visible: boolean, options: { persist?: boolean } = {}) {
+  listVisible = visible;
+  appShell.classList.toggle('list-hidden', !visible);
+  listToggle.setAttribute('aria-pressed', String(visible));
+  listToggle.setAttribute('aria-label', visible ? 'Hide document list' : 'Show document list');
+  listToggle.classList.toggle('button-primary', !visible);
+  listToggle.classList.toggle('button-secondary', visible);
+  const icon = createElement(visible ? PanelLeftClose : PanelLeftOpen, {
+    width: 16,
+    height: 16,
+    'stroke-width': 2,
+  });
+  const label = document.createElement('span');
+  label.textContent = 'List';
+  listToggle.replaceChildren(icon, label);
+  if (options.persist ?? true) {
+    localStorage.setItem('kataan:list-visible', String(visible));
+  }
 }
 
 function setPropertiesVisible(visible: boolean, options: { persist?: boolean } = {}) {

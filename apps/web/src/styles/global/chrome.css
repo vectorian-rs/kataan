@@ -95,3 +95,10 @@
 .icon-button:hover {
   color: var(--text-1);
 }
+
+/* The content header's right-hand controls: the list and properties toggles. */
+.content-header-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--size-2);
+}
