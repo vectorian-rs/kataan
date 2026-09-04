@@ -304,9 +304,11 @@ matches nothing rather than returning the whole vault.
 **Facet counts in search results reflect the returned page**, not the full match
 set, so they change as you page. Do not build a facet sidebar on them yet.
 
-**Writes are MCP-only.** The HTTP API is read-only apart from `validate` and
-`rebuild-indexes`. Edges can be added, removed, and replaced wholesale for one
-predicate (`add_edge`, `remove_edge`, `replace_edges_for_predicate`); only
+**Writes are available on HTTP and MCP alike.** Documents via
+`POST /api/documents` and `PATCH /api/documents/*id`; edges via `POST`,
+`DELETE` and `PUT /api/edges`. Both surfaces call the same `mutate` functions.
+
+Edges can be added, removed, and replaced wholesale for one predicate. Only
 `add_edge` and the replacement's incoming targets are ontology-validated, since
 an edge worth removing is often one the ontology now forbids.
 

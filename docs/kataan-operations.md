@@ -56,7 +56,19 @@ Agent changes should be diff-based and non-destructive. Agents should not silent
 
 ## Concurrency and writes
 
-Kataan uses a single-writer model in the server. API writes are serialized through a command queue and then update an `Arc<RwLock<LoadedVault>>` metadata index. Reads take a short read lock and should avoid holding it while reading large Markdown bodies.
+Kataan uses a single-writer model in the server. Every API write takes a
+process-wide write lock for the duration of the mutation, so two concurrent
+requests cannot interleave a read of the old sidecar with a write of the new
+one, and their index rebuilds cannot cross. The lock is held on the blocking
+pool rather than an async worker, so waiting writers do not occupy the runtime.
+
+A write refreshes the `Arc<RwLock<LoadedVault>>` metadata index and the search
+index before returning, so a caller that writes and immediately reads sees its
+own write. Reads take a short read lock and should avoid holding it while
+reading large Markdown bodies.
+
+MCP never needed the lock — it is one process over stdio, so its writes were
+already serial. The HTTP surface is concurrent by construction.
 
 `LoadedVault` is metadata-only: it stores config, ontology, type registry, document records, labels/facets, graph, checksums, diagnostics, and paths. It does not keep full Markdown bodies in memory. Markdown is read on demand from the file path in the document record.
 
@@ -77,10 +89,25 @@ Server boot:
 5. If errors exist, serve read-only API plus diagnostics and expose rebuild.
 6. If clean, enable the full API.
 
-The HTTP API is read-only apart from maintenance operations (`validate`,
-`rebuild-indexes`). Document and edge writes are available over MCP and by
-editing files directly; an HTTP write path is not implemented (see issue #21).
-The single-writer design described below is the intended shape for it.
+The HTTP API is read/write. Documents and edges can be created, updated and
+linked over HTTP as well as MCP:
+
+| Route | Does |
+| --- | --- |
+| `POST /api/documents` | Create a document. Returns `201` and its canonical id. |
+| `PATCH /api/documents/*id` | Update body and/or metadata. Omitted fields are left alone. |
+| `POST /api/edges` | Add `source --predicate--> target`. |
+| `DELETE /api/edges?source=&predicate=&target=` | Remove one edge. |
+| `PUT /api/edges` | Replace the whole target list for one predicate. |
+
+All five reuse `kataan_core::mutate`, exactly as the MCP tools do, so the two
+surfaces cannot accept different things. All five are refused for a cross-site
+request, and a write the vault's rules reject — an unknown type, a malformed
+timestamp, a field violating the type's `[nodes.*]` schema — is a `400`, not a
+`500`.
+
+Read `GET /api/schema/<type>` or `GET /api/ontology` first: the write boundary
+enforces node schemas, so those describe what a write must contain.
 
 The server checks folder depth on every write and rejects violations with `folder-depth-exceeded`. Edge writes support `add_edge`, `remove_edge`, and `replace_edges_for_predicate`.
 
