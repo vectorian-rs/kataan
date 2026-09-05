@@ -83,16 +83,20 @@ import {
   setSearchStatusMessage,
 } from './dashboard/search-view';
 
-/// URL prefixes for views that are not documents.
+/// The query parameter naming a view that is not vault content.
+///
+/// A view is not a resource in the vault, so it is not addressed by a path.
+/// That also settles the collision question by construction: a query string
+/// cannot be mistaken for a canonical id, and no path has to be reserved.
 ///
 /// Declared here rather than beside `currentRoute`, which is far below: the
 /// boot sequence calls it through `loadFolders`, and a `const` initialised
 /// later in the module is still `undefined` at that point. The comparison then
-/// silently fails instead of throwing — the bundler lowers these to `var`, so
+/// silently fails instead of throwing — the bundler lowers this to `var`, so
 /// there is no temporal-dead-zone error to notice — and every deep link falls
 /// through to the default folder.
-const FILE_ROUTE_PREFIX = '~file/';
-const MODEL_ROUTE = '~model';
+const VIEW_PARAM = 'view';
+const MODEL_VIEW = 'model';
 
 /// Which navigation is current.
 ///
@@ -243,12 +247,18 @@ window.addEventListener('kataan:theme-change', () => {
   }
 });
 
-await runAction(async () => {
-  await loadVault();
-  await loadFolders();
-  await refreshSearchStatus();
-  await restoreRouteSelection();
-});
+// Boot owns the reader: it is restoring whatever the URL names, so a deep link
+// that cannot be resolved should explain itself there rather than leaving the
+// shipped "Select a document" card up with the reason buried in diagnostics.
+await runAction(
+  async () => {
+    await loadVault();
+    await loadFolders();
+    await refreshSearchStatus();
+    await restoreRouteSelection();
+  },
+  { owns: 'document' },
+);
 
 async function loadVault() {
   const vault = await getVault();
@@ -771,20 +781,27 @@ async function restoreRouteSelection() {
   }
 
   if (route.kind === 'file') {
-    // Only the path survives in a URL, so the rest of `FolderFile` is derived
-    // from it. `selectFile` needs the extension to decide whether the preview
-    // can be syntax-highlighted.
-    const name = route.path.split('/').pop() ?? route.path;
-    const dot = name.lastIndexOf('.');
-    await selectFile(
-      { name, path: route.path, extension: dot > 0 ? name.slice(dot + 1) : undefined },
-      { stale, updateUrl: false },
-    );
+    await selectFileByPath(route.path, stale);
     return;
   }
 
-  const resolved = await resolvePath(route.id);
+  // A document wins over a file of the same name. Ids are the vault's primary
+  // namespace, and a file whose path is also id-shaped (`docs/readme`, no
+  // extension) is the only case where both could match.
+  const resolved = await resolvePath(route.id).catch(() => null);
   if (stale()) return;
+  if (!resolved) {
+    // Not a document. It may still be a file whose path happens to be
+    // id-shaped (`docs/readme`, no extension). If it is neither, say that
+    // rather than reporting whichever lookup happened to run last — the reader
+    // typed one path and does not care which namespace we tried second.
+    try {
+      await selectFileByPath(route.id, stale);
+    } catch {
+      throw new Error(`\`${route.id}\` is not a document or a file in this vault`);
+    }
+    return;
+  }
 
   if (resolved.is_folder_index) {
     await selectFolder(resolved.id, { selectFirst: false, stale, updateUrl: false });
@@ -802,6 +819,20 @@ async function restoreRouteSelection() {
     if (stale()) return;
   }
   await selectDocument(resolved.id, { updateUrl: false, stale });
+}
+
+/// Open a file preview from a path alone.
+///
+/// Only the path survives in a URL, so the rest of `FolderFile` is derived from
+/// it — `selectFile` needs the extension to decide whether the preview can be
+/// syntax-highlighted.
+async function selectFileByPath(path: string, stale: Stale) {
+  const name = path.split('/').pop() ?? path;
+  const dot = name.lastIndexOf('.');
+  await selectFile(
+    { name, path, extension: dot > 0 ? name.slice(dot + 1) : undefined },
+    { stale, updateUrl: false },
+  );
 }
 
 /// The view with nothing selected, as the page ships. Reached by going back
@@ -834,17 +865,25 @@ function clearRouteSelection() {
 /// between the model view and a document whose id happens to be `ontology`.
 type Route = { kind: 'id'; id: string } | { kind: 'file'; path: string } | { kind: 'model' } | null;
 
+/// Whether `path` could be a canonical id.
+///
+/// `CanonicalId::parse` refuses any segment containing a dot and accepts only
+/// lowercase letters, digits and hyphens, so anything else — an extension,
+/// uppercase, a space, an underscore — is necessarily a file path rather than a
+/// document. That is what lets both share the URL space without a prefix.
+function looksLikeId(path: string) {
+  return /^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/.test(path);
+}
+
 function currentRoute(): Route {
+  if (new URLSearchParams(window.location.search).get(VIEW_PARAM) === MODEL_VIEW) {
+    return { kind: 'model' };
+  }
   const raw = decodeURI(window.location.pathname).replace(/^\/+|\/+$/g, '');
   if (!raw) return null;
-  if (raw === MODEL_ROUTE) return { kind: 'model' };
-  if (raw.startsWith(FILE_ROUTE_PREFIX)) {
-    const path = raw.slice(FILE_ROUTE_PREFIX.length);
-    return path ? { kind: 'file', path } : null;
-  }
-  // Ids are lowercase, digits, hyphens and slashes; anything else is not ours.
-  if (!/^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/.test(raw)) return null;
-  return { kind: 'id', id: raw };
+  // Id-shaped paths are resolved as documents first and fall back to files;
+  // anything else cannot be an id at all. See `restoreRouteSelection`.
+  return looksLikeId(raw) ? { kind: 'id', id: raw } : { kind: 'file', path: raw };
 }
 
 function routePath(route: NonNullable<Route>) {
@@ -853,9 +892,9 @@ function routePath(route: NonNullable<Route>) {
     case 'id':
       return `/${encode(route.id)}`;
     case 'file':
-      return `/${FILE_ROUTE_PREFIX}${encode(route.path)}`;
+      return `/${encode(route.path)}`;
     case 'model':
-      return `/${MODEL_ROUTE}`;
+      return `/?${VIEW_PARAM}=${MODEL_VIEW}`;
   }
 }
 
@@ -867,7 +906,9 @@ function routePath(route: NonNullable<Route>) {
 /// "collapse one level" instead of "the last thing I was reading".
 function setRoute(route: NonNullable<Route>, options: { replace?: boolean } = {}) {
   const nextPath = routePath(route);
-  if (window.location.pathname === nextPath) return;
+  // Compare path *and* query: the model view differs from `/` only by query,
+  // and a document route must clear a query left behind by it.
+  if (window.location.pathname + window.location.search === nextPath) return;
   if (options.replace) {
     window.history.replaceState({}, '', nextPath);
   } else {

@@ -16,20 +16,19 @@ const spaFallbackDev = {
     'astro:server:setup': ({ server }) => {
       server.middlewares.use((req, _res, next) => {
         const url = req.url ?? '/';
-        // Any request with a file extension (incl. /_astro/*.js|css) or a Vite
-        // internal path is a real asset, not a page to fall back for.
+        // What counts as an asset is named, not guessed from an extension.
         //
-        // Except a `~`-prefixed route, which is a view rather than a document
-        // and may legitimately carry a dot: `/~file/docs/report.pdf` names a
-        // file *inside the vault*, served by the API, not an asset of this
-        // server. The Rust fallback serves the shell for it, and this has to
-        // agree or a deep link would work in production and 404 in dev.
-        const isViewRoute = url.startsWith('/~');
+        // A file route is a vault path — `/docs/report.pdf` — so "has a dot"
+        // would send every one of them to a 404 here while production served
+        // the shell. The Rust fallback looks the path up among embedded assets
+        // and serves the shell on a miss; this is the same rule, expressed
+        // against the paths Vite actually owns.
         const isAsset =
-          !isViewRoute &&
-          (url.startsWith('/@') ||
-            url.startsWith('/node_modules') ||
-            /\.[a-zA-Z0-9]+(\?|$)/.test(url));
+          url.startsWith('/@') ||
+          url.startsWith('/node_modules') ||
+          url.startsWith('/_astro/') ||
+          url.startsWith('/src/') ||
+          url === '/favicon.ico';
         if (req.method === 'GET' && url !== '/' && !url.startsWith('/api') && !isAsset) {
           req.url = '/';
         }
