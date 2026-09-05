@@ -18,10 +18,18 @@ const spaFallbackDev = {
         const url = req.url ?? '/';
         // Any request with a file extension (incl. /_astro/*.js|css) or a Vite
         // internal path is a real asset, not a page to fall back for.
+        //
+        // Except a `~`-prefixed route, which is a view rather than a document
+        // and may legitimately carry a dot: `/~file/docs/report.pdf` names a
+        // file *inside the vault*, served by the API, not an asset of this
+        // server. The Rust fallback serves the shell for it, and this has to
+        // agree or a deep link would work in production and 404 in dev.
+        const isViewRoute = url.startsWith('/~');
         const isAsset =
-          url.startsWith('/@') ||
-          url.startsWith('/node_modules') ||
-          /\.[a-zA-Z0-9]+(\?|$)/.test(url);
+          !isViewRoute &&
+          (url.startsWith('/@') ||
+            url.startsWith('/node_modules') ||
+            /\.[a-zA-Z0-9]+(\?|$)/.test(url));
         if (req.method === 'GET' && url !== '/' && !url.startsWith('/api') && !isAsset) {
           req.url = '/';
         }

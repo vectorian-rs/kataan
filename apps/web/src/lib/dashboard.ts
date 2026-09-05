@@ -83,6 +83,17 @@ import {
   setSearchStatusMessage,
 } from './dashboard/search-view';
 
+/// URL prefixes for views that are not documents.
+///
+/// Declared here rather than beside `currentRoute`, which is far below: the
+/// boot sequence calls it through `loadFolders`, and a `const` initialised
+/// later in the module is still `undefined` at that point. The comparison then
+/// silently fails instead of throwing — the bundler lowers these to `var`, so
+/// there is no temporal-dead-zone error to notice — and every deep link falls
+/// through to the default folder.
+const FILE_ROUTE_PREFIX = '~file/';
+const MODEL_ROUTE = '~model';
+
 /// Which navigation is current.
 ///
 /// Selecting a folder, a document or a file awaits several fetches, so two
@@ -148,6 +159,7 @@ ontologyButton.addEventListener('click', () => {
       if (stale()) return;
       renderOntology(ontology);
       clearPanels();
+      setRoute({ kind: 'model' });
     },
     { owns: 'document' },
   );
@@ -266,7 +278,7 @@ async function loadFolders() {
   foldersEl.replaceChildren(...response.folders.map(renderFolderButton));
 
   const firstNonEmptyFolder = response.folders.find((folder) => folder.document_count > 0);
-  if (!currentRouteLocator() && response.folders.length > 0) {
+  if (!currentRoute() && response.folders.length > 0) {
     await selectFolder(firstNonEmptyFolder?.folder ?? response.folders[0].folder);
   }
 }
@@ -404,7 +416,7 @@ async function openSearchResult(result: SearchResult) {
   if (result.kind === 'document' && result.id) {
     const folder = result.id.split('/').slice(0, -1).join('/');
     for (const chainFolder of folderChain(folder)) {
-      await selectFolder(chainFolder, { selectFirst: false, stale });
+      await selectFolder(chainFolder, { selectFirst: false, stale, updateUrl: false });
       if (stale()) return;
     }
     await selectDocument(result.id, { stale });
@@ -413,7 +425,7 @@ async function openSearchResult(result: SearchResult) {
 
   if (result.kind === 'folder' && result.id) {
     for (const chainFolder of folderChain(result.id)) {
-      await selectFolder(chainFolder, { selectFirst: false, stale });
+      await selectFolder(chainFolder, { selectFirst: false, stale, updateUrl: false });
       if (stale()) return;
     }
   }
@@ -470,6 +482,12 @@ async function selectFolder(folder: string, options: SelectOptions = {}) {
 
   const response = await getFolder(folder);
   if (stale()) return;
+  // Replace rather than push: walking down a tree should leave the folder
+  // linkable without turning Back into "collapse one level". A document
+  // selected from here pushes over it a moment later.
+  if (options.updateUrl ?? true) {
+    setRoute({ kind: 'id', id: folder }, { replace: true });
+  }
   folderTitle.textContent = folderTitleFromResponse(response.id, response.metadata);
   renderChildFolders(folder, response.folders);
 
@@ -643,6 +661,9 @@ async function selectFile(file: FolderFile, options: SelectOptions = {}) {
   selectedDocument = null;
   selectedFile = file;
   updateActiveRows();
+  if (options.updateUrl ?? true) {
+    setRoute({ kind: 'file', path: file.path });
+  }
 
   if (isHighlightableFile(file)) {
     try {
@@ -735,22 +756,49 @@ async function selectDocument(id: string, options: SelectOptions = {}) {
 async function restoreRouteSelection() {
   const stale = beginNavigation();
 
-  const locator = currentRouteLocator();
-  if (!locator) {
+  const route = currentRoute();
+  if (!route) {
     clearRouteSelection();
     return;
   }
 
-  const resolved = await resolvePath(locator);
+  if (route.kind === 'model') {
+    const ontology = await getOntology();
+    if (stale()) return;
+    renderOntology(ontology);
+    clearPanels();
+    return;
+  }
+
+  if (route.kind === 'file') {
+    // Only the path survives in a URL, so the rest of `FolderFile` is derived
+    // from it. `selectFile` needs the extension to decide whether the preview
+    // can be syntax-highlighted.
+    const name = route.path.split('/').pop() ?? route.path;
+    const dot = name.lastIndexOf('.');
+    await selectFile(
+      { name, path: route.path, extension: dot > 0 ? name.slice(dot + 1) : undefined },
+      { stale, updateUrl: false },
+    );
+    return;
+  }
+
+  const resolved = await resolvePath(route.id);
   if (stale()) return;
 
   if (resolved.is_folder_index) {
-    await selectFolder(resolved.id, { selectFirst: false, stale });
+    await selectFolder(resolved.id, { selectFirst: false, stale, updateUrl: false });
+    if (stale()) return;
+    // A folder index is a document — it has its own `index.md`. Render it,
+    // rather than expanding the tree and leaving whatever was open before in
+    // the reader: now that folders have URLs, `/people` has to show something
+    // that is actually `people`.
+    await selectDocument(resolved.id, { updateUrl: false, stale });
     return;
   }
 
   for (const folder of folderChain(resolved.folder)) {
-    await selectFolder(folder, { selectFirst: false, stale });
+    await selectFolder(folder, { selectFirst: false, stale, updateUrl: false });
     if (stale()) return;
   }
   await selectDocument(resolved.id, { updateUrl: false, stale });
@@ -776,20 +824,59 @@ function clearRouteSelection() {
   updateActiveRows();
 }
 
-/// The path *is* the canonical id, so a URL can be read and shared.
-function currentRouteLocator() {
-  const id = decodeURI(window.location.pathname).replace(/^\/+|\/+$/g, '');
-  if (!id) return null;
+/// What a URL can name.
+///
+/// A document or folder is addressed by its canonical id, so the path *is* the
+/// id and a link reads as the thing it points at. Everything else is a view
+/// rather than a document, and takes a `~` prefix — a character a canonical id
+/// can never contain, since ids are `[a-z0-9][a-z0-9-]*` segments. That is the
+/// whole of the namespace rule: without it `/ontology` would be ambiguous
+/// between the model view and a document whose id happens to be `ontology`.
+type Route = { kind: 'id'; id: string } | { kind: 'file'; path: string } | { kind: 'model' } | null;
+
+function currentRoute(): Route {
+  const raw = decodeURI(window.location.pathname).replace(/^\/+|\/+$/g, '');
+  if (!raw) return null;
+  if (raw === MODEL_ROUTE) return { kind: 'model' };
+  if (raw.startsWith(FILE_ROUTE_PREFIX)) {
+    const path = raw.slice(FILE_ROUTE_PREFIX.length);
+    return path ? { kind: 'file', path } : null;
+  }
   // Ids are lowercase, digits, hyphens and slashes; anything else is not ours.
-  if (!/^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/.test(id)) return null;
-  return id;
+  if (!/^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/.test(raw)) return null;
+  return { kind: 'id', id: raw };
+}
+
+function routePath(route: NonNullable<Route>) {
+  const encode = (value: string) => value.split('/').map(encodeURIComponent).join('/');
+  switch (route.kind) {
+    case 'id':
+      return `/${encode(route.id)}`;
+    case 'file':
+      return `/${FILE_ROUTE_PREFIX}${encode(route.path)}`;
+    case 'model':
+      return `/${MODEL_ROUTE}`;
+  }
+}
+
+/// Write a route to the address bar.
+///
+/// `replace` is for a view you can arrive at while looking for something else —
+/// selecting a folder on the way down a tree. Those should be linkable and
+/// survive a refresh without each one becoming a Back stop, or Back turns into
+/// "collapse one level" instead of "the last thing I was reading".
+function setRoute(route: NonNullable<Route>, options: { replace?: boolean } = {}) {
+  const nextPath = routePath(route);
+  if (window.location.pathname === nextPath) return;
+  if (options.replace) {
+    window.history.replaceState({}, '', nextPath);
+  } else {
+    window.history.pushState({}, '', nextPath);
+  }
 }
 
 function updateRouteUrl(vaultDocument: DocumentResponse) {
-  const nextPath = `/${vaultDocument.id.split('/').map(encodeURIComponent).join('/')}`;
-  if (window.location.pathname !== nextPath) {
-    window.history.pushState({}, '', nextPath);
-  }
+  setRoute({ kind: 'id', id: vaultDocument.id });
 }
 
 function folderChain(folder: string) {
