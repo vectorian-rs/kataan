@@ -32,7 +32,8 @@ document. It is now one call.
 
 ```
 documents(ids?, type?, status?, labels?, path_prefix?, linked_to?,
-          predicate?, direction?, include?, limit?, offset?)
+          predicate?, direction?, after?, before?, order?, desc?,
+          include?, limit?, offset?)
 ```
 
 HTTP: `GET /api/documents?type=organization&limit=1000`
@@ -228,12 +229,44 @@ where the author wrote a date. `validate` reports it as `native-toml-datetime`,
 including inside nested tables and arrays. So every date you read is a string,
 in one of the two forms above.
 
-**Not yet available:** `after` / `before` / `order` filters on `documents()`.
-Sort client-side for now. A root time index sorted on `(occurred_at, type, id)`
-is planned.
+### Filtering and sorting on time
+
+`after` and `before` bound `occurred_at`. Both are **inclusive**, and both are
+compared *at the precision of the bound*:
+
+```
+after=2026-08-29&before=2026-08-29     the whole day, instants included
+after=2026-08-29T12:00:00Z             that exact moment onward
+```
+
+This rule exists because RFC 3339 makes a `full-date` a prefix of every
+`date-time` on that day: compared as plain strings, `before=2026-08-29` would
+sort before `2026-08-29T09:00:00Z` and drop the very instants it names.
+
+**A document with no `occurred_at` is excluded whenever either bound is given.**
+It cannot be shown to fall inside a range. Most vault documents carry no
+`occurred_at`, so a bounded query is usually much smaller than an unbounded one
+— that is the filter working, not a bug.
+
+`order` is one of `id` (default), `occurred_at`, `created_at`, `updated_at`, and
+`desc` reverses it. Two guarantees worth relying on:
+
+- **Ties always break on canonical id**, so paging is stable. Without that, two
+  documents sharing a timestamp could repeat or vanish across a page boundary.
+- **Documents missing the chosen timestamp sort last in both directions.**
+  Absent is not "earliest", and `desc` does not promote them to the front.
 
 `updated_at` is stamped on document updates *and* on edge writes, and a no-op
-update does not move it — so it is a usable "what changed recently" signal.
+update does not move it — so `order=updated_at&desc=true` is a direct answer to
+"what changed recently".
+
+A malformed bound (`2026`, which is ISO 8601 but not RFC 3339) and an inverted
+range are both request errors rather than an empty page.
+
+**Still not built:** a root time index sorted on `(occurred_at, type, id)`. At
+this vault's size an in-memory sort is instant, so an index that has to be kept
+current would be cost without benefit. Worth revisiting if a vault grows enough
+to measure a difference.
 
 ---
 

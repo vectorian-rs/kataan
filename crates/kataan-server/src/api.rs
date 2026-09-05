@@ -484,6 +484,12 @@ pub struct DocumentsQuery {
     pub limit: Option<usize>,
     #[serde(default)]
     pub offset: usize,
+    pub after: Option<String>,
+    pub before: Option<String>,
+    #[serde(default)]
+    pub order: kataan_core::query::Order,
+    #[serde(default)]
+    pub desc: bool,
 }
 
 pub async fn documents(
@@ -512,6 +518,10 @@ fn documents_response(
             predicate: query.predicate,
             direction: query.direction,
         }),
+        after: query.after,
+        before: query.before,
+        order: query.order,
+        desc: query.desc,
         include: query.include,
         limit: query.limit,
         offset: query.offset,

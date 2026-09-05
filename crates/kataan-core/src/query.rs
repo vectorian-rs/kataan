@@ -138,12 +138,56 @@ pub struct DocumentQuery {
     pub path_prefix: Option<String>,
     #[serde(default)]
     pub linked_to: Option<LinkedTo>,
+    /// Keep documents whose `occurred_at` is on or after this bound.
+    ///
+    /// Inclusive, and compared *at the precision of the bound*: `after` and
+    /// `before` of `2026-08-29` both include everything that happened that day,
+    /// instants included. A bound with a clock compares against the full
+    /// timestamp. Without this rule a bare day would exclude the very instants
+    /// it names, since `2026-08-29` sorts before `2026-08-29T09:00:00Z`.
+    ///
+    /// A document with no `occurred_at` cannot satisfy a bound and is excluded
+    /// whenever either is given.
+    #[serde(default)]
+    pub after: Option<String>,
+    /// Keep documents whose `occurred_at` is on or before this bound. See
+    /// [`after`](Self::after) for how precision is handled.
+    #[serde(default)]
+    pub before: Option<String>,
+    /// Sort order. Defaults to canonical id, which is what the vault's own
+    /// ordering is, so paging is stable without asking for anything.
+    #[serde(default)]
+    pub order: Order,
+    /// Reverse the order. `order = updated_at` with this set is "what changed
+    /// most recently".
+    #[serde(default)]
+    pub desc: bool,
     #[serde(default)]
     pub include: Include,
     #[serde(default)]
     pub limit: Option<usize>,
     #[serde(default)]
     pub offset: usize,
+}
+
+/// What [`documents`] sorts on.
+///
+/// Every variant falls back to canonical id for ties, so a page boundary never
+/// depends on iteration order and paging cannot repeat or skip a document.
+/// Documents missing the chosen timestamp sort last, ascending or descending
+/// alike — absent is not "earliest", and burying them under a `desc` query
+/// would be worse than keeping them together at the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Order {
+    #[default]
+    Id,
+    /// When the thing described happened. Author-set.
+    OccurredAt,
+    /// When the record was first written.
+    CreatedAt,
+    /// When the record last changed.
+    UpdatedAt,
 }
 
 /// A document with optionally its body, as returned by [`documents`].
@@ -189,6 +233,21 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
         return Err(Error::InvalidRequest(format!(
             "limit {limit} exceeds the maximum of {MAX_DOCUMENT_LIMIT}"
         )));
+    }
+
+    // Bounds are parsed before any work: a malformed one is the caller's
+    // mistake, and reporting it beats silently matching nothing.
+    let after = parse_bound("after", query.after.as_deref())?;
+    let before = parse_bound("before", query.before.as_deref())?;
+    if let (Some(after), Some(before)) = (&after, &before) {
+        // Comparable because both are RFC 3339 and one may be a prefix of the
+        // other; an inverted range is empty by construction, so say so rather
+        // than returning zero results the caller has to explain.
+        if after > before {
+            return Err(Error::InvalidRequest(format!(
+                "`after` ({after}) is later than `before` ({before}), which cannot match anything"
+            )));
+        }
     }
 
     // `linked_to` is resolved once, not per candidate.
@@ -262,8 +321,12 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
                     id.as_str() == *prefix || id.as_str().starts_with(with_slash.as_str())
                 })
                 && linked.as_ref().is_none_or(|allowed| allowed.contains(*id))
+                && within_bounds(record.metadata.occurred_at.as_deref(), &after, &before)
         })
         .collect();
+
+    let mut matched = matched;
+    sort_documents(vault, &mut matched, query.order, query.desc);
 
     let total = matched.len();
     let remaining = total.saturating_sub(query.offset);
@@ -312,6 +375,91 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
         missing,
         total,
     })
+}
+
+/// Parse a time bound, naming which one failed.
+fn parse_bound(field: &str, value: Option<&str>) -> Result<Option<String>> {
+    match value {
+        None => Ok(None),
+        Some(raw) => crate::time::Timestamp::parse(raw)
+            .map(|timestamp| Some(timestamp.as_str().to_owned()))
+            .map_err(|error| Error::InvalidRequest(format!("invalid `{field}`: {error}"))),
+    }
+}
+
+/// Whether `occurred_at` falls within the bounds, comparing at each bound's own
+/// precision.
+///
+/// RFC 3339 leaves a `full-date` as a prefix of any `date-time` on that day, so
+/// a plain lexicographic test would put `2026-08-29T09:00:00Z` *after* a
+/// `before` bound of `2026-08-29` and drop the instants the bound names.
+/// Truncating the value to the bound's length makes both bounds mean the whole
+/// day when written as a day, and the exact moment when written with a clock.
+fn within_bounds(
+    occurred_at: Option<&str>,
+    after: &Option<String>,
+    before: &Option<String>,
+) -> bool {
+    if after.is_none() && before.is_none() {
+        return true;
+    }
+    // A document with no valid time cannot be shown to fall in a range.
+    let Some(value) = occurred_at else {
+        return false;
+    };
+    let at_precision = |bound: &String| {
+        let end = bound.len().min(value.len());
+        &value[..end]
+    };
+    after
+        .as_ref()
+        .is_none_or(|bound| at_precision(bound) >= bound.as_str())
+        && before
+            .as_ref()
+            .is_none_or(|bound| at_precision(bound) <= bound.as_str())
+}
+
+/// Sort in place, breaking ties on canonical id so paging is stable.
+fn sort_documents(vault: &LoadedVault, ids: &mut [&CanonicalId], order: Order, desc: bool) {
+    if order == Order::Id {
+        // Already id-ordered: `vault.documents` is a BTreeMap, and an explicit
+        // `ids` list is returned in request order, which reversing still
+        // honours.
+        if desc {
+            ids.reverse();
+        }
+        return;
+    }
+
+    let key = |id: &CanonicalId| -> Option<&str> {
+        let metadata = &vault.documents.get(id)?.metadata;
+        match order {
+            Order::OccurredAt => metadata.occurred_at.as_deref(),
+            Order::CreatedAt => metadata.created_at.as_deref(),
+            Order::UpdatedAt => metadata.updated_at.as_deref(),
+            Order::Id => None,
+        }
+    };
+
+    ids.sort_by(|left, right| {
+        let (left_key, right_key) = (key(left), key(right));
+        // Missing sorts last in both directions, so `desc` does not bury the
+        // documents that simply never carried the field.
+        let ordering = match (left_key, right_key) {
+            (Some(left_key), Some(right_key)) => {
+                let compared = left_key.cmp(right_key);
+                if desc {
+                    compared.reverse()
+                } else {
+                    compared
+                }
+            }
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        };
+        ordering.then_with(|| left.cmp(right))
+    });
 }
 
 /// Build the display summary for a document id, or `None` if it is not in the

@@ -76,6 +76,10 @@ pub fn list() -> Value {
                     "linked_to": { "type": "string", "description": "Restrict to documents with an edge to this id." },
                     "predicate": { "type": "string", "description": "With linked_to: restrict to one predicate." },
                     "direction": { "type": "string", "enum": ["out", "in", "both"], "description": "With linked_to: which direction to follow." },
+                    "after": { "type": "string", "description": "Only documents whose occurred_at is on or after this RFC 3339 bound. Inclusive, and compared at the bound's own precision — a bare 2026-08-29 covers that whole day, instants included. Documents with no occurred_at are excluded whenever a bound is given." },
+                    "before": { "type": "string", "description": "Only documents whose occurred_at is on or before this bound. Same precision rule as `after`." },
+                    "order": { "type": "string", "enum": ["id", "occurred_at", "created_at", "updated_at"], "description": "Sort key, default `id`. Ties always break on id, so paging is stable. Documents missing the chosen timestamp sort last in both directions." },
+                    "desc": { "type": "boolean", "description": "Reverse the order. `order: updated_at` with this set answers \"what changed most recently\"." },
                     "include": { "type": "string", "enum": ["metadata", "full", "markdown"], "description": "`metadata` (default) is the summary; `full` adds each document's declared fields, timestamps and edges at no extra cost; `markdown` adds the body, which is one file read per document." },
                     "limit": { "type": "integer", "minimum": 1 },
                     "offset": { "type": "integer", "minimum": 0 }
@@ -281,6 +285,16 @@ fn documents(vault: &Path, args: &Value) -> Result<String> {
             predicate: opt_str(args, "predicate"),
             direction,
         }),
+        after: opt_str(args, "after"),
+        before: opt_str(args, "before"),
+        order: match args.get("order") {
+            Some(value) => serde_json::from_value(value.clone()).context("invalid `order`")?,
+            None => kataan_core::query::Order::default(),
+        },
+        desc: args
+            .get("desc")
+            .and_then(Value::as_bool)
+            .unwrap_or_default(),
         include,
         limit: args
             .get("limit")

@@ -418,6 +418,22 @@ folders = ["companies/*/customers/*"]
 
 `extends` means "is a". Every place a type is checked against a set of allowed types walks the chain, so a `customer` satisfies an edge declared `from = ["company"]`, and `--type company` returns customers as well. Adding a subtype therefore does not require touching `ontology.toml` or re-typing anything that already worked. A cycle in the chain is a validation error.
 
+## Asking about time
+
+`documents()` takes `after` and `before` (bounding `occurred_at`), plus `order`
+and `desc`:
+
+```sh
+kataan documents <vault> --order updated-at --desc --limit 20   # what changed
+kataan documents <vault> --after 2026-01-01 --before 2026-12-31 --order occurred-at
+```
+
+Bounds are inclusive and compared at their own precision, so a bare
+`2026-08-29` covers that whole day including instants within it. A document with
+no `occurred_at` is excluded whenever a bound is given. Sort ties always break
+on canonical id, so paging is stable; documents missing the chosen timestamp
+sort last in both directions.
+
 ## Discovering what a type needs
 
 Before writing a document, ask what its type requires. The write boundary

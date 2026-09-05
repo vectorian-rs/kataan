@@ -535,3 +535,245 @@ fn a_reciprocally_declared_edge_exports_once() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Four notes with known `occurred_at` values spanning one day boundary, plus
+/// one with no valid time at all.
+fn vault_with_times(name: &str) -> std::path::PathBuf {
+    let root = crate::test_support::unique_temp_dir(name);
+    crate::init::init_vault(&root, "Test").unwrap();
+
+    for (title, occurred_at) in [
+        ("Early Day", Some("2026-08-28")),
+        ("Day Itself", Some("2026-08-29")),
+        ("Morning Of", Some("2026-08-29T09:00:00Z")),
+        ("Evening Of", Some("2026-08-29T21:00:00Z")),
+        ("Next Day", Some("2026-08-30")),
+        ("Undated", None),
+    ] {
+        mutate::create_document(
+            &root,
+            NewDocument {
+                r#type: "note".to_owned(),
+                title: title.to_owned(),
+                body: title.to_owned(),
+                occurred_at: occurred_at.map(str::to_owned),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    root
+}
+
+fn ids(page: &DocumentPage) -> Vec<&str> {
+    page.documents
+        .iter()
+        .map(|entry| entry.summary.id.as_str())
+        .collect()
+}
+
+fn note_query(root: &std::path::Path) -> (LoadedVault, DocumentQuery) {
+    (
+        LoadedVault::load(root).unwrap(),
+        DocumentQuery {
+            r#type: Some("note".to_owned()),
+            limit: Some(100),
+            ..Default::default()
+        },
+    )
+}
+
+/// The subtle case. A `full-date` is a prefix of every `date-time` on that day,
+/// so a naive lexicographic bound of `2026-08-29` would sort *before*
+/// `2026-08-29T09:00:00Z` and drop the very instants it names. Bounds are
+/// therefore compared at their own precision.
+#[test]
+fn a_day_bound_covers_the_whole_day_including_instants() {
+    let root = vault_with_times("bounds-precision");
+    let (vault, base) = note_query(&root);
+
+    let single_day = documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-29".to_owned()),
+            before: Some("2026-08-29".to_owned()),
+            order: Order::OccurredAt,
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        ids(&single_day),
+        vec!["notes/day-itself", "notes/morning-of", "notes/evening-of"],
+        "a bare day must cover the day and every instant within it"
+    );
+
+    // A bound carrying a clock means that exact moment, not the whole day.
+    let after_noon = documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-29T12:00:00Z".to_owned()),
+            before: Some("2026-08-29T23:59:59Z".to_owned()),
+            order: Order::OccurredAt,
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    assert_eq!(ids(&after_noon), vec!["notes/evening-of"]);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bounds_are_inclusive_and_exclude_undated_documents() {
+    let root = vault_with_times("bounds-inclusive");
+    let (vault, base) = note_query(&root);
+
+    let from_the_28th = documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-28".to_owned()),
+            order: Order::OccurredAt,
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    // Inclusive: the 28th itself is in. Undated is not — a document with no
+    // valid time cannot be shown to fall in a range.
+    assert_eq!(from_the_28th.documents.len(), 5);
+    assert_eq!(ids(&from_the_28th)[0], "notes/early-day");
+    assert!(!ids(&from_the_28th).contains(&"notes/undated"));
+
+    // With no bounds at all, the undated document is present again.
+    let unbounded = documents(&vault, &base).unwrap();
+    assert!(ids(&unbounded).contains(&"notes/undated"));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ordering_is_stable_and_puts_missing_timestamps_last() {
+    let root = vault_with_times("order");
+    let (vault, base) = note_query(&root);
+
+    let ascending = documents(
+        &vault,
+        &DocumentQuery {
+            order: Order::OccurredAt,
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    // `notes` is the folder index, itself typed `note` and carrying no
+    // occurred_at, so it joins the undated group at the end and sorts within it
+    // by id. Folder indexes are documents; excluding them here would be
+    // asserting something the query does not do.
+    assert_eq!(
+        ids(&ascending),
+        vec![
+            "notes/early-day",
+            "notes/day-itself",
+            "notes/morning-of",
+            "notes/evening-of",
+            "notes/next-day",
+            "notes",
+            "notes/undated",
+        ]
+    );
+
+    let descending = documents(
+        &vault,
+        &DocumentQuery {
+            order: Order::OccurredAt,
+            desc: true,
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    // Reversed, except that the undated document stays at the end rather than
+    // being promoted to the front: absent is not "earliest".
+    assert_eq!(
+        ids(&descending),
+        vec![
+            "notes/next-day",
+            "notes/evening-of",
+            "notes/morning-of",
+            "notes/day-itself",
+            "notes/early-day",
+            "notes",
+            "notes/undated",
+        ]
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// Paging has to be stable under an ordering with ties, or a page boundary
+/// could repeat or skip a document. Every document here was created in the same
+/// second, so `created_at` ties across all of them and only the id tiebreak
+/// makes the result deterministic.
+#[test]
+fn paging_a_tied_ordering_visits_every_document_exactly_once() {
+    let root = vault_with_times("order-paging");
+    let (vault, base) = note_query(&root);
+
+    // Seven notes: the six created above plus the `notes` folder index.
+    let total = documents(&vault, &base).unwrap().total;
+    assert_eq!(total, 7);
+
+    let mut seen = Vec::new();
+    for offset in (0..total).step_by(2) {
+        let page = documents(
+            &vault,
+            &DocumentQuery {
+                order: Order::CreatedAt,
+                limit: Some(2),
+                offset,
+                ..base.clone()
+            },
+        )
+        .unwrap();
+        seen.extend(ids(&page).into_iter().map(str::to_owned));
+    }
+
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(seen.len(), total, "every document appears");
+    assert_eq!(unique.len(), total, "and none appears twice");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_malformed_or_inverted_bound_is_a_request_error() {
+    let root = vault_with_times("bounds-invalid");
+    let (vault, base) = note_query(&root);
+
+    // Reduced precision is not RFC 3339, and must be refused here as at every
+    // other boundary rather than silently matching nothing.
+    for bad in ["2026", "not-a-date", "2026-02-30"] {
+        let result = documents(
+            &vault,
+            &DocumentQuery {
+                after: Some(bad.to_owned()),
+                ..base.clone()
+            },
+        );
+        assert!(matches!(result, Err(Error::InvalidRequest(_))), "{bad}");
+    }
+
+    // An inverted range cannot match anything; say so rather than returning an
+    // empty page the caller has to explain.
+    let inverted = documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-30".to_owned()),
+            before: Some("2026-08-28".to_owned()),
+            ..base.clone()
+        },
+    );
+    assert!(matches!(inverted, Err(Error::InvalidRequest(_))));
+
+    std::fs::remove_dir_all(root).unwrap();
+}

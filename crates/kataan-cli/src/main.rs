@@ -91,6 +91,20 @@ enum Command {
         direction: Direction,
         /// Include each document's full metadata: declared fields, timestamps
         /// and edges. Free — it is already in memory.
+        /// Only documents whose occurred_at is on or after this RFC 3339 bound.
+        /// Inclusive, and compared at the bound's own precision, so a bare day
+        /// covers the whole day.
+        #[arg(long)]
+        after: Option<String>,
+        /// Only documents whose occurred_at is on or before this bound.
+        #[arg(long)]
+        before: Option<String>,
+        /// Sort by: id, occurred-at, created-at, updated-at.
+        #[arg(long, default_value = "id")]
+        order: OrderArg,
+        /// Reverse the sort. With --order updated-at, "what changed most recently".
+        #[arg(long)]
+        desc: bool,
         #[arg(long)]
         full: bool,
         /// Include Markdown bodies (one file read per document).
@@ -103,6 +117,26 @@ enum Command {
     },
     #[command(alias = "quide")]
     Guide,
+}
+
+/// `--order` values, kebab-cased for the command line.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum OrderArg {
+    Id,
+    OccurredAt,
+    CreatedAt,
+    UpdatedAt,
+}
+
+impl From<OrderArg> for kataan_core::query::Order {
+    fn from(value: OrderArg) -> Self {
+        match value {
+            OrderArg::Id => Self::Id,
+            OrderArg::OccurredAt => Self::OccurredAt,
+            OrderArg::CreatedAt => Self::CreatedAt,
+            OrderArg::UpdatedAt => Self::UpdatedAt,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -233,6 +267,10 @@ fn main() -> Result<()> {
             linked_to,
             predicate,
             direction,
+            after,
+            before,
+            order,
+            desc,
             full,
             markdown,
             limit,
@@ -250,6 +288,10 @@ fn main() -> Result<()> {
                     predicate,
                     direction,
                 }),
+                after,
+                before,
+                order: order.into(),
+                desc,
                 include: match (markdown, full) {
                     (true, _) => kataan_core::query::Include::Markdown,
                     (false, true) => kataan_core::query::Include::Full,
