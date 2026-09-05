@@ -241,7 +241,7 @@ fn update_document_markdown_checksum(
     );
 
     let updated = toml::to_string_pretty(&value).expect("serialize document TOML");
-    write::atomic_write_string(toml_path, &updated)
+    write::atomic_write_string_if_changed(toml_path, &updated)
 }
 
 fn update_root_updated_at(path: &Path, text: &str) -> Result<()> {
@@ -352,7 +352,7 @@ fn write_folder_index(
         subfolders,
     };
     let output = toml::to_string_pretty(&folder_index).expect("serialize folder index TOML");
-    write::atomic_write_string(path, &output)
+    write::atomic_write_string_if_changed(path, &output)
 }
 
 #[cfg(test)]

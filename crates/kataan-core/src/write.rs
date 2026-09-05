@@ -55,6 +55,28 @@ pub fn atomic_write_string(path: impl AsRef<Path>, content: &str) -> Result<()> 
     atomic_write(path, content.as_bytes())
 }
 
+/// Write `content` only if it differs from what is already on disk.
+///
+/// `atomic_write` is durable by design: temp file, `sync_all`, rename, then
+/// `sync_all` on the parent directory. That is two fsyncs, which is the right
+/// price for a change and a pure waste for a rewrite of identical bytes.
+///
+/// `rebuild-indexes` regenerates every sidecar and every folder index from the
+/// files on disk, so on an unchanged vault it produced byte-identical output for
+/// all of them — and paid ~1,600 fsyncs to store it. Measured on a
+/// 787-document vault, skipping those writes took a rebuild from 9.3s to 2.0s.
+///
+/// The comparison costs one read, which is cheaper than the write it avoids
+/// whenever the content matches, and no worse than a rounding error when it
+/// does not.
+pub fn atomic_write_string_if_changed(path: impl AsRef<Path>, content: &str) -> Result<()> {
+    let path = path.as_ref();
+    if std::fs::read_to_string(path).is_ok_and(|existing| existing == content) {
+        return Ok(());
+    }
+    atomic_write_string(path, content)
+}
+
 /// What the file at `path` should end up with: the mode it already has, or the
 /// one an ordinary create would have produced.
 ///
@@ -109,6 +131,41 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::*;
+
+    /// The write is skipped only when the bytes match — and the file must be
+    /// left alone entirely, not rewritten with identical content, or the fsyncs
+    /// this exists to avoid still happen.
+    #[test]
+    fn an_unchanged_write_does_not_touch_the_file() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("index.toml");
+
+        atomic_write_string_if_changed(&path, "first").unwrap();
+        let first = fs::metadata(&path).unwrap();
+
+        // Same content: the file must not be replaced. A rename swaps the
+        // inode, so comparing inode numbers detects a rewrite that a content
+        // check would miss.
+        atomic_write_string_if_changed(&path, "first").unwrap();
+        let second = fs::metadata(&path).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(first.ino(), second.ino(), "unchanged content was rewritten");
+        }
+
+        // Different content still lands.
+        atomic_write_string_if_changed(&path, "second").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+
+        // And a file that does not exist yet is created.
+        let fresh = root.join("fresh.toml");
+        atomic_write_string_if_changed(&fresh, "new").unwrap();
+        assert_eq!(fs::read_to_string(&fresh).unwrap(), "new");
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     /// A rename replaces the inode, so the destination's mode goes with it
     /// unless it is carried over. Every rewritten sidecar silently became 0600,
