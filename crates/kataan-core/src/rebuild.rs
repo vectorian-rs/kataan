@@ -63,7 +63,7 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
         }
         let folder_path = root.join(folder);
         if crate::walk::is_regular_dir(&folder_path) {
-            rebuild_folder_recursive(&folder_path, document_type, &ignore)?;
+            rebuild_folder_recursive(&folder_path, document_type, &ignore, 0)?;
         }
     }
 
@@ -76,7 +76,15 @@ fn rebuild_folder_recursive(
     folder_path: &Path,
     document_type: &str,
     ignore: &ScanIgnore,
+    depth: usize,
 ) -> Result<Option<String>> {
+    if depth > crate::constants::MAX_WALK_DEPTH {
+        return Err(Error::InvalidVaultStructure(format!(
+            "`{}` nests deeper than {} directories",
+            folder_path.display(),
+            crate::constants::MAX_WALK_DEPTH
+        )));
+    }
     let mut subfolders = Vec::new();
     for entry in fs::read_dir(folder_path).map_err(|source| Error::Io {
         path: folder_path.to_path_buf(),
@@ -91,7 +99,9 @@ fn rebuild_folder_recursive(
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if let Some(folder_checksum) = rebuild_folder_recursive(&path, document_type, ignore)? {
+        if let Some(folder_checksum) =
+            rebuild_folder_recursive(&path, document_type, ignore, depth + 1)?
+        {
             subfolders.push(FolderSubfolder {
                 name,
                 folder_checksum,

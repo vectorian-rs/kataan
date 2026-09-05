@@ -50,7 +50,7 @@ pub fn walk_type_folder(
     let mut entries = Vec::new();
     let relative_folder = Path::new(type_folder);
     if is_regular_dir(&root.join(relative_folder)) {
-        walk_folder(root, relative_folder, ignore, &mut entries)?;
+        walk_folder(root, relative_folder, ignore, &mut entries, 0)?;
     }
     entries.sort_by(|left, right| left.id().cmp(right.id()));
     Ok(entries)
@@ -61,7 +61,15 @@ fn walk_folder(
     relative_folder: &Path,
     ignore: &ScanIgnore,
     entries: &mut Vec<VaultEntry>,
+    depth: usize,
 ) -> Result<()> {
+    if depth > crate::constants::MAX_WALK_DEPTH {
+        return Err(crate::Error::InvalidVaultStructure(format!(
+            "`{}` nests deeper than {} directories",
+            relative_folder.display(),
+            crate::constants::MAX_WALK_DEPTH
+        )));
+    }
     let folder_path = root.join(relative_folder);
     let index_md = folder_path.join("index.md");
     let index_toml = folder_path.join("index.toml");
@@ -90,7 +98,13 @@ fn walk_folder(
             if ignore.is_ignored(&path, true) {
                 continue;
             }
-            walk_folder(root, &relative_folder.join(file_name), ignore, entries)?;
+            walk_folder(
+                root,
+                &relative_folder.join(file_name),
+                ignore,
+                entries,
+                depth + 1,
+            )?;
             continue;
         }
 
@@ -220,5 +234,52 @@ mod tests {
 
     fn unique_temp_dir() -> PathBuf {
         crate::test_support::unique_temp_dir("walk")
+    }
+}
+
+#[cfg(test)]
+mod depth_tests {
+    use super::*;
+
+    /// The walkers recursed once per directory with no bound, so a
+    /// pathologically nested tree aborted the process on stack overflow rather
+    /// than returning an error. `limits.max_folder_depth` did not help: it is
+    /// checked after the walk, by `validate`.
+    #[test]
+    fn a_tree_deeper_than_the_cap_is_an_error_not_a_crash() {
+        let root = crate::test_support::unique_temp_dir("walk-depth");
+        let mut deep = root.join("notes");
+        for level in 0..(crate::constants::MAX_WALK_DEPTH + 5) {
+            deep = deep.join(format!("l{level}"));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("index.md"), "# deep\n").unwrap();
+        std::fs::write(
+            deep.join("index.toml"),
+            "type = \"note\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+
+        let ignore = crate::scan::ScanIgnore::load(&root, &Default::default()).unwrap();
+        let result = walk_type_folder(&root, "notes", &ignore);
+
+        assert!(
+            matches!(result, Err(crate::Error::InvalidVaultStructure(_))),
+            "expected a structural error, got {result:?}"
+        );
+
+        // The same tree is still walkable up to the cap, so the bound only
+        // rejects what is already unreasonable.
+        let shallow = crate::test_support::unique_temp_dir("walk-shallow");
+        let mut path = shallow.join("notes");
+        for level in 0..4 {
+            path = path.join(format!("l{level}"));
+        }
+        std::fs::create_dir_all(&path).unwrap();
+        let ignore = crate::scan::ScanIgnore::load(&shallow, &Default::default()).unwrap();
+        assert!(walk_type_folder(&shallow, "notes", &ignore).is_ok());
+
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(shallow).unwrap();
     }
 }

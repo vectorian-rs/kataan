@@ -8,6 +8,17 @@ pub const SCHEMA_VERSION: &str = "0.2.0";
 pub const VAULT_CONFIG_FILE: &str = "kataan.toml";
 pub const DEFAULT_MAX_FOLDER_DEPTH: usize = 4;
 
+/// How deep any directory walk may recurse before it refuses to go further.
+///
+/// A structural backstop, not a policy: `limits.max_folder_depth` is what a
+/// vault configures and `validate` reports on, and it is checked *after* the
+/// walk. The walkers themselves recursed per directory with no bound, so a
+/// pathologically nested tree — or a symlink loop the ignore rules did not
+/// catch — aborted the process on stack overflow instead of returning an
+/// error. Set far above any legitimate vault so it can only be reached by
+/// something already wrong.
+pub const MAX_WALK_DEPTH: usize = 64;
+
 pub const ACTOR_HUMAN: &str = "human";
 pub const ACTOR_AGENT: &str = "agent";
 pub const ACTOR_SYSTEM: &str = "system";
