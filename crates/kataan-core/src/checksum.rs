@@ -77,13 +77,7 @@ pub fn folder_checksum_from_files(folder_path: impl AsRef<Path>) -> Result<Strin
 }
 
 fn folder_checksum_at_depth(folder_path: &Path, depth: usize) -> Result<String> {
-    if depth > crate::constants::MAX_WALK_DEPTH {
-        return Err(crate::Error::InvalidVaultStructure(format!(
-            "`{}` nests deeper than {} directories",
-            folder_path.display(),
-            crate::constants::MAX_WALK_DEPTH
-        )));
-    }
+    crate::walk::ensure_walk_depth(folder_path, depth)?;
     let mut documents = Vec::new();
     let mut subfolders = Vec::new();
 

@@ -344,9 +344,20 @@ pub fn is_predicate_name(value: &str) -> bool {
 }
 
 impl FieldSchema {
-    /// Check one value against this field's declared type. An empty `Vec` means
-    /// the value is fine; entries are reference targets whose existence the
-    /// caller must confirm, since that needs the whole document set.
+    /// Whether this field, or anything nested inside it, is a reference.
+    ///
+    /// Recursive on purpose: `check` resolves references from table interiors
+    /// and array elements as well as the top level, so a caller deciding
+    /// whether it needs the document index has to look just as deep. Asking
+    /// only about the top level made a nested `rate_card.approved_by`
+    /// unsatisfiable — the index was never loaded, so every target it named was
+    /// reported as not existing.
+    pub fn declares_a_reference(&self) -> bool {
+        self.r#type == FieldType::Reference
+            || self.items == Some(FieldType::Reference)
+            || self.fields.values().any(FieldSchema::declares_a_reference)
+    }
+
     /// Check one value against this field's declared type.
     ///
     /// `field` is the dotted path used in diagnostics, so nested problems name

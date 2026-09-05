@@ -56,6 +56,22 @@ pub fn walk_type_folder(
     Ok(entries)
 }
 
+/// Refuse to recurse past [`MAX_WALK_DEPTH`](crate::constants::MAX_WALK_DEPTH).
+///
+/// Every directory recursion in the crate calls this rather than repeating the
+/// comparison: the bound and the wording of a user-facing error belong in one
+/// place, and an off-by-one between copies would be invisible.
+pub(crate) fn ensure_walk_depth(path: &Path, depth: usize) -> Result<()> {
+    if depth > crate::constants::MAX_WALK_DEPTH {
+        return Err(crate::Error::InvalidVaultStructure(format!(
+            "`{}` nests deeper than {} directories",
+            path.display(),
+            crate::constants::MAX_WALK_DEPTH
+        )));
+    }
+    Ok(())
+}
+
 fn walk_folder(
     root: &Path,
     relative_folder: &Path,
@@ -63,13 +79,7 @@ fn walk_folder(
     entries: &mut Vec<VaultEntry>,
     depth: usize,
 ) -> Result<()> {
-    if depth > crate::constants::MAX_WALK_DEPTH {
-        return Err(crate::Error::InvalidVaultStructure(format!(
-            "`{}` nests deeper than {} directories",
-            relative_folder.display(),
-            crate::constants::MAX_WALK_DEPTH
-        )));
-    }
+    ensure_walk_depth(relative_folder, depth)?;
     let folder_path = root.join(relative_folder);
     let index_md = folder_path.join("index.md");
     let index_toml = folder_path.join("index.toml");

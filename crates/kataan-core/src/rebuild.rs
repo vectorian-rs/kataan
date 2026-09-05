@@ -78,13 +78,7 @@ fn rebuild_folder_recursive(
     ignore: &ScanIgnore,
     depth: usize,
 ) -> Result<Option<String>> {
-    if depth > crate::constants::MAX_WALK_DEPTH {
-        return Err(Error::InvalidVaultStructure(format!(
-            "`{}` nests deeper than {} directories",
-            folder_path.display(),
-            crate::constants::MAX_WALK_DEPTH
-        )));
-    }
+    crate::walk::ensure_walk_depth(folder_path, depth)?;
     let mut subfolders = Vec::new();
     for entry in fs::read_dir(folder_path).map_err(|source| Error::Io {
         path: folder_path.to_path_buf(),

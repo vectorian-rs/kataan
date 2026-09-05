@@ -909,3 +909,71 @@ effective_date = { type = "date" }
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// A reference nested inside a table must resolve against the document index.
+///
+/// `enforce_document_schema` loads that index only when the type declares a
+/// reference, and the predicate deciding that looked only at top-level fields.
+/// So a type whose only reference lived at `rate_card.approved_by` skipped the
+/// load, `known_document_types` stayed empty, and every target it named was
+/// reported as not existing — making nested references impossible to satisfy.
+#[test]
+fn a_nested_reference_resolves_against_documents_that_exist() {
+    let root = temp_vault("create-nested-reference");
+    with_note_schema(
+        &root,
+        r#"
+[nodes.note.fields.rate_card]
+type = "table"
+
+[nodes.note.fields.rate_card.fields]
+approved_by = { type = "reference", to = ["topic"] }
+"#,
+    );
+
+    let target = create_document(
+        &root,
+        NewDocument {
+            r#type: "topic".to_owned(),
+            ..note("Approver", "x")
+        },
+    )
+    .unwrap();
+
+    let card = |id: &str| {
+        BTreeMap::from([(
+            "rate_card".to_owned(),
+            toml::Value::Table(toml::Table::from_iter([(
+                "approved_by".to_owned(),
+                toml::Value::String(id.to_owned()),
+            )])),
+        )])
+    };
+
+    // The target exists, so the write is accepted.
+    create_document(
+        &root,
+        NewDocument {
+            extra: card(target.as_str()),
+            ..note("Good Ref", "x")
+        },
+    )
+    .expect("a nested reference to an existing document must be accepted");
+
+    // And a target that does not exist is still refused, so the fix did not
+    // simply stop checking.
+    let missing = create_document(
+        &root,
+        NewDocument {
+            extra: card("topics/ghost"),
+            ..note("Bad Ref", "x")
+        },
+    );
+    assert!(
+        missing.is_err(),
+        "a dangling nested reference must be refused"
+    );
+
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+    std::fs::remove_dir_all(root).unwrap();
+}

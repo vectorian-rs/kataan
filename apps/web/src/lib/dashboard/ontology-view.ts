@@ -9,7 +9,6 @@
 import { type OntologyResponse, type OntologyType, type FieldSchema } from '../api';
 
 import { documentBody, breadcrumb, documentTitle } from './elements';
-import { formatLabel } from './format';
 
 export function renderOntology(ontology: OntologyResponse) {
   breadcrumb.textContent = 'Vault model';
@@ -133,10 +132,9 @@ function fieldTable(fields: [string, FieldSchema][], required: string[]) {
     headerRow(['Field', 'Type', 'Notes']),
     ...fieldRows(fields, required).map(({ path, field, required: isRequired, depth }) => {
       const row = document.createElement('tr');
-      const name = path.split('.').pop() ?? path;
-
       const nameCell = document.createElement('td');
-      nameCell.textContent = depth === 0 ? name : path;
+      // The dotted path, which at depth 0 is just the field name.
+      nameCell.textContent = path;
       if (depth > 0) {
         nameCell.style.setProperty('--depth', String(depth));
         nameCell.classList.add('ontology-nested-field');
@@ -256,7 +254,7 @@ function headerRow(labels: string[]) {
   const row = document.createElement('tr');
   for (const label of labels) {
     const cell = document.createElement('th');
-    cell.textContent = formatLabel(label);
+    cell.textContent = label;
     row.append(cell);
   }
   const head = document.createElement('thead');

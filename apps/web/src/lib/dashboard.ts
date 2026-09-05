@@ -8,6 +8,7 @@ import {
 } from 'lucide';
 
 import {
+  type CanonicalFolderResponse,
   getDocument,
   getOntology,
   getFile,
@@ -83,6 +84,60 @@ import {
   setSearchStatusMessage,
 } from './dashboard/search-view';
 
+/// One panel toggle, configured twice.
+///
+/// The list and properties panels do the same job on opposite sides of the
+/// reader; writing them separately meant nineteen character-identical lines and
+/// two chances for their a11y or button styling to drift apart.
+///
+/// Declared above the boot block for the same reason the route constants are:
+/// a module-level `const` is not hoisted, and boot reads these.
+interface PanelToggle {
+  button: HTMLButtonElement;
+  /// Class the shell carries while the panel is hidden.
+  shellClass: string;
+  storageKey: string;
+  label: string;
+  /// Icons for the visible and hidden states.
+  icons: [typeof PanelLeftClose, typeof PanelLeftOpen];
+  /// Aria labels for the visible (hide) and hidden (show) states.
+  aria: [string, string];
+}
+
+const LIST_TOGGLE: PanelToggle = {
+  button: listToggle,
+  shellClass: 'list-hidden',
+  storageKey: 'kataan:list-visible',
+  label: 'List',
+  icons: [PanelLeftClose, PanelLeftOpen],
+  aria: ['Hide document list', 'Show document list'],
+};
+
+const PROPERTIES_TOGGLE: PanelToggle = {
+  button: propertiesToggle,
+  shellClass: 'properties-hidden',
+  storageKey: 'kataan:properties-visible',
+  label: 'Sidebar',
+  icons: [PanelRightClose, PanelRightOpen],
+  aria: ['Hide properties sidebar', 'Open properties sidebar'],
+};
+
+/// `/api/schema/document` describes kataan's own metadata struct plus the
+/// vault's constraints — the same ~1.7 KB for every document, and constant
+/// until the vault reloads. Fetched once instead of on every selection.
+let documentSchemaRequest: ReturnType<typeof getSchema> | undefined;
+
+function documentSchema() {
+  documentSchemaRequest ??= getSchema('document');
+  return documentSchemaRequest;
+}
+
+/// Called after anything that can change the vault's constraints, so the next
+/// selection re-fetches rather than rendering a schema from before the change.
+function forgetDocumentSchema() {
+  documentSchemaRequest = undefined;
+}
+
 /// The query parameter naming a view that is not vault content.
 ///
 /// A view is not a resource in the vault, so it is not addressed by a path.
@@ -139,15 +194,17 @@ for (const column of RESIZABLE_COLUMNS) {
   setColumnWidth(column, readSavedColumnWidth(column), { persist: false });
   initColumnResizing(column);
 }
-setPropertiesVisible(propertiesVisible, { persist: false });
-setListVisible(listVisible, { persist: false });
+setPanelVisible(PROPERTIES_TOGGLE, propertiesVisible, { persist: false });
+setPanelVisible(LIST_TOGGLE, listVisible, { persist: false });
 
 propertiesToggle.addEventListener('click', () => {
-  setPropertiesVisible(!propertiesVisible, { persist: true });
+  propertiesVisible = !propertiesVisible;
+  setPanelVisible(PROPERTIES_TOGGLE, propertiesVisible, { persist: true });
 });
 
 listToggle.addEventListener('click', () => {
-  setListVisible(!listVisible, { persist: true });
+  listVisible = !listVisible;
+  setPanelVisible(LIST_TOGGLE, listVisible, { persist: true });
 });
 
 // The model, not the data: what types exist and what may link to what. Read
@@ -171,6 +228,7 @@ ontologyButton.addEventListener('click', () => {
 
 validateButton.addEventListener('click', async () => {
   await runAction(async () => {
+    forgetDocumentSchema();
     renderDiagnostics(await validateVault());
   });
 });
@@ -185,6 +243,7 @@ rebuildButton.addEventListener('click', async () => {
     if (searchInput.value.trim()) {
       await runSearch(searchInput.value);
     }
+    forgetDocumentSchema();
     renderDiagnostics(await validateVault());
   });
 });
@@ -425,19 +484,14 @@ async function openSearchResult(result: SearchResult) {
   const stale = beginNavigation();
   if (result.kind === 'document' && result.id) {
     const folder = result.id.split('/').slice(0, -1).join('/');
-    for (const chainFolder of folderChain(folder)) {
-      await selectFolder(chainFolder, { selectFirst: false, stale, updateUrl: false });
-      if (stale()) return;
-    }
+    await expandChain(folder, stale);
+    if (stale()) return;
     await selectDocument(result.id, { stale });
     return;
   }
 
   if (result.kind === 'folder' && result.id) {
-    for (const chainFolder of folderChain(result.id)) {
-      await selectFolder(chainFolder, { selectFirst: false, stale, updateUrl: false });
-      if (stale()) return;
-    }
+    await expandChain(result.id, stale);
   }
 }
 
@@ -485,7 +539,6 @@ async function handleFolderClick(folder: string) {
 }
 
 async function selectFolder(folder: string, options: SelectOptions = {}) {
-  const selectFirst = options.selectFirst ?? true;
   const stale = options.stale ?? beginNavigation();
   selectedFolder = folder;
   updateActiveRows();
@@ -498,18 +551,33 @@ async function selectFolder(folder: string, options: SelectOptions = {}) {
   if (options.updateUrl ?? true) {
     setRoute({ kind: 'id', id: folder }, { replace: true });
   }
+  const first = applyFolder(folder, response, options);
+  if (first) {
+    await selectDocument(first, { stale });
+  }
+}
+
+/// Render a folder's contents. Separated from fetching it so a chain of
+/// ancestors can be fetched together and rendered in order.
+///
+/// Returns the document to open next, when the caller asked for the folder's
+/// first — the fetch and the render are synchronous, so the await stays with
+/// the caller.
+function applyFolder(
+  folder: string,
+  response: CanonicalFolderResponse,
+  options: SelectOptions,
+): string | undefined {
   folderTitle.textContent = folderTitleFromResponse(response.id, response.metadata);
   renderChildFolders(folder, response.folders);
-
   renderFolderContents(response.documents, response.files, response.folders.length > 0);
+
   if (response.documents.length === 0) {
     selectedDocument = null;
     updateActiveRows();
-    return;
+    return undefined;
   }
-  if (selectFirst) {
-    await selectDocument(response.documents[0].id, { stale });
-  }
+  return (options.selectFirst ?? true) ? response.documents[0].id : undefined;
 }
 
 function renderChildFolders(parentId: string, folders: FolderChild[]) {
@@ -695,49 +763,28 @@ async function selectFile(file: FolderFile, options: SelectOptions = {}) {
   renderFileBody(vaultFile);
 }
 
-/// Show or hide the middle column, which holds the folder's documents and
-/// files. Mirrors `setPropertiesVisible`; the grid drops the column and the
-/// panel's own resize handle goes with it, since the handle lives inside it.
-function setListVisible(visible: boolean, options: { persist?: boolean } = {}) {
-  listVisible = visible;
-  appShell.classList.toggle('list-hidden', !visible);
-  listToggle.setAttribute('aria-pressed', String(visible));
-  listToggle.setAttribute('aria-label', visible ? 'Hide document list' : 'Show document list');
-  listToggle.classList.toggle('button-primary', !visible);
-  listToggle.classList.toggle('button-secondary', visible);
-  const icon = createElement(visible ? PanelLeftClose : PanelLeftOpen, {
-    width: 16,
-    height: 16,
-    'stroke-width': 2,
-  });
-  const label = document.createElement('span');
-  label.textContent = 'List';
-  listToggle.replaceChildren(icon, label);
-  if (options.persist ?? true) {
-    localStorage.setItem('kataan:list-visible', String(visible));
-  }
-}
+function setPanelVisible(
+  panel: PanelToggle,
+  visible: boolean,
+  options: { persist?: boolean } = {},
+) {
+  panel.button.setAttribute('aria-pressed', String(visible));
+  panel.button.setAttribute('aria-label', visible ? panel.aria[0] : panel.aria[1]);
+  panel.button.classList.toggle('button-primary', !visible);
+  panel.button.classList.toggle('button-secondary', visible);
+  appShell.classList.toggle(panel.shellClass, !visible);
 
-function setPropertiesVisible(visible: boolean, options: { persist?: boolean } = {}) {
-  propertiesVisible = visible;
-  appShell.classList.toggle('properties-hidden', !visible);
-  propertiesToggle.setAttribute('aria-pressed', String(visible));
-  propertiesToggle.setAttribute(
-    'aria-label',
-    visible ? 'Hide properties sidebar' : 'Open properties sidebar',
-  );
-  propertiesToggle.classList.toggle('button-primary', !visible);
-  propertiesToggle.classList.toggle('button-secondary', visible);
-  const icon = createElement(visible ? PanelRightClose : PanelRightOpen, {
+  const icon = createElement(visible ? panel.icons[0] : panel.icons[1], {
     width: 16,
     height: 16,
     'stroke-width': 2,
   });
   const label = document.createElement('span');
-  label.textContent = 'Sidebar';
-  propertiesToggle.replaceChildren(icon, label);
+  label.textContent = panel.label;
+  panel.button.replaceChildren(icon, label);
+
   if (options.persist ?? true) {
-    localStorage.setItem('kataan:properties-visible', String(visible));
+    localStorage.setItem(panel.storageKey, String(visible));
   }
 }
 
@@ -748,8 +795,12 @@ async function selectDocument(id: string, options: SelectOptions = {}) {
   selectedFile = null;
   updateActiveRows();
 
-  // The theme travels with the request: code blocks are highlighted server-side.
-  const vaultDocument = await getDocument(id, currentTheme());
+  // The theme travels with the request: code blocks are highlighted
+  // server-side. The schema is memoized, so this is one round trip in practice.
+  const [vaultDocument, schema] = await Promise.all([
+    getDocument(id, currentTheme()),
+    documentSchema(),
+  ]);
   if (stale()) return;
   breadcrumb.textContent = vaultDocument.id.replaceAll('/', ' › ');
   documentTitle.textContent = basenameFromId(vaultDocument.id);
@@ -758,8 +809,6 @@ async function selectDocument(id: string, options: SelectOptions = {}) {
   }
   renderDocumentBody(vaultDocument);
   renderMetadata(vaultDocument);
-  const schema = await getSchema('document');
-  if (stale()) return;
   renderSchema(schema);
 }
 
@@ -814,11 +863,26 @@ async function restoreRouteSelection() {
     return;
   }
 
-  for (const folder of folderChain(resolved.folder)) {
-    await selectFolder(folder, { selectFirst: false, stale, updateUrl: false });
-    if (stale()) return;
-  }
+  await expandChain(resolved.folder, stale);
+  if (stale()) return;
   await selectDocument(resolved.id, { updateUrl: false, stale });
+}
+
+/// Expand every ancestor of `folder` so the target document's row exists.
+///
+/// The requests are independent — each ancestor's children come from its own
+/// `/api/folder` — so they go out together. Awaiting them one at a time made
+/// opening a five-deep document from a URL five serial round trips before the
+/// document itself was even requested.
+async function expandChain(folder: string, stale: Stale) {
+  const chain = folderChain(folder);
+  const responses = await Promise.all(chain.map((ancestor) => getFolder(ancestor)));
+  if (stale()) return;
+  // Rendered in chain order: each ancestor's row must exist before its children
+  // are inserted beneath it.
+  for (const [index, ancestor] of chain.entries()) {
+    applyFolder(ancestor, responses[index], { selectFirst: false });
+  }
 }
 
 /// Open a file preview from a path alone.
@@ -858,11 +922,10 @@ function clearRouteSelection() {
 /// What a URL can name.
 ///
 /// A document or folder is addressed by its canonical id, so the path *is* the
-/// id and a link reads as the thing it points at. Everything else is a view
-/// rather than a document, and takes a `~` prefix — a character a canonical id
-/// can never contain, since ids are `[a-z0-9][a-z0-9-]*` segments. That is the
-/// whole of the namespace rule: without it `/ontology` would be ambiguous
-/// between the model view and a document whose id happens to be `ontology`.
+/// id and a link reads as the thing it points at. A file takes its plain vault
+/// path — the id grammar rules it out as a document, see `looksLikeId`. A view
+/// is not vault content at all and is named by a query parameter, which no path
+/// can collide with.
 type Route = { kind: 'id'; id: string } | { kind: 'file'; path: string } | { kind: 'model' } | null;
 
 /// Whether `path` could be a canonical id.

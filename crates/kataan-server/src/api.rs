@@ -526,11 +526,7 @@ fn documents_response(
         limit: query.limit,
         offset: query.offset,
     };
-    kataan_core::query::documents(&loaded, &request).map_err(|error| match error {
-        // A bad filter or an over-limit result is the caller's mistake.
-        kataan_core::Error::InvalidRequest(message) => ApiError::bad_request(message),
-        other => ApiError::from(other),
-    })
+    kataan_core::query::documents(&loaded, &request).map_err(core_error)
 }
 
 pub async fn neighbors(
@@ -553,14 +549,16 @@ pub async fn subgraph(
     State(state): State<AppState>,
     Query(query): Query<SubgraphQuery>,
 ) -> Result<Json<kataan_core::query::Subgraph>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
-    let types = comma_separated(query.types.as_ref());
-    let predicates = comma_separated(query.predicates.as_ref());
-    Ok(Json(kataan_core::query::subgraph(
-        &loaded,
-        &types,
-        &predicates,
-    )))
+    // The one read with no `limit`: it walks every node and every edge, then
+    // serializes the lot. Unbounded CPU is exactly what the pool is for.
+    blocking(move || {
+        let loaded = read_loaded_vault(&state)?;
+        let types = comma_separated(query.types.as_ref());
+        let predicates = comma_separated(query.predicates.as_ref());
+        Ok(kataan_core::query::subgraph(&loaded, &types, &predicates))
+    })
+    .await
+    .map(Json)
 }
 
 pub async fn document(
@@ -578,8 +576,13 @@ pub async fn document(
 pub async fn ontology(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_core::schema::OntologyResponse>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
-    Ok(Json(kataan_core::schema::ontology_response(&loaded)))
+    // Counts every document by type, so it scales with the vault.
+    blocking(move || {
+        let loaded = read_loaded_vault(&state)?;
+        Ok(kataan_core::schema::ontology_response(&loaded))
+    })
+    .await
+    .map(Json)
 }
 
 pub async fn schema(
@@ -690,6 +693,13 @@ where
 
         let result = work(state.vault_path.as_ref())?;
 
+        // Released here. The lock exists to stop two mutations interleaving on
+        // disk; reloading and reindexing only *read* the result, so holding it
+        // through them makes every other writer queue behind work that needs no
+        // exclusion. A caller still sees its own write — its own mutation has
+        // already completed above.
+        drop(_writer);
+
         // The vault on disk changed. Refresh what the read paths serve before
         // returning, so a caller that writes and immediately reads sees its own
         // write rather than the previous state.
@@ -734,7 +744,7 @@ pub async fn create_document(
                 extra: request.fields,
             },
         )
-        .map_err(write_error)
+        .map_err(core_error)
     })
     .await?;
     Ok((
@@ -766,7 +776,7 @@ pub async fn update_document(
                 actor: request.actor,
             },
         )
-        .map_err(write_error)
+        .map_err(core_error)
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))
@@ -781,7 +791,7 @@ pub async fn add_edge(
     let (source, target) = edge_endpoints(&request.source, &request.target)?;
     write_action(state, move |root| {
         kataan_core::mutate::add_edge(root, &source, &request.predicate, &target)
-            .map_err(write_error)
+            .map_err(core_error)
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))
@@ -796,7 +806,7 @@ pub async fn remove_edge(
     let (source, target) = edge_endpoints(&request.source, &request.target)?;
     write_action(state, move |root| {
         kataan_core::mutate::remove_edge(root, &source, &request.predicate, &target)
-            .map_err(write_error)
+            .map_err(core_error)
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))
@@ -821,7 +831,7 @@ pub async fn replace_edges(
             &request.predicate,
             &targets,
         )
-        .map_err(write_error)
+        .map_err(core_error)
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))
@@ -834,10 +844,13 @@ fn edge_endpoints(source: &str, target: &str) -> Result<(CanonicalId, CanonicalI
     ))
 }
 
-/// A rejected write is the caller's mistake, not a server fault: an unknown
-/// type, a malformed timestamp, a field that violates the type's schema. Those
-/// arrive as `InvalidRequest` and must not surface as 500.
-fn write_error(error: kataan_core::Error) -> ApiError {
+/// Map a core error to its HTTP status.
+///
+/// `InvalidRequest` is the caller's mistake — an unknown type, a malformed
+/// timestamp, a bad filter, a field violating the type's schema — and must not
+/// surface as a 500. One function, so reads and writes cannot come to disagree
+/// about which variants are 4xx.
+fn core_error(error: kataan_core::Error) -> ApiError {
     match error {
         kataan_core::Error::InvalidRequest(message) => ApiError::bad_request(message),
         other => ApiError::from(other),

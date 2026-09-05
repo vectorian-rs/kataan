@@ -121,6 +121,16 @@ impl FolderWalk<'_> {
         scopes: &mut Vec<TypeScope>,
     ) -> Result<()> {
         let relative = relative_folder_path(self.root_folder, self.root_folder_path, folder_path);
+        // The fourth directory recursion in the crate, and the one `validate`
+        // itself takes. Depth comes from the path rather than a threaded
+        // counter, since `relative` is already the ancestor chain.
+        crate::walk::ensure_walk_depth(
+            Path::new(&relative),
+            relative
+                .split('/')
+                .filter(|segment| !segment.is_empty())
+                .count(),
+        )?;
         let folder_index = validate_optional_folder_index_pair(out.issues, folder_path, &relative)?;
 
         // Pushed before descending, so this folder's own documents and

@@ -89,8 +89,6 @@ enum Command {
         predicate: Option<String>,
         #[arg(long, default_value = "both")]
         direction: Direction,
-        /// Include each document's full metadata: declared fields, timestamps
-        /// and edges. Free — it is already in memory.
         /// Only documents whose occurred_at is on or after this RFC 3339 bound.
         /// Inclusive, and compared at the bound's own precision, so a bare day
         /// covers the whole day.
@@ -105,6 +103,8 @@ enum Command {
         /// Reverse the sort. With --order updated-at, "what changed most recently".
         #[arg(long)]
         desc: bool,
+        /// Include each document's full metadata: declared fields, timestamps
+        /// and edges. Free — it is already in memory.
         #[arg(long)]
         full: bool,
         /// Include Markdown bodies (one file read per document).

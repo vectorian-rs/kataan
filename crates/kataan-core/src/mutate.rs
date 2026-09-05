@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::{
     constants::{ACTOR_AGENT, STATUS_VALUES},
     id::CanonicalId,
+    ontology::FieldSchema,
     ontology::{self, Ontology},
     rebuild,
     title::slugify,
@@ -202,7 +203,8 @@ pub fn update_document(
     patch: DocumentPatch,
 ) -> Result<()> {
     let root = root.as_ref();
-    let record = Vault::open(root)?.load_document_record(id)?;
+    let vault = Vault::open(root)?;
+    let record = vault.load_document_record(id)?;
 
     // Edit the on-disk sidecar in place rather than re-rendering it from
     // `DocumentMetadata`: keys kataan does not define survive untouched, in
@@ -262,7 +264,7 @@ pub fn update_document(
         .clone()
         .try_into()
         .map_err(|error| invalid_request(format!("patched sidecar is not valid: {error}")))?;
-    enforce_document_schema(&Vault::open(root)?, &patched)?;
+    enforce_document_schema(&vault, &patched)?;
 
     write_sidecar_table(&record.toml_path, &sidecar)?;
     rebuild::rebuild_indexes(root)?;
@@ -280,31 +282,7 @@ pub fn add_edge(
     target: &CanonicalId,
 ) -> Result<()> {
     let root = root.as_ref();
-    let vault = Vault::open(root)?;
-
-    // Validating one edge needs only the ontology and the two endpoints — not a
-    // full vault walk + graph build.
-    let ontology = Ontology::load(root)?;
-    // Subtypes satisfy an edge rule written for their supertype, so the single
-    // edge check needs the registry just as the full walk does.
-    let type_registry = crate::types::TypeRegistry::load(&vault)?;
-    let edge = ontology
-        .edges
-        .get(predicate)
-        .ok_or_else(|| invalid_request(format!("unknown predicate `{predicate}`")))?;
-    let source_record = vault.load_document_record(source)?;
-    if !ontology::type_allowed(&edge.from, &source_record.metadata.r#type, &type_registry) {
-        return Err(invalid_request(format!(
-            "type `{}` cannot be the source of `{predicate}`",
-            source_record.metadata.r#type
-        )));
-    }
-    let target_type = vault.load_document_record(target)?.metadata.r#type;
-    if !ontology::type_allowed(&edge.to, &target_type, &type_registry) {
-        return Err(invalid_request(format!(
-            "type `{target_type}` cannot be the target of `{predicate}`"
-        )));
-    }
+    let source_record = validated_edge(root, source, predicate, std::slice::from_ref(target))?;
 
     let target_id = target.as_str().to_owned();
     edit_edges(root, &source_record, |edges| {
@@ -364,29 +342,7 @@ pub fn replace_edges_for_predicate(
     targets: &[CanonicalId],
 ) -> Result<()> {
     let root = root.as_ref();
-    let vault = Vault::open(root)?;
-    let ontology = Ontology::load(root)?;
-    let type_registry = crate::types::TypeRegistry::load(&vault)?;
-    let edge = ontology
-        .edges
-        .get(predicate)
-        .ok_or_else(|| invalid_request(format!("unknown predicate `{predicate}`")))?;
-
-    let source_record = vault.load_document_record(source)?;
-    if !ontology::type_allowed(&edge.from, &source_record.metadata.r#type, &type_registry) {
-        return Err(invalid_request(format!(
-            "type `{}` cannot be the source of `{predicate}`",
-            source_record.metadata.r#type
-        )));
-    }
-    for target in targets {
-        let target_type = vault.load_document_record(target)?.metadata.r#type;
-        if !ontology::type_allowed(&edge.to, &target_type, &type_registry) {
-            return Err(invalid_request(format!(
-                "type `{target_type}` cannot be the target of `{predicate}`"
-            )));
-        }
-    }
+    let source_record = validated_edge(root, source, predicate, targets)?;
 
     // Written in the order given, deduplicated: an edge is identified by
     // (source, predicate, target), so a repeat in the request is one edge.
@@ -496,6 +452,48 @@ fn edit_edges(
 
 /// Reject a malformed timestamp at the write boundary, so `validate` never has
 /// to report one kataan itself wrote.
+/// Check that `predicate` exists and that the source and every target are types
+/// the ontology permits at those ends. Returns the source's record, which every
+/// caller needs next.
+///
+/// Shared so that `add_edge` and `replace_edges_for_predicate` cannot drift on
+/// what a legal edge is: a rule added to one would otherwise silently not apply
+/// to the other, and both write the same edges.
+fn validated_edge(
+    root: &Path,
+    source: &CanonicalId,
+    predicate: &str,
+    targets: &[CanonicalId],
+) -> Result<crate::vault::DocumentRecord> {
+    let vault = Vault::open(root)?;
+    // Validating an edge needs only the ontology and the endpoints — not a full
+    // vault walk + graph build. Subtypes satisfy a rule written for their
+    // supertype, so it needs the registry just as the full walk does.
+    let ontology = Ontology::load(root)?;
+    let type_registry = crate::types::TypeRegistry::load(&vault)?;
+    let edge = ontology
+        .edges
+        .get(predicate)
+        .ok_or_else(|| invalid_request(format!("unknown predicate `{predicate}`")))?;
+
+    let source_record = vault.load_document_record(source)?;
+    if !ontology::type_allowed(&edge.from, &source_record.metadata.r#type, &type_registry) {
+        return Err(invalid_request(format!(
+            "type `{}` cannot be the source of `{predicate}`",
+            source_record.metadata.r#type
+        )));
+    }
+    for target in targets {
+        let target_type = vault.load_document_record(target)?.metadata.r#type;
+        if !ontology::type_allowed(&edge.to, &target_type, &type_registry) {
+            return Err(invalid_request(format!(
+                "type `{target_type}` cannot be the target of `{predicate}`"
+            )));
+        }
+    }
+    Ok(source_record)
+}
+
 /// Refuse a write that `kataan validate` would reject on its next run.
 ///
 /// This module's stated invariant is that a malformed value never reaches disk,
@@ -559,10 +557,10 @@ fn enforce_document_schema(
 /// reference — the only thing that makes the document index necessary.
 fn declares_a_reference(ontology: &Ontology, type_name: &str) -> bool {
     ontology.nodes.get(type_name).is_some_and(|schema| {
-        schema.fields.values().any(|field| {
-            field.r#type == crate::ontology::FieldType::Reference
-                || field.items == Some(crate::ontology::FieldType::Reference)
-        })
+        schema
+            .fields
+            .values()
+            .any(FieldSchema::declares_a_reference)
     })
 }
 
