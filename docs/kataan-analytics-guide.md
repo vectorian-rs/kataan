@@ -292,11 +292,27 @@ before `from`:
 period = { type = "interval" }
 ```
 
-What it cannot do is reach inside a table it has no type for. Declaring
-`rate_card = { type = "table" }` requires the table to exist and be a table, but
-nothing constrains `rate_card.effective_date`. Model dated things as `interval`
-and they are validated; a lot of vault dates currently sit inside untyped tables
-where they are not.
+A table's interior is declarable too, which matters because that is where most
+of a vault's ad hoc dates live:
+
+```toml
+[nodes.company.fields.rate_card]
+type = "table"
+required = ["currency"]
+
+[nodes.company.fields.rate_card.fields]
+currency = { type = "string" }
+effective_date = { type = "date" }
+```
+
+The same `fields` block describes each element of an array of tables (`type =
+"array"`, `items = "table"`), so a list of records is declarable without a
+second syntax. Nesting is capped at 8 levels.
+
+Undeclared keys inside a table are left alone, exactly as undeclared top-level
+sidecar keys are: a schema says what it knows about, not what is forbidden. A
+nested reference carries its own `to`, and diagnostics name the dotted path
+(`rate_card.approved_by`) rather than just the top-level key.
 
 **`NodeSchema` has no cross-field validation.** `required` is an unconditional
 list and no rule spans two fields, so invariants like "an open interval must

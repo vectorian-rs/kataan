@@ -832,3 +832,80 @@ fn replace_edges_for_predicate_validates_incoming_targets() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Nested constraints must hold at the write boundary too, not only in
+/// `validate` — the whole point of enforcing schemas on write is that nothing
+/// invalid reaches disk.
+#[test]
+fn create_document_enforces_nested_table_fields() {
+    let root = temp_vault("create-nested");
+    with_note_schema(
+        &root,
+        r#"
+[nodes.note.fields.rate_card]
+type = "table"
+required = ["currency"]
+
+[nodes.note.fields.rate_card.fields]
+currency = { type = "string" }
+effective_date = { type = "date" }
+"#,
+    );
+
+    let bad_date = create_document(
+        &root,
+        NewDocument {
+            extra: BTreeMap::from([(
+                "rate_card".to_owned(),
+                toml::Value::Table(toml::Table::from_iter([
+                    ("currency".to_owned(), toml::Value::String("EUR".to_owned())),
+                    (
+                        "effective_date".to_owned(),
+                        toml::Value::String("pending approval".to_owned()),
+                    ),
+                ])),
+            )]),
+            ..note("Bad Nested", "body")
+        },
+    );
+    assert!(bad_date.is_err(), "a date inside a table must be checked");
+
+    let missing_required = create_document(
+        &root,
+        NewDocument {
+            extra: BTreeMap::from([(
+                "rate_card".to_owned(),
+                toml::Value::Table(toml::Table::from_iter([(
+                    "effective_date".to_owned(),
+                    toml::Value::String("2026-08-29".to_owned()),
+                )])),
+            )]),
+            ..note("Missing Nested", "body")
+        },
+    );
+    assert!(
+        missing_required.is_err(),
+        "`currency` is required inside the table"
+    );
+
+    create_document(
+        &root,
+        NewDocument {
+            extra: BTreeMap::from([(
+                "rate_card".to_owned(),
+                toml::Value::Table(toml::Table::from_iter([
+                    ("currency".to_owned(), toml::Value::String("EUR".to_owned())),
+                    (
+                        "effective_date".to_owned(),
+                        toml::Value::String("2026-08-29".to_owned()),
+                    ),
+                ])),
+            )]),
+            ..note("Good Nested", "body")
+        },
+    )
+    .unwrap();
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+    std::fs::remove_dir_all(root).unwrap();
+}

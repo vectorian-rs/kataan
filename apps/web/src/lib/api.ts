@@ -13,6 +13,10 @@ export type FieldSchema = {
   items?: string | null;
   to?: string[];
   description?: string | null;
+  /// The interior of a table, or of each element of an array of tables.
+  fields?: Record<string, FieldSchema>;
+  /// Keys the table must carry.
+  required?: string[];
 };
 
 export type OntologyType = {

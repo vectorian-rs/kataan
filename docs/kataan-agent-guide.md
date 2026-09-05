@@ -489,6 +489,9 @@ Types: `string`, `integer`, `number`, `boolean`, `date`, `instant`, `interval`,
 
 - `date` accepts either RFC 3339 form; `instant` requires the `date-time` one.
 - `interval` is a table with `from` and an optional `to`. **Leaving `to` out is
+- `table` may declare its interior with a nested `fields` block, and its own
+  `required`. The same block describes each element of an `array` whose `items`
+  is `table`. Undeclared keys inside are left alone.
   legal** — an open interval means "still true", not missing data.
 - `reference` is another document's canonical id, optionally restricted by `to`.
 

@@ -107,17 +107,40 @@ function describeCount(type: OntologyType) {
   return `${documents} ${noun} (${folders} folder ${folders === 1 ? 'index' : 'indexes'})`;
 }
 
+/// Flatten a field tree into rows, so a table's interior is visible rather than
+/// collapsing to the word "table". Depth drives indentation; the name carries
+/// the dotted path so a row is unambiguous read on its own.
+function fieldRows(
+  fields: [string, FieldSchema][],
+  required: string[],
+  prefix = '',
+  depth = 0,
+): { path: string; field: FieldSchema; required: boolean; depth: number }[] {
+  return fields.flatMap(([name, field]) => {
+    const path = prefix ? `${prefix}.${name}` : name;
+    const row = { path, field, required: required.includes(name), depth };
+    const nested = Object.entries(field.fields ?? {});
+    return nested.length === 0
+      ? [row]
+      : [row, ...fieldRows(nested, field.required ?? [], path, depth + 1)];
+  });
+}
+
 function fieldTable(fields: [string, FieldSchema][], required: string[]) {
   const table = document.createElement('table');
   table.className = 'ontology-table';
   table.append(
     headerRow(['Field', 'Type', 'Notes']),
-    ...fields.map(([name, field]) => {
+    ...fieldRows(fields, required).map(({ path, field, required: isRequired, depth }) => {
       const row = document.createElement('tr');
-      const isRequired = required.includes(name);
+      const name = path.split('.').pop() ?? path;
 
       const nameCell = document.createElement('td');
-      nameCell.textContent = name;
+      nameCell.textContent = depth === 0 ? name : path;
+      if (depth > 0) {
+        nameCell.style.setProperty('--depth', String(depth));
+        nameCell.classList.add('ontology-nested-field');
+      }
       if (isRequired) {
         const marker = document.createElement('span');
         marker.className = 'ontology-required';

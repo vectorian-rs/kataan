@@ -152,3 +152,10 @@
 .ontology-connection li {
   margin-block-start: var(--size-1);
 }
+
+/* A nested field is indented under its table and shown by dotted path, so a row
+   is unambiguous read on its own. */
+.ontology-nested-field {
+  padding-inline-start: calc(var(--size-3) + var(--depth, 0) * var(--size-4));
+  color: var(--text-2);
+}

@@ -40,7 +40,54 @@ pub struct FieldSchema {
     #[serde(default)]
     pub to: Vec<String>,
     pub description: Option<String>,
+    /// The interior of a table: what its keys must be.
+    ///
+    /// Applies to a field declared `table`, and to each element of an `array`
+    /// whose `items` is `table` — which is what makes an array of records
+    /// describable without a second recursive type.
+    ///
+    /// ```toml
+    /// [nodes.company.fields.rate_card]
+    /// type = "table"
+    /// required = ["currency"]
+    ///
+    /// [nodes.company.fields.rate_card.fields]
+    /// currency = { type = "string" }
+    /// effective_date = { type = "date" }
+    /// ```
+    ///
+    /// Undeclared keys inside the table are left alone, exactly as undeclared
+    /// top-level sidecar keys are.
+    #[serde(default)]
+    pub fields: BTreeMap<String, FieldSchema>,
+    /// Keys the table must carry. Only meaningful alongside `fields`.
+    #[serde(default)]
+    pub required: Vec<String>,
 }
+
+/// A reference found while checking a value, carried back with the rule that
+/// applies to it.
+///
+/// The `to` list belongs to the schema that declared the reference, which is
+/// not necessarily the top-level field: `rate_card.approved_by` has its own
+/// permitted types. Returning the path too means a diagnostic can name where
+/// the reference actually lives.
+#[derive(Debug, Clone)]
+pub struct FoundReference {
+    /// Dotted path from the top-level field, e.g. `rate_card.approved_by`.
+    pub path: String,
+    pub target: String,
+    /// Permitted target types; empty means any.
+    pub to: Vec<String>,
+}
+
+/// How deep `fields` may nest before validation refuses to recurse further.
+///
+/// `ontology.toml` is vault-authored and vaults are shared as git repositories,
+/// so the nesting depth is untrusted input. Recursing on it without a bound
+/// would let a hand-written ontology abort the process on stack overflow rather
+/// than return a diagnostic.
+const MAX_FIELD_NESTING: usize = 8;
 
 /// The type vocabulary kataan ships. The vault composes these; kataan knows
 /// what an interval is, not that employment is one.
@@ -300,31 +347,49 @@ impl FieldSchema {
     /// Check one value against this field's declared type. An empty `Vec` means
     /// the value is fine; entries are reference targets whose existence the
     /// caller must confirm, since that needs the whole document set.
+    /// Check one value against this field's declared type.
+    ///
+    /// `field` is the dotted path used in diagnostics, so nested problems name
+    /// where they are (`rate_card.effective_date`) rather than just the
+    /// top-level key.
     pub fn check(
         &self,
         field: &str,
         value: &toml::Value,
-    ) -> std::result::Result<Vec<String>, Diagnostic> {
+    ) -> std::result::Result<Vec<FoundReference>, Diagnostic> {
+        self.check_at_depth(field, value, 0)
+    }
+
+    fn check_at_depth(
+        &self,
+        field: &str,
+        value: &toml::Value,
+        depth: usize,
+    ) -> std::result::Result<Vec<FoundReference>, Diagnostic> {
         let mismatch = |expected: &str| {
             Diagnostic::error(
                 codes::FIELD_TYPE_MISMATCH,
                 format!("`{field}` must be {expected}, found {}", value.type_str()),
             )
         };
-        let require = |ok: bool, expected: &str| -> std::result::Result<Vec<String>, Diagnostic> {
-            if ok {
-                Ok(Vec::new())
-            } else {
-                Err(mismatch(expected))
-            }
-        };
+        let require =
+            |ok: bool, expected: &str| -> std::result::Result<Vec<FoundReference>, Diagnostic> {
+                if ok {
+                    Ok(Vec::new())
+                } else {
+                    Err(mismatch(expected))
+                }
+            };
 
         Ok(match self.r#type {
             FieldType::String => require(value.is_str(), "a string")?,
             FieldType::Integer => require(value.is_integer(), "an integer")?,
             FieldType::Number => require(value.is_float() || value.is_integer(), "a number")?,
             FieldType::Boolean => require(value.is_bool(), "a boolean")?,
-            FieldType::Table => require(value.is_table(), "a table")?,
+            FieldType::Table => {
+                let table = value.as_table().ok_or_else(|| mismatch("a table"))?;
+                self.check_interior(field, table, depth)?
+            }
             FieldType::Date | FieldType::Instant => {
                 let raw = value
                     .as_str()
@@ -350,29 +415,91 @@ impl FieldSchema {
                 Vec::new()
             }
             FieldType::Reference => {
-                vec![value
-                    .as_str()
-                    .ok_or_else(|| mismatch("a document id"))?
-                    .to_owned()]
+                vec![FoundReference {
+                    path: field.to_owned(),
+                    target: value
+                        .as_str()
+                        .ok_or_else(|| mismatch("a document id"))?
+                        .to_owned(),
+                    to: self.to.clone(),
+                }]
             }
             FieldType::Array => {
                 let items = value.as_array().ok_or_else(|| mismatch("an array"))?;
                 let Some(item_type) = self.items else {
                     return Ok(Vec::new());
                 };
+                // An array's `fields` describe each *element*, so an array of
+                // tables is declarable without a second recursive type.
                 let element = FieldSchema {
                     r#type: item_type,
                     items: None,
                     to: self.to.clone(),
                     description: None,
+                    fields: self.fields.clone(),
+                    required: self.required.clone(),
                 };
                 let mut references = Vec::new();
-                for item in items {
-                    references.extend(element.check(field, item)?);
+                for (index, item) in items.iter().enumerate() {
+                    references.extend(element.check_at_depth(
+                        &format!("{field}[{index}]"),
+                        item,
+                        depth,
+                    )?);
                 }
                 references
             }
         })
+    }
+}
+
+impl FieldSchema {
+    /// Validate the inside of a table against this schema's `fields` and
+    /// `required`.
+    ///
+    /// Undeclared keys are left alone, matching how undeclared top-level
+    /// sidecar keys are treated: a schema says what it knows about, not what is
+    /// forbidden.
+    fn check_interior(
+        &self,
+        path: &str,
+        table: &toml::Table,
+        depth: usize,
+    ) -> std::result::Result<Vec<FoundReference>, Diagnostic> {
+        if self.fields.is_empty() && self.required.is_empty() {
+            return Ok(Vec::new());
+        }
+        if depth >= MAX_FIELD_NESTING {
+            return Err(Diagnostic::error(
+                codes::INVALID_ONTOLOGY_ENTRY,
+                format!(
+                    "`{path}` nests deeper than {MAX_FIELD_NESTING} levels; \
+                     the schema is not applied below that"
+                ),
+            ));
+        }
+
+        for name in &self.required {
+            if !table.contains_key(name) {
+                return Err(Diagnostic::error(
+                    codes::MISSING_REQUIRED_FIELD,
+                    format!("`{path}` requires `{name}`"),
+                ));
+            }
+        }
+
+        let mut references = Vec::new();
+        for (name, schema) in &self.fields {
+            let Some(value) = table.get(name) else {
+                continue;
+            };
+            references.extend(schema.check_at_depth(
+                &format!("{path}.{name}"),
+                value,
+                depth + 1,
+            )?);
+        }
+        Ok(references)
     }
 }
 
@@ -506,22 +633,22 @@ pub fn validate_node_fields(
         };
         match field_schema.check(field, value) {
             Ok(references) => {
-                for target in references {
+                for reference in references {
+                    // The rule travels with the reference: a nested field has
+                    // its own `to`, which is not the parent's.
+                    let FoundReference { path, target, to } = reference;
                     let Some(target_type) = known_document_types.get(&target) else {
                         diagnostics.push(Diagnostic::error(
                             codes::UNRESOLVED_FIELD_REFERENCE,
-                            format!("`{field}` references `{target}`, which does not exist"),
+                            format!("`{path}` references `{target}`, which does not exist"),
                         ));
                         continue;
                     };
-                    if !field_schema.to.is_empty()
-                        && !type_allowed(&field_schema.to, target_type, registry)
-                    {
+                    if !to.is_empty() && !type_allowed(&to, target_type, registry) {
                         diagnostics.push(Diagnostic::error(
                             codes::FIELD_TYPE_MISMATCH,
                             format!(
-                                "`{field}` references `{target}` of type `{target_type}`, which is not among {:?}",
-                                field_schema.to
+                                "`{path}` references `{target}` of type `{target_type}`, which is not among {to:?}"
                             ),
                         ));
                     }
