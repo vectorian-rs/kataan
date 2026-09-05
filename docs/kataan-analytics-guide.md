@@ -350,8 +350,14 @@ returns BM25 hits. For "every document of type X", use `documents()` — that is
 what it is for. Query text that tokenises to nothing (`C++`, `&&`, an emoji)
 matches nothing rather than returning the whole vault.
 
-**Facet counts in search results reflect the returned page**, not the full match
-set, so they change as you page. Do not build a facet sidebar on them yet.
+**Facet counts describe the whole match set**, not the page you asked for, so
+they do not move as you page and a facet with no hit on the current page still
+appears. They are ordered by frequency, most common first, so slicing the top
+*n* gives the most useful ones.
+
+They also honour every other filter: `type=person` returns the facets of the
+people that matched, not of the vault. A `search` with `limit=5` and one with
+`limit=100` return identical `facets`.
 
 **Writes are available on HTTP and MCP alike.** Documents via
 `POST /api/documents` and `PATCH /api/documents/*id`; edges via `POST`,

@@ -21,6 +21,11 @@ const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "kataan-mcp";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Protocol revisions this server implements. An `initialize` naming one of
+/// these is answered with it; anything else is answered with the default, and
+/// the client decides whether it can proceed.
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+
 #[derive(Debug, Parser)]
 #[command(name = "kataan-mcp")]
 #[command(about = "MCP server for a kataan vault (read + write over stdio)")]
@@ -98,9 +103,15 @@ fn handle_message(vault: &std::path::Path, message: &Value) -> Option<Value> {
 
     match method {
         "initialize" => {
-            let protocol_version = params
-                .get("protocolVersion")
-                .and_then(Value::as_str)
+            // Reply with a version we actually implement, not whatever was
+            // asked for. Echoing the request claimed fluency in every revision
+            // of the protocol — including ones whose batching and content
+            // rules this server does not follow — and left the client no way to
+            // detect the mismatch and disconnect, which is what the handshake
+            // is for.
+            let requested = params.get("protocolVersion").and_then(Value::as_str);
+            let protocol_version = requested
+                .filter(|version| SUPPORTED_PROTOCOL_VERSIONS.contains(version))
                 .unwrap_or(DEFAULT_PROTOCOL_VERSION);
             Some(ok_response(
                 id?,
@@ -186,6 +197,27 @@ mod tests {
         assert_eq!(result["capabilities"]["tools"], json!({}));
         assert_eq!(result["serverInfo"]["name"], SERVER_NAME);
         assert_eq!(response["id"], 1);
+    }
+
+    /// The handshake exists so a client can detect a mismatch and disconnect.
+    /// Echoing whatever was asked for claimed fluency in every revision of the
+    /// protocol, including ones this server does not implement.
+    #[test]
+    fn initialize_answers_with_a_version_it_actually_supports() {
+        for supported in SUPPORTED_PROTOCOL_VERSIONS {
+            let message = request(1, "initialize", json!({ "protocolVersion": supported }));
+            let response = handle_message(no_vault(), &message).unwrap();
+            assert_eq!(response["result"]["protocolVersion"], *supported);
+        }
+
+        for unsupported in ["1999-01-01", "2099-12-31", "nonsense"] {
+            let message = request(1, "initialize", json!({ "protocolVersion": unsupported }));
+            let response = handle_message(no_vault(), &message).unwrap();
+            assert_eq!(
+                response["result"]["protocolVersion"], DEFAULT_PROTOCOL_VERSION,
+                "`{unsupported}` was echoed back as though it were supported"
+            );
+        }
     }
 
     #[test]

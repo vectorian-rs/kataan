@@ -8,7 +8,7 @@ use kataan_core::{
     title::title_from_id,
     vault::{DocumentRecord, LoadedVault},
 };
-use rusqlite::{named_params, params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -46,7 +46,7 @@ pub struct SearchResult {
     pub score: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SearchFacetCount {
     pub facet: String,
     pub count: usize,
@@ -290,10 +290,22 @@ impl SearchIndex {
             results.push(row.into_result(facets));
         }
 
+        // Counted over the whole filtered match set, not the page just
+        // returned. Counting the page made every number a function of `limit`
+        // and hid any facet with no hit on the current page — so the one thing
+        // facets are for, seeing what is available to narrow by, did not work.
+        let facets = match (&fts_query, raw_query.is_empty()) {
+            (Some(fts_query), _) => facet_counts_fts(&connection, fts_query, &filters)?,
+            (None, true) => facet_counts_filtered(&connection, &filters)?,
+            // Query text that tokenised to nothing matches nothing, so there is
+            // nothing to narrow.
+            (None, false) => Vec::new(),
+        };
+
         Ok(SearchResponse {
             query: raw_query,
             mode: "keyword".to_owned(),
-            facets: facet_counts(&results),
+            facets,
             results,
         })
     }
@@ -459,6 +471,22 @@ struct SearchFilters<'a> {
 }
 
 impl<'a> SearchFilters<'a> {
+    /// The bindings for [`SEARCH_FILTER_SQL`], in one place.
+    ///
+    /// Four queries embed that clause — the two result queries and the two
+    /// facet-count queries — and each was restating the same five bindings.
+    /// Adding a filter meant editing five places, four of them silently
+    /// optional.
+    fn params(&self) -> Vec<(&'static str, &dyn rusqlite::ToSql)> {
+        vec![
+            (":kind", &self.kind),
+            (":type_filter", &self.type_filter),
+            (":status", &self.status),
+            (":facet", &self.facet),
+            (":path_prefix", &self.path_prefix),
+        ]
+    }
+
     fn from_query(query: &'a SearchQuery) -> Self {
         Self {
             kind: blank_as_none(query.kind.as_deref()),
@@ -613,19 +641,13 @@ fn search_fts(
     );
     let mut statement = connection.prepare(&sql)?;
 
-    let rows = statement.query_map(
-        named_params! {
-            ":fts_query": fts_query,
-            ":kind": filters.kind,
-            ":type_filter": filters.type_filter,
-            ":status": filters.status,
-            ":facet": filters.facet,
-            ":path_prefix": filters.path_prefix,
-            ":limit": limit as i64,
-            ":offset": offset as i64,
-        },
-        search_row_from_fts,
-    )?;
+    let (limit, offset) = (limit as i64, offset as i64);
+    let mut params = filters.params();
+    params.push((":fts_query", &fts_query));
+    params.push((":limit", &limit));
+    params.push((":offset", &offset));
+
+    let rows = statement.query_map(params.as_slice(), search_row_from_fts)?;
 
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
@@ -655,18 +677,12 @@ fn search_filtered(
     );
     let mut statement = connection.prepare(&sql)?;
 
-    let rows = statement.query_map(
-        named_params! {
-            ":kind": filters.kind,
-            ":type_filter": filters.type_filter,
-            ":status": filters.status,
-            ":facet": filters.facet,
-            ":path_prefix": filters.path_prefix,
-            ":limit": limit as i64,
-            ":offset": offset as i64,
-        },
-        search_row_without_snippet,
-    )?;
+    let (limit, offset) = (limit as i64, offset as i64);
+    let mut params = filters.params();
+    params.push((":limit", &limit));
+    params.push((":offset", &offset));
+
+    let rows = statement.query_map(params.as_slice(), search_row_without_snippet)?;
 
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(Into::into)
@@ -706,17 +722,57 @@ fn facets_for_item(connection: &Connection, item_key: &str) -> Result<Vec<String
     Ok(facets)
 }
 
-fn facet_counts(results: &[SearchResult]) -> Vec<SearchFacetCount> {
-    let mut counts = BTreeMap::<String, usize>::new();
-    for result in results {
-        for facet in &result.facets {
-            *counts.entry(facet.clone()).or_default() += 1;
-        }
-    }
-    counts
-        .into_iter()
-        .map(|(facet, count)| SearchFacetCount { facet, count })
-        .collect()
+/// Facet counts over every document the query matches, for the keyword path.
+fn facet_counts_fts(
+    connection: &Connection,
+    fts_query: &str,
+    filters: &SearchFilters<'_>,
+) -> Result<Vec<SearchFacetCount>> {
+    let sql = format!(
+        "SELECT f.facet, COUNT(*) AS hits
+         FROM search_fts
+         JOIN search_items i ON i.item_key = search_fts.item_key
+         JOIN search_facets f ON f.item_key = i.item_key
+         WHERE search_fts MATCH :fts_query
+{SEARCH_FILTER_SQL}
+         GROUP BY f.facet
+         ORDER BY hits DESC, f.facet ASC"
+    );
+    let mut params = filters.params();
+    params.push((":fts_query", &fts_query));
+    collect_facet_counts(connection, &sql, params.as_slice())
+}
+
+/// The same, for a filtered listing with no query text.
+fn facet_counts_filtered(
+    connection: &Connection,
+    filters: &SearchFilters<'_>,
+) -> Result<Vec<SearchFacetCount>> {
+    let sql = format!(
+        "SELECT f.facet, COUNT(*) AS hits
+         FROM search_items i
+         JOIN search_facets f ON f.item_key = i.item_key
+         WHERE 1 = 1
+{SEARCH_FILTER_SQL}
+         GROUP BY f.facet
+         ORDER BY hits DESC, f.facet ASC"
+    );
+    collect_facet_counts(connection, &sql, filters.params().as_slice())
+}
+
+fn collect_facet_counts(
+    connection: &Connection,
+    sql: &str,
+    params: &[(&str, &dyn rusqlite::ToSql)],
+) -> Result<Vec<SearchFacetCount>> {
+    let mut statement = connection.prepare(sql)?;
+    let rows = statement.query_map(params, |row| {
+        Ok(SearchFacetCount {
+            facet: row.get(0)?,
+            count: row.get::<_, i64>(1)? as usize,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn count_by_kind(connection: &Connection) -> Result<BTreeMap<String, usize>> {

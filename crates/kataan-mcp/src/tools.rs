@@ -64,7 +64,7 @@ pub fn list() -> Value {
                     "status": { "type": "string", "description": "Restrict to a status." },
                     "facet": { "type": "string", "description": "Restrict to a facet." },
                     "path_prefix": { "type": "string", "description": "Restrict to ids under this folder prefix." },
-                    "limit": { "type": "integer", "minimum": 1 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Results per page, default 20. Values above 100 are clamped to 100. `facets` always count the whole match set, not this page, so they do not change as you page." },
                     "offset": { "type": "integer", "minimum": 0 }
                 }
             }),
@@ -93,7 +93,7 @@ pub fn list() -> Value {
                     "order": { "type": "string", "enum": ["id", "occurred_at", "created_at", "updated_at"], "description": "Sort key, default `id`. Ties always break on id, so paging is stable. Documents missing the chosen timestamp sort last in both directions." },
                     "desc": { "type": "boolean", "description": "Reverse the order. `order: updated_at` with this set answers \"what changed most recently\"." },
                     "include": { "type": "string", "enum": ["metadata", "full", "markdown"], "description": "`metadata` (default) is the summary; `full` adds each document's declared fields, timestamps and edges at no extra cost; `markdown` adds the body, which is one file read per document." },
-                    "limit": { "type": "integer", "minimum": 1 },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Page size. Above 1000 is an error, not a clamp; omitting it errors rather than truncating when more documents match than the default." },
                     "offset": { "type": "integer", "minimum": 0 }
                 }
             }),

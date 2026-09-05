@@ -115,7 +115,6 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         offset: usize,
     },
-    #[command(alias = "quide")]
     Guide,
 }
 
@@ -179,9 +178,25 @@ fn print_line(text: &str) -> Result<()> {
     }
 }
 
-fn main() -> Result<()> {
-    init_tracing();
+/// Exit code for a command that could not run at all — a missing path, an
+/// unreadable vault, an I/O failure.
+///
+/// Distinct from the `1` that `validate` uses for "ran fine, found problems".
+/// Both were `1`, so a CI script could not tell "this vault has diagnostics"
+/// from "you gave me the wrong path" without parsing stderr. The split follows
+/// the usual linter convention, and leaves the common scripted case — a
+/// non-zero exit meaning the vault is invalid — on the code it already had.
+const EXIT_OPERATIONAL_FAILURE: i32 = 2;
 
+fn main() {
+    init_tracing();
+    if let Err(error) = run() {
+        eprintln!("error: {error:#}");
+        std::process::exit(EXIT_OPERATIONAL_FAILURE);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {

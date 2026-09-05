@@ -357,3 +357,59 @@ fn hits(index: &SearchIndex, query: &str) -> Vec<String> {
         .filter_map(|result| result.id)
         .collect()
 }
+
+/// Facet counts describe the match set, not the page.
+///
+/// Counting the returned rows made every number a function of `limit` and hid
+/// any facet with no hit on the current page — so a sidebar built on them both
+/// under-reported and omitted the options it exists to offer.
+#[test]
+fn facet_counts_cover_the_whole_match_set_not_the_page() {
+    let root = temp_dir("facet-counts");
+    kataan_core::init::init_vault(&root, "Facets").unwrap();
+    for index in 0..12 {
+        write_note(
+            &root,
+            &format!("note-{index}"),
+            "# Note\n\nshared searchable body",
+            "type = \"note\"\nmarkdown = \"note-INDEX.md\"\nlabels = [\"shared\"]\n"
+                .replace("INDEX", &index.to_string())
+                .as_str(),
+        );
+    }
+    let loaded = LoadedVault::load(&root).unwrap();
+    let index = SearchIndex::open(root.join("search.sqlite")).unwrap();
+    index.reindex_loaded(&loaded).unwrap();
+
+    let count_of = |limit: usize| {
+        index
+            .search(&SearchQuery {
+                q: Some("searchable".to_owned()),
+                limit: Some(limit),
+                ..Default::default()
+            })
+            .unwrap()
+    };
+
+    let small = count_of(3);
+    let large = count_of(100);
+
+    assert_eq!(small.results.len(), 3, "the page is still bounded by limit");
+    assert!(large.results.len() > 3);
+    assert_eq!(
+        small.facets, large.facets,
+        "facet counts changed with the page size"
+    );
+
+    let shared = small
+        .facets
+        .iter()
+        .find(|facet| facet.facet == "shared")
+        .expect("the shared label is a facet");
+    assert_eq!(
+        shared.count, 12,
+        "the count should be every match, not the three on this page"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
