@@ -7,6 +7,10 @@ on:
 
 # The job installs bun packages and builds ~500 crates, any of which can run
 # arbitrary build scripts. It needs nothing but read access.
+#
+# Actions are pinned to commit SHAs for the same reason: a tag is mutable, so
+# `@v4` is a promise the author can rewrite after review. The trailing comment
+# records which release each SHA was.
 permissions:
   contents: read
 
@@ -20,16 +24,23 @@ jobs:
     name: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Installs the toolchains pinned in mise.toml (bun + rust).
       - name: Set up mise
-        uses: jdx/mise-action@v4
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
 
       - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
 
       # Runs the same gate as `mise run check` locally: cargo fmt/test/clippy,
       # web prettier format check, astro type check, and web build.
       - name: Run checks
         run: mise run check
+
+      # The gate above builds only in debug, where `rust-embed` reads
+      # `apps/web/dist` from disk. Release bakes it in, so a `dist` that is
+      # empty or missing compiles clean and 404s every page — with CI green.
+      # This boots the release binary and asserts it serves the shell.
+      - name: Release build serves the embedded UI
+        run: mise run check-release

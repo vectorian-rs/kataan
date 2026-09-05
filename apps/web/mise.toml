@@ -5,24 +5,20 @@ bun = "1.3.10"
 KATAAN_WEB_PORT = "3003"
 KATAAN_API_PROXY_TARGET = "http://127.0.0.1:3001"
 
-[tasks.install]
-description = "Install web dependencies"
-run = "bun install"
-
 [tasks.dev]
 description = "Run the Astro web app with hot reload"
-run = "bun dev"
+run = "bun run dev"
 
 [tasks.dev-install]
 description = "Install dependencies and run the Astro web app with hot reload"
 run = [
   "bun install",
-  "bun dev",
+  "bun run dev",
 ]
 
 [tasks.check-watch]
 description = "Run Astro type checks in watch mode"
-run = "bun check --watch"
+run = "bun run check --watch"
 
 [tasks.clear]
 description = "Stop processes using the default Astro dev port"
@@ -32,12 +28,5 @@ run = "lsof -ti :${KATAAN_WEB_PORT:-3000} | xargs -r kill"
 description = "Install dependencies and build the Astro web app"
 run = [
   "bun install",
-  "bun build",
-]
-
-[tasks.check]
-description = "Install dependencies and run Astro type checks"
-run = [
-  "bun install",
-  "bun check",
+  "bun run build",
 ]

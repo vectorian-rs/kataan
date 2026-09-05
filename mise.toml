@@ -54,7 +54,7 @@ description = "Build the web UI, then run all Rust tests"
 run = [
   "bun install",
   "bun --filter @kataan/web build",
-  "cargo test",
+  "cargo test --locked",
 ]
 
 [tasks.build-release]
@@ -62,7 +62,7 @@ description = "Build the web UI, then all Rust binaries in release mode"
 run = [
   "bun install",
   "bun --filter @kataan/web build",
-  "cargo build --workspace --release --bins",
+  "cargo build --locked --workspace --release --bins",
 ]
 
 [tasks.build-app]
@@ -70,7 +70,7 @@ description = "Build the web UI and the single kataan-server binary"
 run = [
   "bun install",
   "bun --filter @kataan/web build",
-  "cargo build -p kataan-server --release",
+  "cargo build --locked -p kataan-server --release",
 ]
 
 [tasks.install-server]
@@ -78,7 +78,20 @@ description = "Build the UI and install kataan-server into ~/.cargo/bin"
 run = [
   "bun install",
   "bun --filter @kataan/web build",
-  "cargo install --path crates/kataan-server --force",
+  "cargo install --locked --path crates/kataan-server --force",
+]
+
+[tasks.check-release]
+description = "Prove the release binary actually carries the web UI"
+# `rust-embed` reads `apps/web/dist` from disk in debug and bakes it in with
+# `include_bytes!` in release, so the two profiles can disagree. An empty or
+# missing `dist` still *compiles* clean in release — it just 404s every page —
+# which is why this asserts the binary serves the shell rather than only that it
+# builds. The integration test boots the real binary and checks for `<html>`.
+run = [
+  "bun install",
+  "bun --filter @kataan/web build",
+  "cargo test --locked -p kataan-server --release --test server",
 ]
 
 [tasks.check]
@@ -87,12 +100,12 @@ run = [
   "bun install",
   "bun --filter @kataan/web build",
   "cargo fmt --check",
-  "cargo test",
-  "cargo clippy --all-targets -- -D warnings",
+  "cargo test --locked",
+  "cargo clippy --locked --all-targets -- -D warnings",
   # The API-only build has its own `#[cfg]` paths (the `/` explainer, the
   # startup hint). Nothing else compiles them, so they rot silently.
-  "cargo clippy -p kataan-server --no-default-features --all-targets -- -D warnings",
-  "cargo test -p kataan-server --no-default-features",
+  "cargo clippy --locked -p kataan-server --no-default-features --all-targets -- -D warnings",
+  "cargo test --locked -p kataan-server --no-default-features",
   "bun --filter @kataan/web format:check",
   "bun --filter @kataan/web check",
 ]
