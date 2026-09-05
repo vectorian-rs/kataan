@@ -136,3 +136,8 @@ vault.
 
 stdout carries only the JSON-RPC protocol; logs go to stderr (`RUST_LOG` controls
 verbosity).
+
+## Contributing
+
+[`AGENTS.md`](AGENTS.md) carries the working conventions for this repository —
+the gate, how to verify a change, and the traps that have already cost time.
