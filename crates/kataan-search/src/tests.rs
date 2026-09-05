@@ -299,3 +299,61 @@ fn an_absurd_offset_returns_nothing_rather_than_page_one() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+/// A write touches one document, so the index should too — and the row it
+/// replaces has to go, or the old body keeps matching.
+#[test]
+fn refresh_document_replaces_one_entry_without_rebuilding() {
+    let (root, index) = indexed_vault("refresh-one");
+    let before = index.status().unwrap().item_count;
+
+    let id = kataan_core::mutate::create_document(
+        &root,
+        kataan_core::mutate::NewDocument {
+            r#type: "note".to_owned(),
+            title: "Distinctive".to_owned(),
+            body: "florbulate".to_owned(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let loaded = LoadedVault::load(&root).unwrap();
+    assert!(index.refresh_document(&loaded, &id).unwrap());
+    assert_eq!(index.status().unwrap().item_count, before + 1);
+    assert!(hits(&index, "florbulate").contains(&id.as_str().to_owned()));
+
+    // Rewriting the body must retire the old text, not shadow it.
+    kataan_core::mutate::update_document(
+        &root,
+        &id,
+        Some("quuxify".to_owned()),
+        Default::default(),
+    )
+    .unwrap();
+    let loaded = LoadedVault::load(&root).unwrap();
+    assert!(index.refresh_document(&loaded, &id).unwrap());
+
+    assert!(hits(&index, "quuxify").contains(&id.as_str().to_owned()));
+    assert!(
+        hits(&index, "florbulate").is_empty(),
+        "the replaced body still matches; the old row was not deleted"
+    );
+    // And exactly one entry for it, not two.
+    assert_eq!(index.status().unwrap().item_count, before + 1);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn hits(index: &SearchIndex, query: &str) -> Vec<String> {
+    index
+        .search(&SearchQuery {
+            q: Some(query.to_owned()),
+            ..Default::default()
+        })
+        .unwrap()
+        .results
+        .into_iter()
+        .filter_map(|result| result.id)
+        .collect()
+}

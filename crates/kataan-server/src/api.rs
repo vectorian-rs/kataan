@@ -680,9 +680,11 @@ pub struct CreatedResponse {
 /// Every write route goes through here so none of them can forget a step. A
 /// stale search index or a stale `LoadedVault` after a write is not a crash —
 /// it is the API quietly serving what used to be true.
+/// `work` returns its result together with the document it changed, because a
+/// create does not know its own id until it has run.
 async fn write_action<T, F>(state: AppState, work: F) -> Result<T, ApiError>
 where
-    F: FnOnce(&std::path::Path) -> Result<T, ApiError> + Send + 'static,
+    F: FnOnce(&std::path::Path) -> Result<(T, CanonicalId), ApiError> + Send + 'static,
     T: Send + 'static,
 {
     blocking(move || {
@@ -691,7 +693,7 @@ where
             .lock()
             .map_err(|_| ApiError::from(anyhow::anyhow!("write lock poisoned")))?;
 
-        let result = work(state.vault_path.as_ref())?;
+        let (result, changed) = work(state.vault_path.as_ref())?;
 
         // Released here. The lock exists to stop two mutations interleaving on
         // disk; reloading and reindexing only *read* the result, so holding it
@@ -709,13 +711,23 @@ where
         }
         match read_loaded_vault(&state) {
             Ok(loaded) => {
-                if let Err(error) = state.search.reindex_loaded(&loaded) {
-                    // The write succeeded; only the index is behind. Saying so
-                    // is better than failing a write that actually landed.
-                    warn!(error = %error, "search reindex after write failed; index is stale");
+                // Only the document the write touched. Rebuilding the whole
+                // index to record one change was the largest remaining cost of
+                // a write; a full rebuild is the fallback for an index that
+                // does not exist yet or predates the current schema.
+                let refreshed = state
+                    .search
+                    .refresh_document(&loaded, &changed)
+                    .unwrap_or(false);
+                if !refreshed {
+                    if let Err(error) = state.search.reindex_loaded(&loaded) {
+                        // The write succeeded; only the index is behind. Saying
+                        // so beats failing a write that actually landed.
+                        warn!(error = %error, "search reindex after write failed; index is stale");
+                    }
                 }
             }
-            Err(error) => warn!(error = ?error, "search reindex after write skipped"),
+            Err(error) => warn!(error = ?error, "search refresh after write skipped"),
         }
         Ok(result)
     })
@@ -745,6 +757,7 @@ pub async fn create_document(
             },
         )
         .map_err(core_error)
+        .map(|id| (id.clone(), id))
     })
     .await?;
     Ok((
@@ -777,6 +790,7 @@ pub async fn update_document(
             },
         )
         .map_err(core_error)
+        .map(|()| ((), id))
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))
@@ -792,6 +806,7 @@ pub async fn add_edge(
     write_action(state, move |root| {
         kataan_core::mutate::add_edge(root, &source, &request.predicate, &target)
             .map_err(core_error)
+            .map(|()| ((), source))
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))
@@ -807,6 +822,7 @@ pub async fn remove_edge(
     write_action(state, move |root| {
         kataan_core::mutate::remove_edge(root, &source, &request.predicate, &target)
             .map_err(core_error)
+            .map(|()| ((), source))
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))
@@ -832,6 +848,7 @@ pub async fn replace_edges(
             &targets,
         )
         .map_err(core_error)
+        .map(|()| ((), source))
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))

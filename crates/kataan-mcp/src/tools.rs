@@ -24,10 +24,22 @@ use kataan_search::{SearchIndex, SearchQuery};
 /// The write is already durable, so a failure here must not turn a success
 /// into an `isError` result — an agent that sees one retries and creates a
 /// duplicate document. The index is a derived cache; log and carry on.
-fn refresh_search_after_write(vault: &Path) {
-    if let Err(error) = reindex_search(vault) {
-        tracing::warn!(error = %error, "search reindex after write failed; index is stale");
+fn refresh_search_after_write(vault: &Path, changed: &kataan_core::id::CanonicalId) {
+    if let Err(error) = refresh_search_for(vault, changed) {
+        tracing::warn!(error = %error, "search refresh after write failed; index is stale");
     }
+}
+
+/// Update the one document a write touched, falling back to a full rebuild when
+/// the index cannot be amended in place — it does not exist yet, or predates the
+/// current schema.
+fn refresh_search_for(vault: &Path, changed: &kataan_core::id::CanonicalId) -> Result<()> {
+    let loaded = LoadedVault::load(vault)?;
+    let index = SearchIndex::open_default(vault)?;
+    if !index.refresh_document(&loaded, changed)? {
+        index.reindex_loaded(&loaded)?;
+    }
+    Ok(())
 }
 
 /// Rebuild the FTS index from the current vault state.
@@ -399,7 +411,7 @@ fn create_document(vault: &Path, args: &Value) -> Result<String> {
         extra: extra_fields(args, "fields"),
     };
     let id = mutate::create_document(vault, request)?;
-    refresh_search_after_write(vault);
+    refresh_search_after_write(vault, &id);
     to_pretty(&json!({ "id": id.as_str() }))
 }
 
@@ -414,7 +426,7 @@ fn update_document(vault: &Path, args: &Value) -> Result<String> {
         actor: None,
     };
     mutate::update_document(vault, &id, opt_str(args, "body"), patch)?;
-    refresh_search_after_write(vault);
+    refresh_search_after_write(vault, &id);
     to_pretty(&json!({ "id": id.as_str(), "updated": true }))
 }
 
@@ -423,7 +435,7 @@ fn remove_edge(vault: &Path, args: &Value) -> Result<String> {
     let target = parse_id(args, "target")?;
     let predicate = str_arg(args, "predicate")?;
     mutate::remove_edge(vault, &source, &predicate, &target)?;
-    refresh_search_after_write(vault);
+    refresh_search_after_write(vault, &source);
     to_pretty(
         &json!({ "source": source.as_str(), "predicate": predicate, "target": target.as_str(), "removed": true }),
     )
@@ -440,7 +452,7 @@ fn replace_edges_for_predicate(vault: &Path, args: &Value) -> Result<String> {
         })
         .collect::<Result<Vec<_>>>()?;
     mutate::replace_edges_for_predicate(vault, &source, &predicate, &targets)?;
-    refresh_search_after_write(vault);
+    refresh_search_after_write(vault, &source);
     to_pretty(&json!({
         "source": source.as_str(),
         "predicate": predicate,
@@ -453,7 +465,7 @@ fn add_edge(vault: &Path, args: &Value) -> Result<String> {
     let target = parse_id(args, "target")?;
     let predicate = str_arg(args, "predicate")?;
     mutate::add_edge(vault, &source, &predicate, &target)?;
-    refresh_search_after_write(vault);
+    refresh_search_after_write(vault, &source);
     to_pretty(
         &json!({ "source": source.as_str(), "predicate": predicate, "target": target.as_str() }),
     )

@@ -200,6 +200,69 @@ impl SearchIndex {
         })
     }
 
+    /// Bring one document's entry up to date without rebuilding the index.
+    ///
+    /// A write changes one document, and `reindex_loaded` responded by dropping
+    /// all four tables and re-reading every markdown body in the vault — 766
+    /// file reads and 766 inserts to record one change. Every mutation on every
+    /// surface ends in a refresh, so that was the largest remaining cost of a
+    /// write.
+    ///
+    /// Everything is keyed by `item_key`, so the scoped delete is exact. An id
+    /// no longer present in the vault is simply removed.
+    ///
+    /// Returns `false` when the index could not be updated in place — it does
+    /// not exist yet, or predates the current schema, in which case the columns
+    /// this inserts into may be absent. The caller falls back to a full
+    /// reindex, which is what `reindex_loaded`'s drop-and-recreate is for.
+    pub fn refresh_document(
+        &self,
+        loaded: &LoadedVault,
+        id: &kataan_core::id::CanonicalId,
+    ) -> Result<bool> {
+        if !self.path.exists() {
+            return Ok(false);
+        }
+        let mut connection = self.open_connection()?;
+        let transaction = connection.transaction()?;
+
+        let record = loaded.documents.get(id);
+        let kind = match record {
+            Some(record) if record.is_folder_index => Kind::Folder,
+            Some(_) => Kind::Document,
+            // Gone from the vault: drop whichever spelling indexed it.
+            None => {
+                for kind in [Kind::Document, Kind::Folder] {
+                    delete_item(&transaction, &format!("{}:{id}", kind.as_str()))?;
+                }
+                transaction.commit()?;
+                return Ok(true);
+            }
+        };
+        let item_key = format!("{}:{id}", kind.as_str());
+
+        let record = record.expect("checked above");
+        let markdown = loaded
+            .read_markdown(id)
+            .with_context(|| format!("failed to read markdown for `{id}`"))?;
+        let item = SearchItem::from_document_record(loaded, record, &markdown)?;
+
+        delete_item(&transaction, &item_key)?;
+        // A document that changed type or folder status is indexed under a
+        // different key, so the old one has to go too.
+        if item.item_key != item_key {
+            delete_item(&transaction, &item.item_key)?;
+        }
+        if let Err(error) = insert_item(&transaction, &item) {
+            // An index built on an older schema rejects these columns. Say so
+            // rather than committing a half-updated index.
+            let _ = error;
+            return Ok(false);
+        }
+        transaction.commit()?;
+        Ok(true)
+    }
+
     pub fn search(&self, query: &SearchQuery) -> Result<SearchResponse> {
         let connection = self.connect()?;
         let raw_query = query.q.as_deref().unwrap_or_default().trim().to_owned();
@@ -462,6 +525,20 @@ fn create_schema(connection: &Connection) -> Result<()> {
            tokenize = 'unicode61 remove_diacritics 2'
          );",
     )?;
+    Ok(())
+}
+
+/// Remove every row for one `item_key`, across all three tables that carry it.
+fn delete_item(connection: &Connection, item_key: &str) -> Result<()> {
+    for statement in [
+        "DELETE FROM search_fts WHERE item_key = ?1",
+        "DELETE FROM search_facets WHERE item_key = ?1",
+        "DELETE FROM search_items WHERE item_key = ?1",
+    ] {
+        connection
+            .prepare_cached(statement)?
+            .execute(params![item_key])?;
+    }
     Ok(())
 }
 
