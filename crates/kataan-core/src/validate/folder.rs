@@ -119,18 +119,15 @@ impl FolderWalk<'_> {
         out: &mut Collected<'_>,
         folder_path: &Path,
         scopes: &mut Vec<TypeScope>,
+        depth: usize,
     ) -> Result<()> {
-        let relative = relative_folder_path(self.root_folder, self.root_folder_path, folder_path);
         // The fourth directory recursion in the crate, and the one `validate`
-        // itself takes. Depth comes from the path rather than a threaded
-        // counter, since `relative` is already the ancestor chain.
-        crate::walk::ensure_walk_depth(
-            Path::new(&relative),
-            relative
-                .split('/')
-                .filter(|segment| !segment.is_empty())
-                .count(),
-        )?;
+        // itself takes. The counter starts at 0 at the type-folder root, as the
+        // other three do — counting path segments instead made this trip a
+        // level earlier than they do, and further out still when a type folder
+        // is itself a nested path.
+        crate::walk::ensure_walk_depth(folder_path, depth)?;
+        let relative = relative_folder_path(self.root_folder, self.root_folder_path, folder_path);
         let folder_index = validate_optional_folder_index_pair(out.issues, folder_path, &relative)?;
 
         // Pushed before descending, so this folder's own documents and
@@ -146,7 +143,7 @@ impl FolderWalk<'_> {
         }
 
         // Split so the pop runs even when the walk returns early through `?`.
-        let result = self.folder_contents(out, folder_path, &relative, folder_index, scopes);
+        let result = self.folder_contents(out, folder_path, &relative, folder_index, scopes, depth);
 
         if pushed {
             scopes.pop();
@@ -161,6 +158,7 @@ impl FolderWalk<'_> {
         relative: &str,
         folder_index: Option<FolderIndex>,
         scopes: &mut Vec<TypeScope>,
+        depth: usize,
     ) -> Result<()> {
         let mut markdown_slugs = BTreeSet::new();
         let mut toml_slugs = BTreeSet::new();
@@ -180,7 +178,7 @@ impl FolderWalk<'_> {
                 if self.ignore.is_ignored(&path, true) {
                     continue;
                 }
-                self.folder(out, &path, scopes)?;
+                self.folder(out, &path, scopes, depth + 1)?;
                 continue;
             }
 

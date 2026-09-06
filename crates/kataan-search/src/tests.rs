@@ -413,3 +413,108 @@ fn facet_counts_cover_the_whole_match_set_not_the_page() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+/// An index file that exists is not an index that has been built.
+///
+/// Opening a connection creates the file and its empty schema — `search()` does
+/// it on the first query — so gating the incremental path on "the file exists"
+/// let a write amend an empty index and report success. The vault was then left
+/// with exactly one searchable document and nothing to ever trigger a rebuild.
+#[test]
+fn an_empty_index_is_rebuilt_rather_than_amended() {
+    let root = temp_dir("empty-index");
+    kataan_core::init::init_vault(&root, "Empty").unwrap();
+    write_note(
+        &root,
+        "existing",
+        "# Existing\n\nalphabody",
+        "type = \"note\"\nmarkdown = \"existing.md\"\n",
+    );
+
+    // Open (creating the file and schema) but never build the index — exactly
+    // what a `search` before any write leaves behind.
+    let index = SearchIndex::open(root.join("search.sqlite")).unwrap();
+    assert_eq!(index.status().unwrap().item_count, 0);
+
+    let id = kataan_core::mutate::create_document(
+        &root,
+        kataan_core::mutate::NewDocument {
+            r#type: "note".to_owned(),
+            title: "Fresh".to_owned(),
+            body: "freshbody".to_owned(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let loaded = LoadedVault::load(&root).unwrap();
+
+    assert!(
+        !index.refresh_document(&loaded, &id).unwrap(),
+        "an unbuilt index must report that it cannot be amended, so the caller rebuilds"
+    );
+
+    // And once rebuilt, the pre-existing document is still findable — the
+    // failure this guards against was losing everything but the new document.
+    index.reindex_loaded(&loaded).unwrap();
+    assert!(!hits(&index, "alphabody").is_empty());
+    assert!(index.refresh_document(&loaded, &id).unwrap());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A document indexed as a folder and then rewritten as a leaf (or the reverse)
+/// is stale under the *other* key. Deleting only the key derived from the
+/// current record leaves a duplicate hit with a stale path and body, and
+/// inflates every facet count it contributes to.
+#[test]
+fn a_kind_flip_does_not_leave_the_old_row_behind() {
+    let (root, index) = indexed_vault("kind-flip");
+    let id = kataan_core::mutate::create_document(
+        &root,
+        kataan_core::mutate::NewDocument {
+            r#type: "note".to_owned(),
+            title: "Flipper".to_owned(),
+            body: "staletoken".to_owned(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let loaded = LoadedVault::load(&root).unwrap();
+    index.refresh_document(&loaded, &id).unwrap();
+    assert_eq!(hits(&index, "staletoken"), vec![id.as_str().to_owned()]);
+
+    // Forge the other spelling, as a hand edit converting the document into a
+    // folder index would leave behind.
+    let connection = rusqlite::Connection::open(root.join("search.sqlite")).unwrap();
+    connection
+        .execute(
+            "INSERT INTO search_items(item_key, kind, id, path, title)
+             VALUES (?1, 'folder', ?2, 'notes/flipper/index.md', 'Flipper')",
+            rusqlite::params![format!("folder:{id}"), id.as_str()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO search_fts(item_key, title, path, aliases, facets, metadata, body)
+             VALUES (?1, 'Flipper', 'notes/flipper/index.md', '', '', '', 'staletoken')",
+            rusqlite::params![format!("folder:{id}")],
+        )
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        hits(&index, "staletoken").len(),
+        2,
+        "both spellings present"
+    );
+
+    // A refresh must clear both, not just the one matching the current record.
+    let loaded = LoadedVault::load(&root).unwrap();
+    assert!(index.refresh_document(&loaded, &id).unwrap());
+    assert_eq!(
+        hits(&index, "staletoken"),
+        vec![id.as_str().to_owned()],
+        "the stale spelling survived the refresh"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

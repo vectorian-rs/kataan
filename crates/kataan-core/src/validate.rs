@@ -236,7 +236,7 @@ fn validate_open_vault(vault: &Vault) -> Result<DiagnosticReport> {
             loaded_metadata: &mut loaded_metadata,
         };
         let mut scopes = vec![walk.root_scope()];
-        walk.folder(&mut collected, &folder_path, &mut scopes)?;
+        walk.folder(&mut collected, &folder_path, &mut scopes, 0)?;
     }
 
     for (path, metadata) in loaded_metadata {

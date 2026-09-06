@@ -220,45 +220,50 @@ impl SearchIndex {
         loaded: &LoadedVault,
         id: &kataan_core::id::CanonicalId,
     ) -> Result<bool> {
-        if !self.path.exists() {
-            return Ok(false);
-        }
         let mut connection = self.open_connection()?;
         let transaction = connection.transaction()?;
 
-        let record = loaded.documents.get(id);
-        let kind = match record {
-            Some(record) if record.is_folder_index => Kind::Folder,
-            Some(_) => Kind::Document,
-            // Gone from the vault: drop whichever spelling indexed it.
-            None => {
-                for kind in [Kind::Document, Kind::Folder] {
-                    delete_item(&transaction, &format!("{}:{id}", kind.as_str()))?;
-                }
-                transaction.commit()?;
-                return Ok(true);
-            }
-        };
-        let item_key = format!("{}:{id}", kind.as_str());
+        // "Has this index ever been built?", not "does the file exist". Opening
+        // a connection *creates* the file and its empty schema — `search()`
+        // does it on the first query — so `exists()` was true long before there
+        // was anything in it. A write would then amend an empty index and
+        // report success, leaving the vault with exactly one searchable
+        // document and nothing to ever trigger a rebuild.
+        if read_last_indexed_at(&transaction)?.is_none() {
+            return Ok(false);
+        }
 
-        let record = record.expect("checked above");
+        // Both spellings, always. A document that changed folder status is
+        // indexed under the *other* one, and the key derived from the current
+        // record can never be that one — so a conditional second delete could
+        // not do this job.
+        for kind in [Kind::Document, Kind::Folder] {
+            delete_item(&transaction, &kind.item_key(id.as_str()))?;
+        }
+
+        let Some(record) = loaded.documents.get(id) else {
+            // Gone from the vault: the deletes above are the whole update.
+            transaction.commit()?;
+            return Ok(true);
+        };
+
         let markdown = loaded
             .read_markdown(id)
             .with_context(|| format!("failed to read markdown for `{id}`"))?;
         let item = SearchItem::from_document_record(loaded, record, &markdown)?;
 
-        delete_item(&transaction, &item_key)?;
-        // A document that changed type or folder status is indexed under a
-        // different key, so the old one has to go too.
-        if item.item_key != item_key {
-            delete_item(&transaction, &item.item_key)?;
-        }
         if let Err(error) = insert_item(&transaction, &item) {
-            // An index built on an older schema rejects these columns. Say so
-            // rather than committing a half-updated index.
-            let _ = error;
+            // Most likely an index built on an older schema, whose columns this
+            // insert does not match — the caller falls back to a full rebuild.
+            // The transaction rolls back on drop, so nothing is half-written.
+            tracing::debug!(error = %error, "incremental search update failed; rebuilding");
             return Ok(false);
         }
+
+        // Kept truthful: every write now takes this path, so leaving the marker
+        // to `reindex_loaded` alone would make a current index report an
+        // ever-staler timestamp — and it is the marker the check above reads.
+        set_last_indexed_at(&transaction, &kataan_core::time::unix_timestamp_string())?;
         transaction.commit()?;
         Ok(true)
     }
@@ -367,6 +372,13 @@ enum Kind {
 }
 
 impl Kind {
+    /// The index's primary key for `id`. Spelled in one place: a delete built
+    /// with a drifted separator matches nothing, and the stale row survives
+    /// while the index reports success.
+    fn item_key(self, id: &str) -> String {
+        format!("{}:{id}", self.as_str())
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             Kind::Folder => "folder",
@@ -414,7 +426,7 @@ impl SearchItem {
         let metadata = metadata_text(record);
 
         Ok(Self {
-            item_key: format!("{}:{id}", kind.as_str()),
+            item_key: kind.item_key(&id),
             kind,
             id: Some(id),
             path,
@@ -557,6 +569,25 @@ fn create_schema(connection: &Connection) -> Result<()> {
 }
 
 /// Remove every row for one `item_key`, across all three tables that carry it.
+/// `last_indexed_at`, or `None` when the index has never been built.
+fn read_last_indexed_at(connection: &Connection) -> Result<Option<String>> {
+    Ok(connection
+        .query_row(
+            "SELECT value FROM search_metadata WHERE key = 'last_indexed_at'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?)
+}
+
+fn set_last_indexed_at(connection: &Connection, indexed_at: &str) -> Result<()> {
+    connection.execute(
+        "INSERT OR REPLACE INTO search_metadata(key, value) VALUES ('last_indexed_at', ?1)",
+        params![indexed_at],
+    )?;
+    Ok(())
+}
+
 fn delete_item(connection: &Connection, item_key: &str) -> Result<()> {
     for statement in [
         "DELETE FROM search_fts WHERE item_key = ?1",

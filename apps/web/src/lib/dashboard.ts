@@ -94,6 +94,8 @@ import {
 /// a module-level `const` is not hoisted, and boot reads these.
 interface PanelToggle {
   button: HTMLButtonElement;
+  /// Owned by `setPanelVisible`, so the flag and the DOM cannot disagree.
+  visible: boolean;
   /// Class the shell carries while the panel is hidden.
   shellClass: string;
   storageKey: string;
@@ -106,6 +108,7 @@ interface PanelToggle {
 
 const LIST_TOGGLE: PanelToggle = {
   button: listToggle,
+  visible: localStorage.getItem('kataan:list-visible') !== 'false',
   shellClass: 'list-hidden',
   storageKey: 'kataan:list-visible',
   label: 'List',
@@ -115,6 +118,7 @@ const LIST_TOGGLE: PanelToggle = {
 
 const PROPERTIES_TOGGLE: PanelToggle = {
   button: propertiesToggle,
+  visible: localStorage.getItem('kataan:properties-visible') === 'true',
   shellClass: 'properties-hidden',
   storageKey: 'kataan:properties-visible',
   label: 'Sidebar',
@@ -183,8 +187,6 @@ function beginNavigation(): Stale {
 let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
 let selectedFile: FolderFile | null = null;
-let propertiesVisible = localStorage.getItem('kataan:properties-visible') === 'true';
-let listVisible = localStorage.getItem('kataan:list-visible') !== 'false';
 let searchStatus: SearchStatus | null = null;
 let searchDebounce: number | undefined;
 let activeSearchRequest = 0;
@@ -194,17 +196,15 @@ for (const column of RESIZABLE_COLUMNS) {
   setColumnWidth(column, readSavedColumnWidth(column), { persist: false });
   initColumnResizing(column);
 }
-setPanelVisible(PROPERTIES_TOGGLE, propertiesVisible, { persist: false });
-setPanelVisible(LIST_TOGGLE, listVisible, { persist: false });
+setPanelVisible(PROPERTIES_TOGGLE, PROPERTIES_TOGGLE.visible, { persist: false });
+setPanelVisible(LIST_TOGGLE, LIST_TOGGLE.visible, { persist: false });
 
 propertiesToggle.addEventListener('click', () => {
-  propertiesVisible = !propertiesVisible;
-  setPanelVisible(PROPERTIES_TOGGLE, propertiesVisible, { persist: true });
+  setPanelVisible(PROPERTIES_TOGGLE, !PROPERTIES_TOGGLE.visible, { persist: true });
 });
 
 listToggle.addEventListener('click', () => {
-  listVisible = !listVisible;
-  setPanelVisible(LIST_TOGGLE, listVisible, { persist: true });
+  setPanelVisible(LIST_TOGGLE, !LIST_TOGGLE.visible, { persist: true });
 });
 
 // The model, not the data: what types exist and what may link to what. Read
@@ -545,11 +545,16 @@ async function selectFolder(folder: string, options: SelectOptions = {}) {
 
   const response = await getFolder(folder);
   if (stale()) return;
-  // Replace rather than push: walking down a tree should leave the folder
-  // linkable without turning Back into "collapse one level". A document
-  // selected from here pushes over it a moment later.
+  // Replace only when the entry being overwritten is itself a folder — one
+  // step of the same descent. Replacing unconditionally overwrote whatever the
+  // reader had open: from `/notes/alpha`, clicking a folder replaced that entry
+  // and then pushed the folder's first document, so Back never returned to
+  // `notes/alpha` at all. That is precisely what the replace was meant to
+  // protect.
   if (options.updateUrl ?? true) {
-    setRoute({ kind: 'id', id: folder }, { replace: true });
+    const replacing = currentRoute();
+    const replace = replacing?.kind === 'id' && isFolderRoute(replacing.id);
+    setRoute({ kind: 'id', id: folder }, { replace });
   }
   const first = applyFolder(folder, response, options);
   if (first) {
@@ -768,6 +773,7 @@ function setPanelVisible(
   visible: boolean,
   options: { persist?: boolean } = {},
 ) {
+  panel.visible = visible;
   panel.button.setAttribute('aria-pressed', String(visible));
   panel.button.setAttribute('aria-label', visible ? panel.aria[0] : panel.aria[1]);
   panel.button.classList.toggle('button-primary', !visible);
@@ -934,6 +940,13 @@ type Route = { kind: 'id'; id: string } | { kind: 'file'; path: string } | { kin
 /// lowercase letters, digits and hyphens, so anything else — an extension,
 /// uppercase, a space, an underscore — is necessarily a file path rather than a
 /// document. That is what lets both share the URL space without a prefix.
+/// Whether `id` names a folder the tree is showing, used to decide if the
+/// current history entry is a step in a descent rather than something the
+/// reader chose to open.
+function isFolderRoute(id: string) {
+  return foldersEl.querySelector(`[data-folder="${cssEscape(id)}"]`) !== null;
+}
+
 function looksLikeId(path: string) {
   return /^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/.test(path);
 }
@@ -942,7 +955,16 @@ function currentRoute(): Route {
   if (new URLSearchParams(window.location.search).get(VIEW_PARAM) === MODEL_VIEW) {
     return { kind: 'model' };
   }
-  const raw = decodeURI(window.location.pathname).replace(/^\/+|\/+$/g, '');
+  // Decoded per segment, mirroring `routePath`'s per-segment encode.
+  // `decodeURI` deliberately leaves the reserved set (`+ & , # @ ;` and a
+  // literal space) encoded, while `encodeURIComponent` encodes all of them — so
+  // a file called `q1 & q2.pdf` came back as `q1 %26 q2.pdf` and its own deep
+  // link 404'd. Ids never contain those characters; arbitrary file paths do.
+  const raw = window.location.pathname
+    .replace(/^\/+|\/+$/g, '')
+    .split('/')
+    .map(decodeURIComponent)
+    .join('/');
   if (!raw) return null;
   // Id-shaped paths are resolved as documents first and fall back to files;
   // anything else cannot be an id at all. See `restoreRouteSelection`.

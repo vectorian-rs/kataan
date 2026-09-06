@@ -35,7 +35,10 @@ fn register(path: &Path) {
     for entry in entries.flatten() {
         let path = entry.path();
         println!("cargo:rerun-if-changed={}", path.display());
-        if path.is_dir() {
+        // `file_type` does not follow symlinks, where `path.is_dir()` does — a
+        // link pointing back into `dist` would otherwise be descended until the
+        // OS refused, emitting nonsense paths on the way.
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             register(&path);
         }
     }

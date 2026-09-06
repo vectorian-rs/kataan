@@ -450,8 +450,6 @@ fn edit_edges(
     Ok(())
 }
 
-/// Reject a malformed timestamp at the write boundary, so `validate` never has
-/// to report one kataan itself wrote.
 /// Check that `predicate` exists and that the source and every target are types
 /// the ontology permits at those ends. Returns the source's record, which every
 /// caller needs next.

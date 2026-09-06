@@ -695,12 +695,16 @@ where
 
         let (result, changed) = work(state.vault_path.as_ref())?;
 
-        // Released here. The lock exists to stop two mutations interleaving on
-        // disk; reloading and reindexing only *read* the result, so holding it
-        // through them makes every other writer queue behind work that needs no
-        // exclusion. A caller still sees its own write — its own mutation has
-        // already completed above.
-        drop(_writer);
+        // The lock is deliberately held through the refresh below, not just the
+        // mutation. `reload()` is read-disk-then-swap, so releasing early let
+        // two writers interleave: a slow reload could store a snapshot taken
+        // before a second write and silently discard it, and the second
+        // writer's `refresh_document` could then look up its own new document
+        // in that stale snapshot, not find it, and delete it from the search
+        // index — on a request that returned 201.
+        //
+        // Serialising the refresh costs the other writer ~190ms of queueing.
+        // Correct reads are worth more than that.
 
         // The vault on disk changed. Refresh what the read paths serve before
         // returning, so a caller that writes and immediately reads sees its own
@@ -883,7 +887,7 @@ pub async fn validate(
     // Walks every folder and parses every sidecar in the vault.
     blocking(move || {
         let report =
-            kataan_core::validate::validate(state.vault_path.as_ref()).map_err(ApiError::from)?;
+            kataan_core::validate::validate(state.vault_path.as_ref()).map_err(core_error)?;
         let ok = report.is_ok();
         let diagnostics = report
             .diagnostics
@@ -914,8 +918,8 @@ pub async fn rebuild_indexes(
     info!(vault = %state.vault_path.display(), "rebuilding indexes");
     // Rewrites every folder index in the vault.
     blocking(move || {
-        kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(ApiError::from)?;
-        state.reload().map_err(ApiError::from)?;
+        kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(core_error)?;
+        state.reload().map_err(core_error)?;
         info!(vault = %state.vault_path.display(), "reloaded vault after rebuild");
         Ok(OkResponse { ok: true })
     })
