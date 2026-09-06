@@ -67,7 +67,7 @@ pub fn rebuild_indexes(root: impl AsRef<Path>) -> Result<()> {
         }
     }
 
-    update_root_updated_at(&root_index_path, &root_index_text)?;
+    update_root_updated_at(&root_index_path)?;
 
     Ok(())
 }
@@ -219,47 +219,32 @@ fn update_document_markdown_checksum(
     markdown_file_name: &str,
     markdown_checksum: &str,
 ) -> Result<()> {
-    let text = fs::read_to_string(toml_path).map_err(|source| Error::Io {
-        path: toml_path.to_path_buf(),
-        source,
-    })?;
-    let mut value: toml::Value = toml::from_str(&text).map_err(|source| Error::TomlParse {
-        path: toml_path.to_path_buf(),
-        source,
-    })?;
-
-    let table = value
-        .as_table_mut()
-        .expect("document TOML root must be table");
-    table.insert(
+    // Two derived keys set onto the author's file. Re-rendering the whole
+    // document instead would strip its comments and reflow its arrays on the
+    // first rebuild that touched it.
+    let mut derived = toml::Table::new();
+    derived.insert(
         "markdown".to_owned(),
         toml::Value::String(markdown_file_name.to_owned()),
     );
-    table.insert(
+    derived.insert(
         "markdown_checksum".to_owned(),
         toml::Value::String(markdown_checksum.to_owned()),
     );
-
-    let updated = toml::to_string_pretty(&value).expect("serialize document TOML");
-    write::atomic_write_string_if_changed(toml_path, &updated)
+    crate::edit::set_keys(toml_path, &derived)
 }
 
-fn update_root_updated_at(path: &Path, text: &str) -> Result<()> {
-    let mut value: toml::Value = toml::from_str(text).map_err(|source| Error::TomlParse {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let table = value.as_table_mut().expect("vault TOML root must be table");
+fn update_root_updated_at(path: &Path) -> Result<()> {
     // Strict write: whatever the file carried (older vaults wrote a bare Unix
     // epoch here), the value we emit is ISO-8601. Reads stay lenient, so an
     // un-rebuilt vault still loads — the format heals on the next rebuild
     // rather than needing a migration.
-    table.insert(
+    let mut derived = toml::Table::new();
+    derived.insert(
         "updated_at".to_owned(),
         toml::Value::String(crate::time::iso8601_utc_now()),
     );
-    let updated = toml::to_string_pretty(&value).expect("serialize vault TOML");
-    write::atomic_write_string(path, &updated)
+    crate::edit::set_keys(path, &derived)
 }
 
 /// The parts of an existing `index.toml` that a rewrite must preserve.
@@ -351,9 +336,30 @@ fn write_folder_index(
         documents,
         subfolders,
     };
-    let output = toml::to_string_pretty(&folder_index).expect("serialize folder index TOML");
-    write::atomic_write_string_if_changed(path, &output)
+    let derived = toml::Table::try_from(&folder_index).expect("serialize folder index TOML");
+
+    // Set onto the existing file rather than replacing it. A folder index is a
+    // document of its type, so it can carry `status`, `labels` and `[edges]` of
+    // its own — and rendering `FolderIndexToml` over the top deleted every one
+    // of them on every rebuild, which meant a folder index could not hold an
+    // edge at all. `FOLDER_INDEX_DERIVED` bounds what kataan claims to own, so
+    // a key it stops emitting (an emptied folder's `documents`) still goes.
+    crate::edit::set_derived(path, &derived, FOLDER_INDEX_DERIVED)
 }
+
+/// The keys `write_folder_index` owns. Everything else in an `index.toml`
+/// belongs to whoever wrote it.
+const FOLDER_INDEX_DERIVED: &[&str] = &[
+    "type",
+    "markdown",
+    "name",
+    "description",
+    "default_type",
+    "folder_checksum",
+    "type_folders",
+    "documents",
+    "subfolders",
+];
 
 #[cfg(test)]
 mod tests {
@@ -479,6 +485,77 @@ last_updated_by = "human"
         assert_eq!(
             value.get("description").and_then(toml::Value::as_str),
             Some("Line one\nLine two")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_rebuild_keeps_what_an_author_wrote_in_a_folder_index() {
+        let root = unique_temp_dir();
+        crate::init::init_vault(&root, "Rebuild Vault").unwrap();
+        // A folder index is a document of its type, so it can carry status,
+        // labels and edges of its own. Rewriting it from `FolderIndexToml`
+        // deleted all of them on every rebuild — and every mutation ends with a
+        // rebuild, so a folder index could not hold an edge at all.
+        fs::write(
+            root.join("projects/index.toml"),
+            "# Why this folder exists.\n\
+             type = \"project\"\n\
+             markdown = \"index.md\"\n\
+             name = \"Projects\"\n\
+             status = \"active\"\n\
+             labels = [\"curated\"]\n\
+             custom_key = \"unmodelled\"\n\n\
+             [edges]\n\
+             related_to = [\"topics/rust\"]\n",
+        )
+        .unwrap();
+
+        rebuild_indexes(&root).unwrap();
+
+        let text = fs::read_to_string(root.join("projects/index.toml")).unwrap();
+        let value: toml::Table = text.parse().unwrap();
+        assert_eq!(value["status"].as_str(), Some("active"));
+        assert_eq!(value["custom_key"].as_str(), Some("unmodelled"));
+        assert_eq!(value["labels"][0].as_str(), Some("curated"));
+        assert_eq!(
+            value["edges"]["related_to"][0].as_str(),
+            Some("topics/rust")
+        );
+        assert!(text.contains("# Why this folder exists."), "{text}");
+        // Still does its actual job.
+        assert!(value.contains_key("folder_checksum"), "{text}");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_rebuild_drops_derived_entries_it_no_longer_emits() {
+        let root = unique_temp_dir();
+        crate::init::init_vault(&root, "Rebuild Vault").unwrap();
+        fs::write(root.join("projects/one.md"), "# One\n").unwrap();
+        fs::write(
+            root.join("projects/one.toml"),
+            "type = \"project\"\nmarkdown = \"one.md\"\n",
+        )
+        .unwrap();
+        rebuild_indexes(&root).unwrap();
+        assert!(fs::read_to_string(root.join("projects/index.toml"))
+            .unwrap()
+            .contains("[[documents]]"));
+
+        // Emptying the folder must remove the block. Preserving unknown keys
+        // must not mean preserving kataan's own stale ones — an index still
+        // listing a deleted document is worse than a reformatted one.
+        fs::remove_file(root.join("projects/one.md")).unwrap();
+        fs::remove_file(root.join("projects/one.toml")).unwrap();
+        rebuild_indexes(&root).unwrap();
+
+        let text = fs::read_to_string(root.join("projects/index.toml")).unwrap();
+        assert!(
+            !text.contains("[[documents]]"),
+            "stale entry survived: {text}"
         );
 
         fs::remove_dir_all(root).unwrap();

@@ -688,13 +688,17 @@ fn read_sidecar_table(path: &Path) -> Result<toml::Table> {
         })
 }
 
-/// Write an edited sidecar table back atomically. `toml` emits tables and
-/// arrays-of-tables after scalars whatever the key order, so an edited table
-/// always renders as valid TOML; the `preserve_order` feature keeps the
-/// author's original key order so updates stay diff-sized.
+/// Write an edited sidecar back over the existing file, changing only the keys
+/// that actually differ.
+///
+/// `apply_table` rather than `set_keys`: the caller has computed the document's
+/// complete intended contents, so a field the patch removed must disappear from
+/// the file rather than linger. Everything that survives keeps the author's
+/// formatting and comments — re-rendering the table would flatten them, and now
+/// that metadata is editable from the UI this is a routine write, not a rare
+/// one.
 fn write_sidecar_table(path: &Path, table: &toml::Table) -> Result<()> {
-    let rendered = toml::to_string_pretty(table).expect("document sidecar is serializable TOML");
-    atomic_write_string(path, &rendered)
+    crate::edit::apply_table(path, table)
 }
 
 fn string_array(values: Vec<String>) -> toml::Value {

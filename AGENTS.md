@@ -123,7 +123,14 @@ size, same md5, same content hash.
 - **A folder index is a document of its type.** `people/index.toml` is a
   `person`, so per-type counts include it. Report the distinction rather than
   subtracting it — kataan cannot tell a container from a real entity that owns
-  edges.
+  edges. The same fact is why rewriting one from a projecting struct is data
+  loss: `FolderIndexToml` models nine keys, so a rebuild deleted the `status`,
+  `labels` and `[edges]` an author had every right to put there.
+- **Rendering a parsed value tree is not a round trip.** `toml::Value` does not
+  carry comments, blank lines, or whether an array was inline, and a projecting
+  struct does not carry keys it has never heard of. Both losses are silent and
+  only visible by diffing a real file. Set keys onto the parsed document
+  (`edit::set_keys` / `set_derived` / `apply_table`) instead of regenerating it.
 
 ## Commit messages
 

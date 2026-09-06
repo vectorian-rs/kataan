@@ -174,6 +174,49 @@ fn update_document_preserves_unknown_sidecar_keys() {
 }
 
 #[test]
+fn update_document_preserves_comments_and_formatting() {
+    let root = temp_vault("preserve-comments");
+    let id = create_document(&root, note("Jane", "hello")).unwrap();
+    let sidecar = root.join(id.toml_path());
+
+    // An author edits the sidecar by hand, as a filesystem-native format
+    // invites. Everything here is invisible to a `toml::Value` round trip.
+    let original = std::fs::read_to_string(&sidecar).unwrap();
+    std::fs::write(
+        &sidecar,
+        format!("# Jane is the point of contact.\n{original}\nlabels = [\"alpha\", \"beta\"]\n"),
+    )
+    .unwrap();
+
+    update_document(
+        &root,
+        &id,
+        Some("changed".to_owned()),
+        DocumentPatch {
+            status: Some("active".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let after = std::fs::read_to_string(&sidecar).unwrap();
+    assert!(
+        after.contains("# Jane is the point of contact."),
+        "comment lost on a metadata write: {after}"
+    );
+    // Untouched by the patch, so not re-rendered — an exploded array here would
+    // mean every save reformats the file around the one key that changed.
+    assert!(
+        after.contains("labels = [\"alpha\", \"beta\"]"),
+        "inline array reflowed: {after}"
+    );
+    assert!(after.contains("status = \"active\""), "{after}");
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn add_edge_preserves_sibling_keys() {
     let root = temp_vault("preserve-edge");
     let source = create_document(&root, note("Jane", "a")).unwrap();

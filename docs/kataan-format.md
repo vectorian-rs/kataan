@@ -258,6 +258,14 @@ Each `documents` entry identifies one direct non-index document in the folder. `
 
 `index.toml` is system-managed. Humans may read it, but normal editing should happen through the application or agent tools so the index does not drift from the actual files. Validation should report any mismatch between `documents` and the files in the folder.
 
+System-managed means the derived keys, not the whole file. A folder index is a document of its folder's type, so it may carry that type's metadata too — `status`, `labels`, `[edges]`, declared fields. A rebuild sets only the keys it owns (`type`, `markdown`, `name`, `description`, `default_type`, `folder_checksum`, `type_folders`, `documents`, `subfolders`) and leaves everything else alone. Stale entries among its *own* keys are still removed: emptying a folder removes its `[[documents]]` blocks rather than leaving an index that lists files that are gone.
+
+## What a write preserves
+
+kataan edits TOML files in place rather than regenerating them, so a sidecar keeps what its author gave it: comments, blank-line grouping, key order, and whether an array was written inline or exploded across lines. A write touches only the keys whose values actually change — editing one field does not reflow the rest of the file, and a rebuild that changes nothing rewrites nothing at all.
+
+This matters because the format is meant to be hand-edited. A vault is text on a filesystem, so a comment explaining *why* a field holds an odd value is a legitimate part of the record, and a save from the UI must not delete it.
+
 ## Checksums
 
 Each TOML sidecar that references a single Markdown file stores the Markdown filename and a BLAKE3 checksum of that Markdown file.
