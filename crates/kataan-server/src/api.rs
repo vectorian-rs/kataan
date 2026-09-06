@@ -647,6 +647,10 @@ pub struct CreateDocumentRequest {
 /// every one of these is an `Option` — including `body`.
 #[derive(Debug, Deserialize)]
 pub struct UpdateDocumentRequest {
+    /// The `updated_at` the caller last read. When present the write is
+    /// refused with `409` unless the document still carries it, so an editor
+    /// cannot silently overwrite a change it never saw.
+    pub expected_updated_at: Option<String>,
     pub body: Option<String>,
     pub status: Option<String>,
     pub occurred_at: Option<String>,
@@ -786,6 +790,7 @@ pub async fn update_document(
             &id,
             request.body,
             kataan_core::mutate::DocumentPatch {
+                expected_updated_at: request.expected_updated_at,
                 status: request.status,
                 occurred_at: request.occurred_at,
                 aliases: request.aliases,
@@ -874,6 +879,9 @@ fn edge_endpoints(source: &str, target: &str) -> Result<(CanonicalId, CanonicalI
 fn core_error(error: kataan_core::Error) -> ApiError {
     match error {
         kataan_core::Error::InvalidRequest(message) => ApiError::bad_request(message),
+        // The request is well formed and would have been accepted a moment ago;
+        // the caller needs to re-read, not correct its input.
+        kataan_core::Error::Conflict(message) => ApiError::conflict(message),
         other => ApiError::from(other),
     }
 }
@@ -950,6 +958,10 @@ impl ApiError {
 
     pub fn bad_request(message: impl std::fmt::Display) -> Self {
         Self::with_status(StatusCode::BAD_REQUEST, message)
+    }
+
+    pub fn conflict(message: impl std::fmt::Display) -> Self {
+        Self::with_status(StatusCode::CONFLICT, message)
     }
 
     pub fn forbidden(message: impl std::fmt::Display) -> Self {

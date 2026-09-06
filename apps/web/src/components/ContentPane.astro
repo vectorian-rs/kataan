@@ -6,6 +6,15 @@
         <h2 id="document-title" class="panel-title visually-hidden">Document</h2>
       </div>
       <div class="content-header-actions">
+        <button id="edit-button" class="ui-button button-secondary" type="button" hidden>
+          Edit
+        </button>
+        <button id="save-button" class="ui-button button-primary" type="button" hidden>
+          Save
+        </button>
+        <button id="cancel-button" class="ui-button button-secondary" type="button" hidden>
+          Cancel
+        </button>
         <button
           id="list-toggle"
           class="ui-button button-secondary properties-toggle"
@@ -26,6 +35,12 @@
         </button>
       </div>
     </header>
+    <textarea
+      id="document-editor"
+      class="document-editor"
+      spellcheck="false"
+      aria-label="Markdown source"
+      hidden></textarea>
     <article id="document-body" class="reader-body empty-state">
       <div class="empty-card">
         <strong>Select a document</strong>

@@ -61,6 +61,22 @@ const RESERVED_KEYS: &[&str] = &[
 /// Fields to change on an existing document. `None` leaves a field unchanged.
 #[derive(Debug, Clone, Default)]
 pub struct DocumentPatch {
+    /// The `updated_at` the caller last saw. When set, the write is refused
+    /// unless the document still carries it.
+    ///
+    /// A vault is edited by people and agents at once, and an editor that has
+    /// had a document open for a minute is working from a snapshot. Without
+    /// this, saving silently discards whatever landed in between — the one
+    /// failure a text editor must not have.
+    ///
+    /// The empty string means "expected to have no `updated_at`", which is not
+    /// the same as `None` (no precondition at all). Most documents in a
+    /// hand-authored vault have never been written by the mutation layer and so
+    /// carry no timestamp — 784 of 794 in the vault this was built against — so
+    /// without that distinction the protection would cover almost nothing. A
+    /// document that gains a timestamp has been written by someone, which is
+    /// exactly the conflict worth refusing.
+    pub expected_updated_at: Option<String>,
     pub status: Option<String>,
     pub occurred_at: Option<String>,
     pub aliases: Option<Vec<String>>,
@@ -205,6 +221,18 @@ pub fn update_document(
     let root = root.as_ref();
     let vault = Vault::open(root)?;
     let record = vault.load_document_record(id)?;
+
+    // Checked first, before any work: if the document moved on, nothing the
+    // caller asked for is safe to apply.
+    if let Some(expected) = &patch.expected_updated_at {
+        let actual = record.metadata.updated_at.as_deref().unwrap_or_default();
+        if actual != expected {
+            return Err(Error::Conflict(format!(
+                "`{id}` was last updated at `{actual}`, but the write expected `{expected}`; \
+                 re-read it and try again"
+            )));
+        }
+    }
 
     // Edit the on-disk sidecar in place rather than re-rendering it from
     // `DocumentMetadata`: keys kataan does not define survive untouched, in

@@ -238,6 +238,30 @@ export async function getDocument(id: string, theme?: string) {
   return getJson<DocumentResponse>(`/api/document?${params}`);
 }
 
+/// Save a document's Markdown body.
+///
+/// `expectedUpdatedAt` is the `updated_at` the editor loaded. The server
+/// refuses with 409 if the document changed since, so a save cannot silently
+/// discard an edit made in a text editor or by an agent while this tab sat
+/// open.
+export async function updateDocumentBody(id: string, body: string, expectedUpdatedAt?: string) {
+  const path = id.split('/').map(encodeURIComponent).join('/');
+  const response = await fetch(`${API_BASE}/api/documents/${path}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ body, expected_updated_at: expectedUpdatedAt }),
+  });
+  if (response.status === 409) {
+    throw new Error(
+      'This document changed on disk since you opened it. Reload to see the current version — your text is still here until you do.',
+    );
+  }
+  if (!response.ok) {
+    throw new Error(`Save failed: ${response.status} ${await response.text()}`);
+  }
+  return response.json() as Promise<{ ok: boolean }>;
+}
+
 export async function getFile(path: string) {
   return getJson<FileResponse>(`/api/file?path=${encodeURIComponent(path)}`);
 }

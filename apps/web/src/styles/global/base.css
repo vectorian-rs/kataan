@@ -50,3 +50,11 @@ button:focus-visible,
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* `hidden` has to win over components that set their own `display`.
+   The attribute's UA rule is a bare `display: none`, which ties with — and so
+   loses to — a later class rule like `.ui-button { display: inline-flex }`.
+   Without this, hiding a button by setting `.hidden = true` does nothing. */
+[hidden] {
+  display: none !important;
+}

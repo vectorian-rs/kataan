@@ -231,3 +231,30 @@
 .reader-body tbody tr:hover {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
+
+/* The Markdown source editor, sized and placed to match `.reader-body` so the
+   text does not jump when you switch between reading and editing.
+
+   `.content-shell` is an animation wrapper, not a flex container, so `flex: 1`
+   does nothing here — the height has to be stated. The pane is viewport-tall
+   and the header takes `--top-bar-height` out of it. */
+.document-editor {
+  display: block;
+  max-inline-size: 680px;
+  inline-size: 100%;
+  block-size: calc(100vh - var(--top-bar-height) - var(--size-7));
+  margin-inline: auto;
+  padding: var(--size-5) var(--size-8) var(--size-7);
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-1);
+  line-height: var(--font-lineheight-4);
+  resize: none;
+}
+
+.document-editor:focus-visible {
+  outline: 2px solid var(--border);
+  outline-offset: -2px;
+}

@@ -11,6 +11,7 @@ import {
   type CanonicalFolderResponse,
   getDocument,
   getOntology,
+  updateDocumentBody,
   getFile,
   getFolder,
   getHighlightedFile,
@@ -46,14 +47,18 @@ import {
   appShell,
   breadcrumb,
   diagnosticsEl,
+  cancelButton,
   documentBody,
+  documentEditor,
   documentTitle,
   documentsEl,
   folderTitle,
   foldersEl,
   listToggle,
+  editButton,
   metadataPanel,
   ontologyButton,
+  saveButton,
   propertiesToggle,
   rebuildButton,
   searchForm,
@@ -142,6 +147,20 @@ function forgetDocumentSchema() {
   documentSchemaRequest = undefined;
 }
 
+/// The document currently open in the reader, when it is one.
+///
+/// Editing needs two things a rendered document does not carry: the Markdown
+/// source, and the `updated_at` it was read at — the precondition the server
+/// checks so a save cannot overwrite a change this tab never saw.
+interface OpenDocument {
+  id: string;
+  markdown: string;
+  updatedAt?: string;
+}
+
+let openDocument: OpenDocument | null = null;
+let editing = false;
+
 /// The query parameter naming a view that is not vault content.
 ///
 /// A view is not a resource in the vault, so it is not addressed by a path.
@@ -201,6 +220,24 @@ setPanelVisible(LIST_TOGGLE, LIST_TOGGLE.visible, { persist: false });
 
 propertiesToggle.addEventListener('click', () => {
   setPanelVisible(PROPERTIES_TOGGLE, !PROPERTIES_TOGGLE.visible, { persist: true });
+});
+
+editButton.addEventListener('click', beginEditing);
+cancelButton.addEventListener('click', cancelEditing);
+saveButton.addEventListener('click', () => {
+  void runAction(saveEditing, { owns: 'document' });
+});
+
+// Cmd/Ctrl+S saves, Escape cancels — a textarea that only commits by mouse is
+// not an editor anyone will use.
+documentEditor.addEventListener('keydown', (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+    event.preventDefault();
+    void runAction(saveEditing, { owns: 'document' });
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    cancelEditing();
+  }
 });
 
 listToggle.addEventListener('click', () => {
@@ -742,6 +779,9 @@ function renderFileRow(file: FolderFile) {
 async function selectFile(file: FolderFile, options: SelectOptions = {}) {
   const stale = options.stale ?? beginNavigation();
   selectedDocument = null;
+  openDocument = null;
+  editing = false;
+  renderEditControls();
   selectedFile = file;
   updateActiveRows();
   if (options.updateUrl ?? true) {
@@ -813,6 +853,16 @@ async function selectDocument(id: string, options: SelectOptions = {}) {
   if (updateUrl) {
     updateRouteUrl(vaultDocument);
   }
+  openDocument = {
+    id: vaultDocument.id,
+    markdown: vaultDocument.markdown,
+    updatedAt:
+      typeof vaultDocument.metadata.updated_at === 'string'
+        ? vaultDocument.metadata.updated_at
+        : undefined,
+  };
+  editing = false;
+  renderEditControls();
   renderDocumentBody(vaultDocument);
   renderMetadata(vaultDocument);
   renderSchema(schema);
@@ -909,6 +959,9 @@ async function selectFileByPath(path: string, stale: Stale) {
 /// past the first document opened in this session.
 function clearRouteSelection() {
   selectedDocument = null;
+  openDocument = null;
+  editing = false;
+  renderEditControls();
   selectedFile = null;
   breadcrumb.textContent = 'No document selected';
   documentTitle.textContent = 'Document';
@@ -1062,6 +1115,51 @@ function renderError(error: unknown, replacesDocument = false) {
   documentTitle.textContent = 'Unable to load document';
   documentBody.className = 'reader-body';
   documentBody.textContent = message;
+}
+
+/// Show the controls that apply right now: nothing without a document, Edit
+/// when reading one, Save/Cancel while editing.
+function renderEditControls() {
+  const hasDocument = openDocument !== null;
+  editButton.hidden = !hasDocument || editing;
+  saveButton.hidden = !editing;
+  cancelButton.hidden = !editing;
+  documentEditor.hidden = !editing;
+  documentBody.hidden = editing;
+}
+
+function beginEditing() {
+  if (!openDocument) return;
+  editing = true;
+  documentEditor.value = openDocument.markdown;
+  renderEditControls();
+  // Caret at the start, not wherever focus lands — otherwise the view opens
+  // scrolled past the first lines of the document you just chose to edit.
+  documentEditor.focus();
+  documentEditor.setSelectionRange(0, 0);
+  documentEditor.scrollTop = 0;
+}
+
+/// Leave the editor without saving. The rendered body is still in the DOM
+/// underneath, so there is nothing to re-fetch.
+function cancelEditing() {
+  editing = false;
+  renderEditControls();
+}
+
+async function saveEditing() {
+  if (!openDocument) return;
+  const body = documentEditor.value;
+  // Always sent, empty when the document has no `updated_at` — which is most
+  // of them in a hand-authored vault. Omitting it would mean no precondition at
+  // all, and the save could then overwrite an edit made while this tab sat open.
+  await updateDocumentBody(openDocument.id, body, openDocument.updatedAt ?? '');
+
+  // Re-read rather than patching the DOM: the server re-renders the Markdown,
+  // and `updated_at` has moved — keeping the stale one would make the *next*
+  // save fail its own precondition.
+  editing = false;
+  await selectDocument(openDocument.id, { updateUrl: false });
 }
 
 function updateActiveRows() {

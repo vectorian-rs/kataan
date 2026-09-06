@@ -188,7 +188,8 @@ pub fn list() -> Value {
                     "status": { "type": "string" },
                     "occurred_at": { "type": "string", "description": "When the thing this document describes happened. RFC 3339, and only RFC 3339: a calendar day (2026-08-29) or a moment (2026-08-29T12:00:00Z). A bare 2026 or 2026-08 is ISO 8601 but not RFC 3339 and is rejected." },
                     "aliases": { "type": "array", "items": { "type": "string" } },
-                    "labels": { "type": "array", "items": { "type": "string" } }
+                    "labels": { "type": "array", "items": { "type": "string" } },
+                    "expected_updated_at": { "type": "string", "description": "The `updated_at` you last read for this document. When given, the write is refused if the document has changed since — pass it whenever you read, edit, and write back, so you cannot silently discard someone else's change." }
                 },
                 "required": ["id"]
             }),
@@ -418,6 +419,7 @@ fn create_document(vault: &Path, args: &Value) -> Result<String> {
 fn update_document(vault: &Path, args: &Value) -> Result<String> {
     let id = parse_id(args, "id")?;
     let patch = DocumentPatch {
+        expected_updated_at: opt_str(args, "expected_updated_at"),
         status: opt_str(args, "status"),
         occurred_at: opt_str(args, "occurred_at"),
         aliases: opt_str_vec(args, "aliases"),

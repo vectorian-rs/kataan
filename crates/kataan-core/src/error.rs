@@ -47,4 +47,13 @@ pub enum Error {
     /// id collision, illegal edge, …) — a bad request, not on-disk corruption.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+
+    /// The document changed since the caller last read it, so the write it
+    /// asked for would silently discard whatever changed.
+    ///
+    /// Distinct from `InvalidRequest`: the request is well-formed and would
+    /// have been accepted a moment ago. The caller needs to re-read and decide,
+    /// not correct its input.
+    #[error("conflict: {0}")]
+    Conflict(String),
 }
