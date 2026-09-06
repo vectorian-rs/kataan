@@ -2,8 +2,7 @@
   "name": "kataan",
   "private": true,
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/*"
   ],
   "scripts": {
     "dev:web": "bun --filter @kataan/web dev",

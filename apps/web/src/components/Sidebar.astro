@@ -1,18 +1,11 @@
 ---
+import ResizeHandle from './ResizeHandle.astro';
 import FolderNav from './FolderNav.astro';
 import ThemeToggle from './ThemeToggle.astro';
 ---
 
 <aside class="sidebar">
-  <div
-    id="sidebar-resize-handle"
-    class="column-resize-handle resize-inline-end"
-    role="separator"
-    aria-label="Resize navigation column"
-    aria-orientation="vertical"
-    tabindex="0"
-  >
-  </div>
+  <ResizeHandle id="sidebar-resize-handle" label="Resize navigation column" />
 
   <div>
     <header class="panel-header app-header">

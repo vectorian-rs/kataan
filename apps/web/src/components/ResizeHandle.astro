@@ -1,0 +1,25 @@
+---
+// The draggable divider between two columns. Identical in all three places
+// except for its id, which side it sits on, and what it is called — so it is
+// one component with three props rather than three copies whose ARIA and
+// keyboard affordances drift apart.
+interface Props {
+  id: string;
+  label: string;
+  /// Which edge of the owning column the handle sits on. The properties panel
+  /// is on the right of the shell, so its handle is on its leading edge.
+  side?: 'start' | 'end';
+}
+
+const { id, label, side = 'end' } = Astro.props;
+---
+
+<div
+  id={id}
+  class={`column-resize-handle resize-inline-${side}`}
+  role="separator"
+  aria-label={label}
+  aria-orientation="vertical"
+  tabindex="0"
+>
+</div>

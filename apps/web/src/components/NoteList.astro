@@ -1,13 +1,9 @@
+---
+import ResizeHandle from './ResizeHandle.astro';
+---
+
 <aside class="list-panel">
-  <div
-    id="list-resize-handle"
-    class="column-resize-handle resize-inline-end"
-    role="separator"
-    aria-label="Resize document list column"
-    aria-orientation="vertical"
-    tabindex="0"
-  >
-  </div>
+  <ResizeHandle id="list-resize-handle" label="Resize document list column" />
 
   <header class="panel-header">
     <h2 id="folder-title" class="panel-title">Documents</h2>

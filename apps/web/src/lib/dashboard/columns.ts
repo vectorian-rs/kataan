@@ -1,57 +1,34 @@
 import {
+  clampColumnWidth,
+  COLUMN_GEOMETRY,
+  type ColumnGeometry,
+  type ResizableColumn,
+} from '../columns';
+
+import {
   appShell,
   listResizeHandle,
   propertiesResizeHandle,
   sidebarResizeHandle,
 } from './elements';
 
-type ResizableColumn = 'sidebar' | 'list' | 'properties';
-
-type ColumnResizeConfig = {
-  key: ResizableColumn;
-  handle: HTMLElement;
-  cssProperty: string;
-  storageKey: string;
-  defaultWidth: number;
-  minWidth: number;
-  maxWidth: number;
-  dragDirection: 1 | -1;
-};
+/// The geometry plus the handle that drives it. The numbers come from
+/// `lib/columns.ts`, which the inline anti-flash script in `AppLayout.astro`
+/// also reads — the two must not carry separate copies.
+type ColumnResizeConfig = ColumnGeometry & { handle: HTMLElement };
 
 const COLUMN_KEYBOARD_STEP = 10;
 
-export const RESIZABLE_COLUMNS: ColumnResizeConfig[] = [
-  {
-    key: 'sidebar',
-    handle: sidebarResizeHandle,
-    cssProperty: '--sidebar-width',
-    storageKey: 'kataan:sidebar-width',
-    defaultWidth: 220,
-    minWidth: 160,
-    maxWidth: 420,
-    dragDirection: 1,
-  },
-  {
-    key: 'list',
-    handle: listResizeHandle,
-    cssProperty: '--list-width',
-    storageKey: 'kataan:list-width',
-    defaultWidth: 320,
-    minWidth: 220,
-    maxWidth: 560,
-    dragDirection: 1,
-  },
-  {
-    key: 'properties',
-    handle: propertiesResizeHandle,
-    cssProperty: '--properties-width',
-    storageKey: 'kataan:properties-width',
-    defaultWidth: 260,
-    minWidth: 220,
-    maxWidth: 420,
-    dragDirection: -1,
-  },
-];
+const HANDLES: Record<ResizableColumn, HTMLElement> = {
+  sidebar: sidebarResizeHandle,
+  list: listResizeHandle,
+  properties: propertiesResizeHandle,
+};
+
+export const RESIZABLE_COLUMNS: ColumnResizeConfig[] = COLUMN_GEOMETRY.map((column) => ({
+  ...column,
+  handle: HANDLES[column.key],
+}));
 
 const columnWidths = new Map<ResizableColumn, number>();
 
@@ -137,8 +114,4 @@ function getColumnWidth(column: ColumnResizeConfig) {
 export function readSavedColumnWidth(column: ColumnResizeConfig) {
   const savedWidth = Number.parseInt(localStorage.getItem(column.storageKey) ?? '', 10);
   return Number.isFinite(savedWidth) ? clampColumnWidth(column, savedWidth) : column.defaultWidth;
-}
-
-function clampColumnWidth(column: ColumnResizeConfig, width: number) {
-  return Math.min(column.maxWidth, Math.max(column.minWidth, Math.round(width)));
 }

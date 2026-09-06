@@ -78,17 +78,6 @@ export type FolderFile = {
   extension?: string;
 };
 
-export type FolderResponse = {
-  folder: string;
-  index: {
-    name: string;
-    description?: string;
-    default_type?: string;
-    folder_checksum?: string;
-  };
-  documents: FolderDocument[];
-};
-
 export type CanonicalFolderResponse = {
   id: string;
   metadata?: Record<string, unknown>;
@@ -163,7 +152,10 @@ export type TomlSchemaResponse = {
 
 export type SearchQuery = {
   q?: string;
-  kind?: 'document' | 'folder' | 'file';
+  /// Only the two the index can hold. `kataan_search::Kind` is `Folder |
+  /// Document`, so asking for `file` matched nothing and looked like an empty
+  /// vault rather than an impossible filter.
+  kind?: 'document' | 'folder';
   type?: string;
   status?: string;
   facet?: string;

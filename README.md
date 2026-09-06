@@ -11,7 +11,6 @@ Filesystem-native Markdown/TOML knowledge workspace.
 - `crates/kataan-server` — Rust HTTP API
 - `crates/kataan-mcp` — MCP server (agents read + write the vault over stdio)
 - `apps/web` — Astro frontend (static SPA; can be embedded into the server)
-- `packages/client` — shared TypeScript client/types
 - `examples/vault` — example vault
 
 ## First commands
