@@ -152,6 +152,13 @@ export type TomlSchemaResponse = {
     notes: string[];
   };
   toml_template: string;
+  /// The vault's `[nodes.<kind>]` declaration, when `kind` names a document
+  /// type that has one. This is what makes the type different from every other
+  /// document, and what the write boundary enforces.
+  node_schema?: {
+    required: string[];
+    fields: Record<string, FieldSchema>;
+  };
 };
 
 export type SearchQuery = {
@@ -244,6 +251,35 @@ export async function getDocument(id: string, theme?: string) {
 /// refuses with 409 if the document changed since, so a save cannot silently
 /// discard an edit made in a text editor or by an agent while this tab sat
 /// open.
+/// Everything one Save writes. Omitted keys are left alone; a `null` inside
+/// `fields` removes that key.
+export type DocumentEdit = {
+  body?: string;
+  status?: string | null;
+  aliases?: string[];
+  labels?: string[];
+  occurred_at?: string | null;
+  fields?: Record<string, unknown>;
+};
+
+export async function updateDocument(id: string, edit: DocumentEdit, expectedUpdatedAt?: string) {
+  const path = id.split('/').map(encodeURIComponent).join('/');
+  const response = await fetch(`${API_BASE}/api/documents/${path}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ...edit, expected_updated_at: expectedUpdatedAt }),
+  });
+  if (response.status === 409) {
+    throw new Error(
+      'This document changed on disk since you opened it. Reload to see the current version — your text is still here until you do.',
+    );
+  }
+  if (!response.ok) {
+    throw new Error(`Save failed: ${response.status} ${await response.text()}`);
+  }
+  return response.json() as Promise<{ ok: boolean }>;
+}
+
 export async function updateDocumentBody(id: string, body: string, expectedUpdatedAt?: string) {
   const path = id.split('/').map(encodeURIComponent).join('/');
   const response = await fetch(`${API_BASE}/api/documents/${path}`, {

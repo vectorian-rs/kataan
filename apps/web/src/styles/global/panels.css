@@ -175,3 +175,34 @@
 .diagnostic.info {
   border-inline-start-color: var(--info);
 }
+
+/* The properties panel while editing. Same grid as the read-only view, so the
+   panel does not reflow when you enter edit mode. */
+.metadata-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-1);
+  margin-block-end: var(--size-3);
+}
+
+.metadata-input {
+  inline-size: 100%;
+  padding: var(--size-1) var(--size-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--font-size-0);
+}
+
+.metadata-input:focus-visible {
+  outline: 2px solid var(--border);
+  outline-offset: -2px;
+}
+
+/* A value the form declines to edit — structure the Markdown source owns. */
+.metadata-readonly {
+  padding: var(--size-1) 0;
+  font-size: var(--font-size-0);
+}

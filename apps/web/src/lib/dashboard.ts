@@ -11,7 +11,7 @@ import {
   type CanonicalFolderResponse,
   getDocument,
   getOntology,
-  updateDocumentBody,
+  updateDocument,
   getFile,
   getFolder,
   getHighlightedFile,
@@ -26,6 +26,7 @@ import {
   validateVault,
   type Diagnostic,
   type DocumentResponse,
+  type TomlSchemaResponse,
   type FolderChild,
   type FolderDocument,
   type FolderFile,
@@ -78,6 +79,7 @@ import {
 import { folderIcon } from './dashboard/icons';
 import { clearPanels, renderMetadata, renderSchema } from './dashboard/panels';
 import { renderOntology } from './dashboard/ontology-view';
+import { readMetadataForm, renderMetadataForm } from './dashboard/metadata-form';
 import {
   appendSafeSnippet,
   renderMissingSearchIndex,
@@ -131,6 +133,26 @@ const PROPERTIES_TOGGLE: PanelToggle = {
   aria: ['Hide properties sidebar', 'Open properties sidebar'],
 };
 
+/// One fetch per type, kept because a type's schema changes only when the
+/// ontology does — and `forgetDocumentSchema` clears these alongside it.
+///
+/// Declared above the boot block, like every other module-level `const` here:
+/// boot reaches this through `selectDocument`, and a `const` initialised later
+/// in the module is still `undefined` at that point. The bundler lowers it to
+/// `var`, so the failure is a `TypeError` at run time rather than anything the
+/// type checker or a temporal-dead-zone error would catch.
+const typeSchemas = new Map<string, Promise<TomlSchemaResponse>>();
+
+function typeSchemaFor(vaultDocument: DocumentResponse) {
+  const type = String(vaultDocument.metadata.type ?? '');
+  let request = typeSchemas.get(type);
+  if (!request) {
+    request = getSchema(type);
+    typeSchemas.set(type, request);
+  }
+  return request;
+}
+
 /// `/api/schema/document` describes kataan's own metadata struct plus the
 /// vault's constraints — the same ~1.7 KB for every document, and constant
 /// until the vault reloads. Fetched once instead of on every selection.
@@ -145,6 +167,7 @@ function documentSchema() {
 /// selection re-fetches rather than rendering a schema from before the change.
 function forgetDocumentSchema() {
   documentSchemaRequest = undefined;
+  typeSchemas.clear();
 }
 
 /// The document currently open in the reader, when it is one.
@@ -156,6 +179,12 @@ interface OpenDocument {
   id: string;
   markdown: string;
   updatedAt?: string;
+  /// Kept so entering edit mode renders the form without a second fetch, and
+  /// Cancel restores the panel from what was already displayed.
+  document: DocumentResponse;
+  /// The type's schema, when it declares fields. Absent is fine — the form then
+  /// offers whatever keys the document already carries.
+  schema?: TomlSchemaResponse;
 }
 
 let openDocument: OpenDocument | null = null;
@@ -848,6 +877,11 @@ async function selectDocument(id: string, options: SelectOptions = {}) {
     documentSchema(),
   ]);
   if (stale()) return;
+  // The *type's* schema carries `node_schema`; the generic `document` one above
+  // describes kataan's own keys and is what the schema panel shows. Absent when
+  // the type declares nothing, which the form handles.
+  const typeSchema = await typeSchemaFor(vaultDocument).catch(() => undefined);
+  if (stale()) return;
   breadcrumb.textContent = vaultDocument.id.replaceAll('/', ' › ');
   documentTitle.textContent = basenameFromId(vaultDocument.id);
   if (updateUrl) {
@@ -860,6 +894,8 @@ async function selectDocument(id: string, options: SelectOptions = {}) {
       typeof vaultDocument.metadata.updated_at === 'string'
         ? vaultDocument.metadata.updated_at
         : undefined,
+    document: vaultDocument,
+    schema: typeSchema,
   };
   editing = false;
   renderEditControls();
@@ -1131,6 +1167,7 @@ function renderEditControls() {
 function beginEditing() {
   if (!openDocument) return;
   editing = true;
+  renderMetadataForm(openDocument.document, openDocument.schema);
   documentEditor.value = openDocument.markdown;
   renderEditControls();
   // Caret at the start, not wherever focus lands — otherwise the view opens
@@ -1143,17 +1180,27 @@ function beginEditing() {
 /// Leave the editor without saving. The rendered body is still in the DOM
 /// underneath, so there is nothing to re-fetch.
 function cancelEditing() {
+  if (openDocument) {
+    renderMetadata(openDocument.document);
+  }
   editing = false;
   renderEditControls();
 }
 
 async function saveEditing() {
   if (!openDocument) return;
-  const body = documentEditor.value;
-  // Always sent, empty when the document has no `updated_at` — which is most
-  // of them in a hand-authored vault. Omitting it would mean no precondition at
-  // all, and the save could then overwrite an edit made while this tab sat open.
-  await updateDocumentBody(openDocument.id, body, openDocument.updatedAt ?? '');
+  // Body and metadata in one call: `update_document` applies them together, so
+  // a save either lands whole or is refused whole.
+  //
+  // The precondition is always sent, empty when the document has no
+  // `updated_at` — which is most of them in a hand-authored vault. Omitting it
+  // would mean no check at all, and the save could then overwrite an edit made
+  // while this tab sat open.
+  await updateDocument(
+    openDocument.id,
+    { body: documentEditor.value, ...readMetadataForm() },
+    openDocument.updatedAt ?? '',
+  );
 
   // Re-read rather than patching the DOM: the server re-renders the Markdown,
   // and `updated_at` has moved — keeping the stale one would make the *next*
