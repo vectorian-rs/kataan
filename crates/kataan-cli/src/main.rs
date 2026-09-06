@@ -150,6 +150,9 @@ enum GraphCommand {
         /// Restrict to these edge predicates (repeatable or comma-separated).
         #[arg(long = "predicate", value_delimiter = ',')]
         predicates: Vec<String>,
+        /// Refuse rather than export more than this many nodes.
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Show what a document is connected to, in either or both directions.
     Neighbors {
@@ -254,9 +257,10 @@ fn run() -> Result<()> {
                 path,
                 types,
                 predicates,
+                limit,
             } => {
                 let vault = kataan_core::vault::LoadedVault::load(&path)?;
-                let graph = kataan_core::query::subgraph(&vault, &types, &predicates);
+                let graph = kataan_core::query::subgraph(&vault, &types, &predicates, limit)?;
                 print_line(&serde_json::to_string_pretty(&graph)?)?;
             }
             GraphCommand::Neighbors {

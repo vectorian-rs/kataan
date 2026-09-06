@@ -106,7 +106,7 @@ fn a_symmetric_edge_is_reachable_from_both_sides_but_exported_once() {
 
     // ...but the export contains it once, in the authored direction. Iterating
     // the direction indexes instead would emit it twice.
-    let graph = subgraph(&vault, &[], &[]);
+    let graph = subgraph(&vault, &[], &[], None).unwrap();
     let related: Vec<_> = graph
         .links
         .iter()
@@ -128,7 +128,7 @@ fn inverse_edges_are_not_exported_as_extra_links() {
     let root = vault_with_edges("subgraph-inverse");
     let vault = LoadedVault::load(&root).unwrap();
 
-    let graph = subgraph(&vault, &[], &[]);
+    let graph = subgraph(&vault, &[], &[], None).unwrap();
 
     // `subtopic_of` has inverse `has_subtopic`. Only the authored direction is
     // a link; the inverse exists for traversal, not for export.
@@ -156,7 +156,7 @@ fn filters_keep_the_result_internally_consistent() {
     let root = vault_with_edges("subgraph-filters");
     let vault = LoadedVault::load(&root).unwrap();
 
-    let topics_only = subgraph(&vault, &["topic".to_owned()], &[]);
+    let topics_only = subgraph(&vault, &["topic".to_owned()], &[], None).unwrap();
     assert!(topics_only.nodes.iter().all(|node| node.r#type == "topic"));
     // The note->topic `related_to` link must be dropped: its source is gone.
     let ids: BTreeSet<&str> = topics_only.nodes.iter().map(|n| n.id.as_str()).collect();
@@ -171,7 +171,7 @@ fn filters_keep_the_result_internally_consistent() {
         .iter()
         .any(|link| link.predicate == "related_to"));
 
-    let by_predicate = subgraph(&vault, &[], &["subtopic_of".to_owned()]);
+    let by_predicate = subgraph(&vault, &[], &["subtopic_of".to_owned()], None).unwrap();
     assert!(by_predicate
         .links
         .iter()
@@ -181,13 +181,52 @@ fn filters_keep_the_result_internally_consistent() {
 }
 
 #[test]
+fn an_oversized_subgraph_is_refused_rather_than_truncated() {
+    let root = vault_with_edges("subgraph-limit");
+    let vault = LoadedVault::load(&root).unwrap();
+
+    let full = subgraph(&vault, &[], &[], None).unwrap();
+    let total = full.nodes.len();
+    assert!(total > 1, "fixture too small to exceed a limit");
+
+    // One below the match count refuses. It must not come back with `total - 1`
+    // nodes: a caller cannot tell a truncated graph from a complete one, and
+    // every link into a dropped node would dangle.
+    let refused = subgraph(&vault, &[], &[], Some(total - 1)).unwrap_err();
+    let message = refused.to_string();
+    assert!(
+        message.contains(&total.to_string()) && message.contains("types"),
+        "error should say how many were found and how to narrow it: {message}"
+    );
+
+    // Exactly the match count is allowed — the boundary is "more than", so a
+    // caller who asks for precisely what exists is not refused it.
+    assert_eq!(
+        subgraph(&vault, &[], &[], Some(total)).unwrap().nodes.len(),
+        total
+    );
+
+    // A filter that brings it under the limit succeeds where the unfiltered
+    // call failed, which is what the error tells the caller to do.
+    let topics = subgraph(&vault, &["topic".to_owned()], &[], Some(total - 1)).unwrap();
+    assert!(topics.nodes.len() < total);
+
+    // Above the hard ceiling is refused whatever the vault holds.
+    assert!(subgraph(&vault, &[], &[], Some(MAX_SUBGRAPH_NODES + 1)).is_err());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn export_is_deterministic_across_rebuilds() {
     let root = vault_with_edges("subgraph-deterministic");
 
     let first =
-        serde_json::to_value(subgraph(&LoadedVault::load(&root).unwrap(), &[], &[])).unwrap();
+        serde_json::to_value(subgraph(&LoadedVault::load(&root).unwrap(), &[], &[], None).unwrap())
+            .unwrap();
     let second =
-        serde_json::to_value(subgraph(&LoadedVault::load(&root).unwrap(), &[], &[])).unwrap();
+        serde_json::to_value(subgraph(&LoadedVault::load(&root).unwrap(), &[], &[], None).unwrap())
+            .unwrap();
 
     assert_eq!(first, second, "graph export is not reproducible");
     assert_ne!(first["nodes"], json!([]));
@@ -519,7 +558,7 @@ fn a_reciprocally_declared_edge_exports_once() {
     mutate::add_edge(&root, &rust, "related_to", &note).unwrap();
 
     let vault = LoadedVault::load(&root).unwrap();
-    let graph = subgraph(&vault, &[], &[]);
+    let graph = subgraph(&vault, &[], &[], None).unwrap();
     let related: Vec<_> = graph
         .links
         .iter()

@@ -154,6 +154,8 @@ pub struct NeighborsQuery {
 pub struct SubgraphQuery {
     pub types: Option<String>,
     pub predicates: Option<String>,
+    /// Lowers the node ceiling; omitted means `MAX_SUBGRAPH_NODES`.
+    pub limit: Option<usize>,
 }
 
 fn comma_separated(value: Option<&String>) -> Vec<String> {
@@ -549,13 +551,16 @@ pub async fn subgraph(
     State(state): State<AppState>,
     Query(query): Query<SubgraphQuery>,
 ) -> Result<Json<kataan_core::query::Subgraph>, ApiError> {
-    // The one read with no `limit`: it walks every node and every edge, then
-    // serializes the lot. Unbounded CPU is exactly what the pool is for.
+    // Walks every node and every edge, then serializes the lot — unbounded CPU
+    // is exactly what the pool is for, and the ceiling in core is what stops the
+    // response body being unbounded too.
     blocking(move || {
         let loaded = read_loaded_vault(&state)?;
         let types = comma_separated(query.types.as_ref());
         let predicates = comma_separated(query.predicates.as_ref());
-        Ok(kataan_core::query::subgraph(&loaded, &types, &predicates))
+        // Through `core_error`, not a bare `?`: a limit the caller chose is the
+        // caller's mistake, and the blanket conversion would report it as a 500.
+        kataan_core::query::subgraph(&loaded, &types, &predicates, query.limit).map_err(core_error)
     })
     .await
     .map(Json)

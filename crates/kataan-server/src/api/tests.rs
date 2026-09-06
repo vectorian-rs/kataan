@@ -816,6 +816,53 @@ async fn request(app: Router, method: &str, uri: &str) -> axum::response::Respon
     .unwrap()
 }
 
+#[tokio::test]
+async fn an_oversized_subgraph_is_a_bad_request_not_a_huge_response() {
+    let root = test_vault();
+    for slug in ["alpha", "beta"] {
+        fs::write(root.join(format!("notes/{slug}.md")), format!("# {slug}\n")).unwrap();
+        fs::write(
+            root.join(format!("notes/{slug}.toml")),
+            format!("type = \"note\"\nmarkdown = \"{slug}.md\"\n"),
+        )
+        .unwrap();
+    }
+    kataan_core::rebuild::rebuild_indexes(&root).unwrap();
+
+    // Unfiltered is fine: the ceiling permits a whole-vault export, which is
+    // what the graph view and `kataan graph export` both want.
+    let response = request(test_app(&root), "GET", "/api/graph/subgraph").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let full: serde_json::Value = json_response(response).await;
+    let total = full["nodes"].as_array().unwrap().len();
+    assert!(total > 1, "fixture too small to exceed a limit");
+
+    // A caller-lowered ceiling is refused as a request error rather than
+    // answered with a partial graph.
+    let response = request(
+        test_app(&root),
+        "GET",
+        &format!("/api/graph/subgraph?limit={}", total - 1),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    // Above the hard maximum is refused too, so `limit` cannot be used to opt
+    // out of the ceiling.
+    let response = request(
+        test_app(&root),
+        "GET",
+        &format!(
+            "/api/graph/subgraph?limit={}",
+            kataan_core::query::MAX_SUBGRAPH_NODES + 1
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
 fn test_app(root: &Path) -> Router {
     router(AppState::new(root.to_path_buf()).unwrap())
 }

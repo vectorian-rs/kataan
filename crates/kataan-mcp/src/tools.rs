@@ -146,12 +146,13 @@ pub fn list() -> Value {
         ),
         tool(
             "subgraph",
-            "Export nodes and links for the whole vault in one call. Each edge appears once, in the direction it was authored. Can be large — filter by types/predicates, and prefer `neighbors` when you only need one document's connections.",
+            "Export nodes and links for the whole vault in one call. Each edge appears once, in the direction it was authored. Expensive in context — a mid-sized vault is tens of thousands of tokens — so it refuses above 200 nodes rather than flooding you: filter by types/predicates, raise `limit` if you truly want the lot, and prefer `neighbors` when you only need one document's connections.",
             json!({
                 "type": "object",
                 "properties": {
                     "types": { "type": "array", "items": { "type": "string" }, "description": "Restrict to these document types; omit for all." },
-                    "predicates": { "type": "array", "items": { "type": "string" }, "description": "Restrict to these edge predicates; omit for all." }
+                    "predicates": { "type": "array", "items": { "type": "string" }, "description": "Restrict to these edge predicates; omit for all." },
+                    "limit": { "type": "integer", "description": "Refuse rather than return more than this many nodes. Defaults to 200; the maximum is 5000." }
                 }
             }),
         ),
@@ -388,13 +389,25 @@ fn neighbors(vault: &Path, args: &Value) -> Result<String> {
     to_pretty(&result)
 }
 
+/// Tighter than [`kataan_core::query::MAX_SUBGRAPH_NODES`] on purpose. The
+/// whole snuffbox vault exports as 238 KB of JSON — roughly 60k tokens, spent
+/// before the agent has read a word of it. An agent that genuinely wants the
+/// whole graph can say so with `limit`; one that reached for `subgraph` when it
+/// meant `neighbors` gets told, cheaply.
+const DEFAULT_SUBGRAPH_NODES: usize = 200;
+
 fn subgraph(vault: &Path, args: &Value) -> Result<String> {
     let loaded = LoadedVault::load(vault)?;
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .map_or(DEFAULT_SUBGRAPH_NODES, |n| n as usize);
     let graph = kataan_core::query::subgraph(
         &loaded,
         &str_vec(args, "types"),
         &str_vec(args, "predicates"),
-    );
+        Some(limit),
+    )?;
     to_pretty(&graph)
 }
 

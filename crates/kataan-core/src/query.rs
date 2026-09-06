@@ -90,6 +90,16 @@ pub struct Subgraph {
 pub const DEFAULT_DOCUMENT_LIMIT: usize = 100;
 pub const MAX_DOCUMENT_LIMIT: usize = 1000;
 
+/// Ceilings on a [`subgraph`]. Sized against a real vault: snuffbox exports 843
+/// nodes and 635 links in 238 KB, so these leave roughly 6× and 30× headroom
+/// while still refusing a graph no consumer could usefully receive.
+///
+/// A whole-vault export is a legitimate request — it is what `kataan graph
+/// export` is for — so the ceiling is set to permit it rather than to make
+/// filtering mandatory.
+pub const MAX_SUBGRAPH_NODES: usize = 5_000;
+pub const MAX_SUBGRAPH_LINKS: usize = 20_000;
+
 /// How much of each document to return.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -532,13 +542,43 @@ pub fn neighbors(
 /// Empty `types` or `predicates` means no filter on that axis. A link is kept
 /// only when both endpoints survive the type filter, so the result is always
 /// internally consistent — no link ever points at a node that is not present.
-pub fn subgraph(vault: &LoadedVault, types: &[String], predicates: &[String]) -> Subgraph {
+///
+/// Too large is an error, never a truncation, and unlike [`documents`] there is
+/// no paging option: dropping nodes from a graph leaves links pointing at
+/// nothing, and a page of a graph is not a graph. `limit` lowers the node
+/// ceiling for callers who want to be told "too big" early — MCP does, where a
+/// whole-vault export is a token bomb — and cannot raise it past
+/// [`MAX_SUBGRAPH_NODES`].
+pub fn subgraph(
+    vault: &LoadedVault,
+    types: &[String],
+    predicates: &[String],
+    limit: Option<usize>,
+) -> Result<Subgraph> {
+    let limit = limit.unwrap_or(MAX_SUBGRAPH_NODES);
+    if limit > MAX_SUBGRAPH_NODES {
+        return Err(Error::InvalidRequest(format!(
+            "limit {limit} exceeds the maximum of {MAX_SUBGRAPH_NODES}"
+        )));
+    }
+
     let type_matches = |ty: &str| {
         types.is_empty()
             || types
                 .iter()
                 .any(|allowed| vault.type_registry.is_a(ty, allowed))
     };
+
+    // Counted before anything is cloned. Building the answer and then refusing
+    // to send it would pay exactly the memory cost the ceiling exists to avoid.
+    let matching = vault
+        .documents
+        .iter()
+        .filter(|(_, record)| type_matches(&record.metadata.r#type))
+        .count();
+    if matching > limit {
+        return Err(too_large("nodes", matching, limit, "types"));
+    }
 
     let nodes: Vec<DocumentSummary> = vault
         .documents
@@ -548,15 +588,28 @@ pub fn subgraph(vault: &LoadedVault, types: &[String], predicates: &[String]) ->
         .collect();
     let present: BTreeSet<&str> = nodes.iter().map(|node| node.id.as_str()).collect();
 
+    let kept = |edge: &&crate::graph::Edge| {
+        (predicates.is_empty() || predicates.iter().any(|name| name == &edge.predicate))
+            && present.contains(edge.source.as_str())
+            && present.contains(edge.target.as_str())
+    };
+
+    // Links are bounded separately: a vault with few documents can still
+    // declare a great many edges between them, and `types` is no help there.
+    let matching = vault.graph.edges().filter(kept).count();
+    if matching > MAX_SUBGRAPH_LINKS {
+        return Err(too_large(
+            "links",
+            matching,
+            MAX_SUBGRAPH_LINKS,
+            "predicates",
+        ));
+    }
+
     let links = vault
         .graph
         .edges()
-        .filter(|edge| {
-            predicates.is_empty() || predicates.iter().any(|name| name == &edge.predicate)
-        })
-        .filter(|edge| {
-            present.contains(edge.source.as_str()) && present.contains(edge.target.as_str())
-        })
+        .filter(kept)
         .map(|edge| Link {
             source: edge.source.as_str().to_owned(),
             predicate: edge.predicate.clone(),
@@ -564,7 +617,17 @@ pub fn subgraph(vault: &LoadedVault, types: &[String], predicates: &[String]) ->
         })
         .collect();
 
-    Subgraph { nodes, links }
+    Ok(Subgraph { nodes, links })
+}
+
+/// Says what was too big, by how much, and which filter narrows it — an error
+/// that only says "too large" leaves the caller guessing at the one thing it
+/// needs to do next.
+fn too_large(what: &str, found: usize, limit: usize, narrow: &str) -> Error {
+    Error::InvalidRequest(format!(
+        "subgraph has {found} {what}, more than the limit of {limit}; \
+         narrow it with `{narrow}`"
+    ))
 }
 
 #[cfg(test)]

@@ -124,7 +124,7 @@ outgoing appears as whatever `inverse` names).
 Nodes come back **hydrated** with type, title, status, and labels, so you can
 aggregate without a second fetch per neighbour.
 
-### `subgraph(types?, predicates?)`
+### `subgraph(types?, predicates?, limit?)`
 
 ```json
 { "nodes": [ {"id","type","title","status","labels","is_folder_index"} ],
@@ -157,9 +157,17 @@ relationship as a document with its own interval and point at it.
 target must exist, and match `to` if given) but is invisible to `neighbors`,
 `subgraph`, and `linked_to`. Use `[edges]` for anything you intend to traverse.
 
-`subgraph` has no `limit`. A full export of a ~700-document vault is fine over
-HTTP and CLI; over MCP it is a large response, so filter by `types` and
-`predicates`, or prefer `neighbors` when you only need one document.
+**Too large is refused, never truncated.** A page of a graph is not a graph —
+drop nodes and the links into them dangle — so `subgraph` errors instead of
+returning part of the answer. The ceiling is 5000 nodes and 20000 links, which
+permits a full export of a ~800-document vault; the error names the count and
+the filter that narrows it.
+
+`limit` only lowers the node ceiling, it cannot raise it past the maximum. Over
+MCP it defaults to 200, because a full export of a mid-sized vault is tens of
+thousands of tokens: filter by `types` and `predicates`, pass a larger `limit`
+if you genuinely want the lot, or prefer `neighbors` when you only need one
+document.
 
 ### Subtypes change what a type filter returns
 

@@ -63,7 +63,7 @@ GET  /api/file/raw?path=<vault-relative-file-path>
 GET  /api/resolve-path?path=<vault-relative-or-absolute-path>
 GET  /api/documents?type=&status=&labels=&ids=&path_prefix=&linked_to=&predicate=&direction=&include=&limit=&offset=
 GET  /api/graph/neighbors?id=<canonical-id>&predicate=<predicate>&direction=out|in|both
-GET  /api/graph/subgraph?types=<comma-separated>&predicates=<comma-separated>
+GET  /api/graph/subgraph?types=<comma-separated>&predicates=<comma-separated>&limit=
 GET  /api/schema/document
 GET  /api/schema/folder-index
 GET  /api/schema/vault
