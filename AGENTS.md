@@ -17,6 +17,17 @@ concern rather than by byte offset — `apps/web/src/styles/global/` is the work
 example, and it was re-cut on rule boundaries precisely because the first split
 was by offset and meant nothing.
 
+Test modules count. "Tests for X" is not a concern; "tests for creating a
+document" and "tests for edge writes" are, and a 1200-line test file hides the
+gap where a case should have been. Split them the same way, on what they
+exercise.
+
+Splitting a test file is riskier than it looks, because a lost attribute is
+silent: a `#[test]` or `#[cfg(unix)]` left behind with the previous item leaves
+a function that still compiles, still reads like a test, and never runs. Doc
+comments detach the same way. Afterwards, diff the test names against the
+original and check the *executed* count, not just that the suite is green.
+
 ## Measure before you optimise
 
 **Find a control.** `rebuild-indexes` took 9.3s and `validate` took 0.20s while
