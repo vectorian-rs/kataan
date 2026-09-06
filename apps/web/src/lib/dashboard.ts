@@ -1,5 +1,4 @@
 import {
-  File,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -11,29 +10,20 @@ import {
   type CanonicalFolderResponse,
   getDocument,
   getOntology,
-  updateDocument,
   getFile,
   getFolder,
   getHighlightedFile,
   getFolders,
   getSchema,
-  getSearchStatus,
   getVault,
   rebuildIndexes,
   reindexSearch,
   resolvePath,
-  searchVault,
   validateVault,
   type Diagnostic,
   type DocumentResponse,
   type TomlSchemaResponse,
-  type FolderChild,
-  type FolderDocument,
   type FolderFile,
-  type FolderSummary,
-  type SearchResponse,
-  type SearchResult,
-  type SearchStatus,
   type ValidateResponse,
 } from './api';
 
@@ -43,7 +33,6 @@ import {
   readSavedColumnWidth,
   setColumnWidth,
 } from './dashboard/columns';
-import { clickableRow, emptyListNote, listSection } from './dashboard/dom';
 import {
   appShell,
   breadcrumb,
@@ -52,7 +41,6 @@ import {
   documentBody,
   documentEditor,
   documentTitle,
-  documentsEl,
   folderTitle,
   foldersEl,
   listToggle,
@@ -68,28 +56,27 @@ import {
   vaultSummary,
 } from './dashboard/elements';
 import { currentTheme, renderFileBody, renderHighlightedFile } from './dashboard/file-preview';
-import {
-  basenameFromId,
-  cssEscape,
-  depthFor,
-  fileExtensionClass,
-  folderTitleFromResponse,
-  isHighlightableFile,
-} from './dashboard/format';
-import { folderIcon } from './dashboard/icons';
+import { basenameFromId, folderTitleFromResponse, isHighlightableFile } from './dashboard/format';
 import { clearPanels, renderMetadata, renderSchema } from './dashboard/panels';
 import { renderOntology } from './dashboard/ontology-view';
-import { readMetadataForm, renderMetadataForm } from './dashboard/metadata-form';
 import {
-  appendSafeSnippet,
-  renderMissingSearchIndex,
-  renderSearchListError,
-  renderSearchLoading,
-  renderSearchStatus,
-  searchMetaPill,
-  searchSummary,
-  setSearchStatusMessage,
-} from './dashboard/search-view';
+  cancelPendingSearch,
+  refreshSearchStatus,
+  runSearch,
+  scheduleSearch,
+  type SearchActions,
+} from './dashboard/search';
+import {
+  collapseFolder,
+  isExpanded,
+  renderChildFolders,
+  renderFolderButton,
+  renderFolderContents,
+  type TreeActions,
+} from './dashboard/tree';
+import { beginEditing, cancelEditing, saveEditing, setOpenDocument } from './dashboard/editing';
+import { currentRoute, folderChain, isFolderRoute, setRoute } from './dashboard/routes';
+import { setSearchStatusMessage } from './dashboard/search-view';
 
 /// One panel toggle, configured twice.
 ///
@@ -170,41 +157,6 @@ function forgetDocumentSchema() {
   typeSchemas.clear();
 }
 
-/// The document currently open in the reader, when it is one.
-///
-/// Editing needs two things a rendered document does not carry: the Markdown
-/// source, and the `updated_at` it was read at — the precondition the server
-/// checks so a save cannot overwrite a change this tab never saw.
-interface OpenDocument {
-  id: string;
-  markdown: string;
-  updatedAt?: string;
-  /// Kept so entering edit mode renders the form without a second fetch, and
-  /// Cancel restores the panel from what was already displayed.
-  document: DocumentResponse;
-  /// The type's schema, when it declares fields. Absent is fine — the form then
-  /// offers whatever keys the document already carries.
-  schema?: TomlSchemaResponse;
-}
-
-let openDocument: OpenDocument | null = null;
-let editing = false;
-
-/// The query parameter naming a view that is not vault content.
-///
-/// A view is not a resource in the vault, so it is not addressed by a path.
-/// That also settles the collision question by construction: a query string
-/// cannot be mistaken for a canonical id, and no path has to be reserved.
-///
-/// Declared here rather than beside `currentRoute`, which is far below: the
-/// boot sequence calls it through `loadFolders`, and a `const` initialised
-/// later in the module is still `undefined` at that point. The comparison then
-/// silently fails instead of throwing — the bundler lowers this to `var`, so
-/// there is no temporal-dead-zone error to notice — and every deep link falls
-/// through to the default folder.
-const VIEW_PARAM = 'view';
-const MODEL_VIEW = 'model';
-
 /// Which navigation is current.
 ///
 /// Selecting a folder, a document or a file awaits several fetches, so two
@@ -232,13 +184,39 @@ function beginNavigation(): Stale {
   return () => generation !== navigationGeneration;
 }
 
+/// What clicking a row in the tree does. Declared above the boot block, like
+/// every other module-level `const` here — the bundler lowers `const` to `var`,
+/// so one initialised further down is `undefined` when boot reads it, with no
+/// temporal-dead-zone error to notice.
+/// What opening a search result does. The navigation token is created here, so
+/// the chain of ancestors and the document itself belong to one navigation and
+/// a second click supersedes the whole of it rather than half.
+const searchActions: SearchActions = {
+  restoreFolder: async () => {
+    if (selectedFolder) await selectFolder(selectedFolder, { selectFirst: false });
+  },
+  openDocument: async (id) => {
+    const stale = beginNavigation();
+    await expandChain(id.split('/').slice(0, -1).join('/'), stale);
+    if (stale()) return;
+    await selectDocument(id, { stale });
+  },
+  openFolder: async (id) => {
+    const stale = beginNavigation();
+    await expandChain(id, stale);
+  },
+  run: (action, options) => void runAction(action, options),
+};
+
+const treeActions: TreeActions = {
+  openFolder: (folder) => void runAction(() => handleFolderClick(folder), { owns: 'document' }),
+  openDocument: (id) => void runAction(() => selectDocument(id), { owns: 'document' }),
+  openFile: (file) => void runAction(() => selectFile(file), { owns: 'document' }),
+};
+
 let selectedFolder: string | null = null;
 let selectedDocument: string | null = null;
 let selectedFile: FolderFile | null = null;
-let searchStatus: SearchStatus | null = null;
-let searchDebounce: number | undefined;
-let activeSearchRequest = 0;
-const expandedFolderIds = new Set<string>();
 
 for (const column of RESIZABLE_COLUMNS) {
   setColumnWidth(column, readSavedColumnWidth(column), { persist: false });
@@ -253,16 +231,22 @@ propertiesToggle.addEventListener('click', () => {
 
 editButton.addEventListener('click', beginEditing);
 cancelButton.addEventListener('click', cancelEditing);
-saveButton.addEventListener('click', () => {
-  void runAction(saveEditing, { owns: 'document' });
-});
+/// Save, then re-read. Shared by the button and Cmd/Ctrl+S so the two cannot
+/// drift into doing different things.
+function save() {
+  void runAction(() => saveEditing((id) => selectDocument(id, { updateUrl: false })), {
+    owns: 'document',
+  });
+}
+
+saveButton.addEventListener('click', save);
 
 // Cmd/Ctrl+S saves, Escape cancels — a textarea that only commits by mouse is
 // not an editor anyone will use.
 documentEditor.addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === 's') {
     event.preventDefault();
-    void runAction(saveEditing, { owns: 'document' });
+    save();
   } else if (event.key === 'Escape') {
     event.preventDefault();
     cancelEditing();
@@ -307,7 +291,7 @@ rebuildButton.addEventListener('click', async () => {
     await reindexSearch();
     await refreshSearchStatus();
     if (searchInput.value.trim()) {
-      await runSearch(searchInput.value);
+      await runSearch(searchInput.value, searchActions);
     }
     forgetDocumentSchema();
     renderDiagnostics(await validateVault());
@@ -316,15 +300,10 @@ rebuildButton.addEventListener('click', async () => {
 
 searchForm.addEventListener('submit', (event) => {
   event.preventDefault();
-  void runAction(() => runSearch(searchInput.value));
+  void runAction(() => runSearch(searchInput.value, searchActions));
 });
 
-searchInput.addEventListener('input', () => {
-  window.clearTimeout(searchDebounce);
-  searchDebounce = window.setTimeout(() => {
-    void runAction(() => runSearch(searchInput.value));
-  }, 180);
-});
+searchInput.addEventListener('input', () => scheduleSearch(searchActions));
 
 // Internal links inside a rendered document carry the id the server resolved
 // them to. Selecting in place keeps the app state; the anchor still has a real
@@ -410,7 +389,9 @@ async function loadVault() {
 
 async function loadFolders() {
   const response = await getFolders();
-  foldersEl.replaceChildren(...response.folders.map(renderFolderButton));
+  foldersEl.replaceChildren(
+    ...response.folders.map((folder) => renderFolderButton(folder, treeActions)),
+  );
 
   const firstNonEmptyFolder = response.folders.find((folder) => folder.document_count > 0);
   if (!currentRoute() && response.folders.length > 0) {
@@ -418,186 +399,10 @@ async function loadFolders() {
   }
 }
 
-async function refreshSearchStatus() {
-  try {
-    searchStatus = await getSearchStatus();
-    renderSearchStatus(searchStatus);
-  } catch (error) {
-    searchStatus = null;
-    const message = error instanceof Error ? error.message : String(error);
-    setSearchStatusMessage(`Search unavailable: ${message}`);
-  }
-}
-
-async function runSearch(value: string) {
-  const query = value.trim();
-  const requestId = ++activeSearchRequest;
-
-  if (!query) {
-    if (selectedFolder) {
-      await selectFolder(selectedFolder, { selectFirst: false });
-    }
-    return;
-  }
-
-  if (!searchStatus) {
-    await refreshSearchStatus();
-  }
-
-  if (!searchStatus?.exists || searchStatus.item_count === 0) {
-    renderMissingSearchIndex(query);
-    return;
-  }
-
-  renderSearchLoading(query);
-  try {
-    const response = await searchVault({ q: query, limit: 50 });
-    if (requestId !== activeSearchRequest) return;
-    renderSearchResults(response);
-  } catch (error) {
-    if (requestId !== activeSearchRequest) return;
-    renderSearchListError(error);
-  }
-}
-
-function renderSearchResults(response: SearchResponse) {
-  folderTitle.textContent = 'Search results';
-  documentsEl.className = 'search-results-panel';
-
-  const rows = response.results.map(renderSearchResult);
-  const summary = searchSummary(response);
-  const sections = [listSection(summary, rows.length > 0 ? rows : [emptyListNote('No results.')])];
-
-  if (response.facets.length > 0) {
-    sections.push(listSection('Result facets', [renderSearchFacetSummary(response.facets)]));
-  }
-
-  documentsEl.replaceChildren(...sections);
-}
-
-function renderSearchResult(result: SearchResult) {
-  const row = clickableRow('search-result-row');
-  if (result.kind === 'document' && result.id) row.dataset.document = result.id;
-  if (result.kind === 'folder' && result.id) row.dataset.folder = result.id;
-
-  const topLine = document.createElement('div');
-  topLine.className = 'search-result-topline';
-
-  const kind = document.createElement('span');
-  kind.className = `search-kind search-kind-${result.kind}`;
-  kind.textContent = result.kind;
-
-  const title = document.createElement('strong');
-  title.textContent = result.title ?? result.id ?? basenameFromId(result.path);
-
-  topLine.append(kind, title);
-
-  const path = document.createElement('span');
-  path.className = 'search-result-path muted';
-  path.textContent = result.path;
-
-  const metadata = document.createElement('div');
-  metadata.className = 'search-result-metadata';
-  if (result.type) metadata.append(searchMetaPill(result.type));
-  if (result.status) metadata.append(searchMetaPill(result.status));
-  metadata.append(...result.facets.slice(0, 6).map(searchMetaPill));
-
-  const snippet = document.createElement('p');
-  snippet.className = 'search-result-snippet muted';
-  if (result.snippet) {
-    appendSafeSnippet(snippet, result.snippet);
-  } else {
-    snippet.textContent = 'No snippet available.';
-  }
-
-  row.append(topLine, path, metadata, snippet);
-  row.addEventListener('click', () =>
-    runAction(() => openSearchResult(result), { owns: 'document' }),
-  );
-  return row;
-}
-
-function renderSearchFacetSummary(facets: SearchResponse['facets']) {
-  const wrapper = document.createElement('div');
-  wrapper.className = 'search-facet-summary';
-  wrapper.replaceChildren(
-    ...facets.slice(0, 12).map(({ facet, count }) => {
-      const pill = document.createElement('button');
-      pill.className = 'pill search-facet-button';
-      pill.type = 'button';
-      pill.textContent = `${facet} ${count}`;
-      pill.addEventListener('click', () => runAction(() => runSearchWithFacet(facet)));
-      return pill;
-    }),
-  );
-  return wrapper;
-}
-
-async function runSearchWithFacet(facet: string) {
-  const query = searchInput.value.trim();
-  if (!query) return;
-  renderSearchLoading(query);
-  try {
-    renderSearchResults(await searchVault({ q: query, facet, limit: 50 }));
-  } catch (error) {
-    renderSearchListError(error);
-  }
-}
-
-async function openSearchResult(result: SearchResult) {
-  searchInput.value = '';
-  activeSearchRequest += 1;
-  const stale = beginNavigation();
-  if (result.kind === 'document' && result.id) {
-    const folder = result.id.split('/').slice(0, -1).join('/');
-    await expandChain(folder, stale);
-    if (stale()) return;
-    await selectDocument(result.id, { stale });
-    return;
-  }
-
-  if (result.kind === 'folder' && result.id) {
-    await expandChain(result.id, stale);
-  }
-}
-
-function renderFolderButton(folder: FolderSummary) {
-  const button = clickableRow('nav-row');
-  button.dataset.folder = folder.folder;
-
-  const label = document.createElement('span');
-  label.className = 'folder-name';
-
-  const icon = document.createElement('span');
-  icon.className = `folder-icon ${folder.type}`;
-  icon.append(
-    createElement(folderIcon(folder.icon ?? folder.type), {
-      width: 18,
-      height: 18,
-      'stroke-width': 2,
-    }),
-  );
-
-  const name = document.createElement('span');
-  name.textContent = folder.name ?? folder.folder;
-
-  label.append(icon, name);
-
-  const badge = document.createElement('span');
-  badge.className = 'badge';
-  badge.textContent = String(folder.document_count);
-
-  button.append(label, badge);
-  button.addEventListener('click', () =>
-    runAction(() => handleFolderClick(folder.folder), { owns: 'document' }),
-  );
-  return button;
-}
-
 async function handleFolderClick(folder: string) {
   searchInput.value = '';
-  activeSearchRequest += 1;
-  if (selectedFolder === folder && expandedFolderIds.has(folder)) {
+  cancelPendingSearch();
+  if (selectedFolder === folder && isExpanded(folder)) {
     collapseFolder(folder);
     return;
   }
@@ -640,8 +445,13 @@ function applyFolder(
   options: SelectOptions,
 ): string | undefined {
   folderTitle.textContent = folderTitleFromResponse(response.id, response.metadata);
-  renderChildFolders(folder, response.folders);
-  renderFolderContents(response.documents, response.files, response.folders.length > 0);
+  renderChildFolders(folder, response.folders, treeActions);
+  renderFolderContents(
+    response.documents,
+    response.files,
+    response.folders.length > 0,
+    treeActions,
+  );
 
   if (response.documents.length === 0) {
     selectedDocument = null;
@@ -651,166 +461,10 @@ function applyFolder(
   return (options.selectFirst ?? true) ? response.documents[0].id : undefined;
 }
 
-function renderChildFolders(parentId: string, folders: FolderChild[]) {
-  const parentRow = foldersEl.querySelector<HTMLElement>(`[data-folder="${cssEscape(parentId)}"]`);
-  if (!parentRow) return;
-
-  collapseFolder(parentId);
-  if (folders.length > 0) {
-    parentRow.classList.add('expanded');
-    parentRow.setAttribute('aria-expanded', 'true');
-    expandedFolderIds.add(parentId);
-  }
-
-  let insertAfter = parentRow;
-  for (const folder of folders) {
-    let row = foldersEl.querySelector<HTMLElement>(`[data-folder="${cssEscape(folder.id)}"]`);
-    if (!row) {
-      row = renderChildFolderButton(folder, depthFor(folder.id));
-      insertAfter.after(row);
-    }
-    insertAfter = row;
-  }
-}
-
-function renderChildFolderButton(folder: FolderChild, depth: number) {
-  const button = clickableRow('nav-row nested');
-  button.dataset.folder = folder.id;
-  button.style.setProperty('--depth', String(depth));
-
-  const label = document.createElement('span');
-  label.className = 'folder-name';
-
-  const icon = document.createElement('span');
-  icon.className = 'folder-icon';
-  icon.append(
-    createElement(folderIcon(folder.id.split('/')[0] ?? ''), {
-      width: 18,
-      height: 18,
-      'stroke-width': 2,
-    }),
-  );
-
-  const name = document.createElement('span');
-  name.textContent = folder.name;
-
-  label.append(icon, name);
-  button.append(label);
-  button.addEventListener('click', () =>
-    runAction(() => handleFolderClick(folder.id), { owns: 'document' }),
-  );
-  return button;
-}
-
-function collapseFolder(folder: string) {
-  const row = foldersEl.querySelector<HTMLElement>(`[data-folder="${cssEscape(folder)}"]`);
-  row?.classList.remove('expanded');
-  row?.setAttribute('aria-expanded', 'false');
-
-  const descendantPrefix = `${folder}/`;
-  foldersEl.querySelectorAll<HTMLElement>('[data-folder]').forEach((candidate) => {
-    const candidateFolder = candidate.dataset.folder;
-    if (candidateFolder?.startsWith(descendantPrefix)) {
-      candidate.remove();
-    }
-  });
-
-  for (const expandedFolder of [...expandedFolderIds]) {
-    if (expandedFolder === folder || expandedFolder.startsWith(descendantPrefix)) {
-      expandedFolderIds.delete(expandedFolder);
-    }
-  }
-}
-
-function renderFolderContents(
-  documents: FolderDocument[],
-  files: FolderFile[],
-  hasChildFolders: boolean,
-) {
-  const children: HTMLElement[] = [];
-
-  children.push(
-    listSection(
-      'Documents',
-      documents.length > 0
-        ? documents.map(renderDocumentButton)
-        : [
-            emptyListNote(
-              hasChildFolders ? 'Select a nested folder or open a file.' : 'No documents.',
-            ),
-          ],
-    ),
-  );
-  children.push(
-    listSection(
-      'Files',
-      files.length > 0 ? files.map(renderFileRow) : [emptyListNote('No files.')],
-    ),
-  );
-
-  documentsEl.className = 'folder-contents';
-  documentsEl.replaceChildren(...children);
-}
-
-function renderDocumentButton(vaultDocument: FolderDocument) {
-  const button = clickableRow('document-row');
-  button.dataset.document = vaultDocument.id;
-
-  const title = document.createElement('strong');
-  title.textContent = vaultDocument.slug;
-
-  const meta = document.createElement('span');
-  meta.className = 'muted';
-  meta.textContent = vaultDocument.id;
-
-  button.append(title, meta);
-  button.addEventListener('click', () =>
-    runAction(() => selectDocument(vaultDocument.id), { owns: 'document' }),
-  );
-  return button;
-}
-
-function renderFileRow(file: FolderFile) {
-  const row = clickableRow(`file-row ${fileExtensionClass(file.extension)}`);
-
-  const title = document.createElement('strong');
-  title.textContent = file.name;
-
-  const meta = document.createElement('span');
-  meta.className = 'muted file-meta';
-  if (file.extension) {
-    const extension = document.createElement('span');
-    extension.className = 'file-extension-label';
-    extension.textContent = file.extension.toUpperCase();
-
-    const path = document.createElement('span');
-    path.className = 'file-path';
-    path.textContent = file.path;
-
-    meta.append(extension, path);
-  } else {
-    meta.textContent = file.path;
-  }
-
-  const icon = document.createElement('span');
-  icon.className = 'file-icon';
-  icon.append(createElement(File, { width: 16, height: 16, 'stroke-width': 2 }));
-
-  const text = document.createElement('span');
-  text.className = 'file-text';
-  text.append(title, meta);
-
-  row.append(icon, text);
-  row.addEventListener('click', () => runAction(() => selectFile(file), { owns: 'document' }));
-  return row;
-}
-
 async function selectFile(file: FolderFile, options: SelectOptions = {}) {
   const stale = options.stale ?? beginNavigation();
   selectedDocument = null;
-  openDocument = null;
-  editing = false;
-  renderEditControls();
+  setOpenDocument(null);
   selectedFile = file;
   updateActiveRows();
   if (options.updateUrl ?? true) {
@@ -887,7 +541,7 @@ async function selectDocument(id: string, options: SelectOptions = {}) {
   if (updateUrl) {
     updateRouteUrl(vaultDocument);
   }
-  openDocument = {
+  setOpenDocument({
     id: vaultDocument.id,
     markdown: vaultDocument.markdown,
     updatedAt:
@@ -896,9 +550,7 @@ async function selectDocument(id: string, options: SelectOptions = {}) {
         : undefined,
     document: vaultDocument,
     schema: typeSchema,
-  };
-  editing = false;
-  renderEditControls();
+  });
   renderDocumentBody(vaultDocument);
   renderMetadata(vaultDocument);
   renderSchema(schema);
@@ -995,9 +647,7 @@ async function selectFileByPath(path: string, stale: Stale) {
 /// past the first document opened in this session.
 function clearRouteSelection() {
   selectedDocument = null;
-  openDocument = null;
-  editing = false;
-  renderEditControls();
+  setOpenDocument(null);
   selectedFile = null;
   breadcrumb.textContent = 'No document selected';
   documentTitle.textContent = 'Document';
@@ -1014,89 +664,8 @@ function clearRouteSelection() {
   updateActiveRows();
 }
 
-/// What a URL can name.
-///
-/// A document or folder is addressed by its canonical id, so the path *is* the
-/// id and a link reads as the thing it points at. A file takes its plain vault
-/// path — the id grammar rules it out as a document, see `looksLikeId`. A view
-/// is not vault content at all and is named by a query parameter, which no path
-/// can collide with.
-type Route = { kind: 'id'; id: string } | { kind: 'file'; path: string } | { kind: 'model' } | null;
-
-/// Whether `path` could be a canonical id.
-///
-/// `CanonicalId::parse` refuses any segment containing a dot and accepts only
-/// lowercase letters, digits and hyphens, so anything else — an extension,
-/// uppercase, a space, an underscore — is necessarily a file path rather than a
-/// document. That is what lets both share the URL space without a prefix.
-/// Whether `id` names a folder the tree is showing, used to decide if the
-/// current history entry is a step in a descent rather than something the
-/// reader chose to open.
-function isFolderRoute(id: string) {
-  return foldersEl.querySelector(`[data-folder="${cssEscape(id)}"]`) !== null;
-}
-
-function looksLikeId(path: string) {
-  return /^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/.test(path);
-}
-
-function currentRoute(): Route {
-  if (new URLSearchParams(window.location.search).get(VIEW_PARAM) === MODEL_VIEW) {
-    return { kind: 'model' };
-  }
-  // Decoded per segment, mirroring `routePath`'s per-segment encode.
-  // `decodeURI` deliberately leaves the reserved set (`+ & , # @ ;` and a
-  // literal space) encoded, while `encodeURIComponent` encodes all of them — so
-  // a file called `q1 & q2.pdf` came back as `q1 %26 q2.pdf` and its own deep
-  // link 404'd. Ids never contain those characters; arbitrary file paths do.
-  const raw = window.location.pathname
-    .replace(/^\/+|\/+$/g, '')
-    .split('/')
-    .map(decodeURIComponent)
-    .join('/');
-  if (!raw) return null;
-  // Id-shaped paths are resolved as documents first and fall back to files;
-  // anything else cannot be an id at all. See `restoreRouteSelection`.
-  return looksLikeId(raw) ? { kind: 'id', id: raw } : { kind: 'file', path: raw };
-}
-
-function routePath(route: NonNullable<Route>) {
-  const encode = (value: string) => value.split('/').map(encodeURIComponent).join('/');
-  switch (route.kind) {
-    case 'id':
-      return `/${encode(route.id)}`;
-    case 'file':
-      return `/${encode(route.path)}`;
-    case 'model':
-      return `/?${VIEW_PARAM}=${MODEL_VIEW}`;
-  }
-}
-
-/// Write a route to the address bar.
-///
-/// `replace` is for a view you can arrive at while looking for something else —
-/// selecting a folder on the way down a tree. Those should be linkable and
-/// survive a refresh without each one becoming a Back stop, or Back turns into
-/// "collapse one level" instead of "the last thing I was reading".
-function setRoute(route: NonNullable<Route>, options: { replace?: boolean } = {}) {
-  const nextPath = routePath(route);
-  // Compare path *and* query: the model view differs from `/` only by query,
-  // and a document route must clear a query left behind by it.
-  if (window.location.pathname + window.location.search === nextPath) return;
-  if (options.replace) {
-    window.history.replaceState({}, '', nextPath);
-  } else {
-    window.history.pushState({}, '', nextPath);
-  }
-}
-
 function updateRouteUrl(vaultDocument: DocumentResponse) {
   setRoute({ kind: 'id', id: vaultDocument.id });
-}
-
-function folderChain(folder: string) {
-  const parts = folder.split('/').filter(Boolean);
-  return parts.map((_, index) => parts.slice(0, index + 1).join('/'));
 }
 
 function renderDocumentBody(vaultDocument: DocumentResponse) {
@@ -1151,62 +720,6 @@ function renderError(error: unknown, replacesDocument = false) {
   documentTitle.textContent = 'Unable to load document';
   documentBody.className = 'reader-body';
   documentBody.textContent = message;
-}
-
-/// Show the controls that apply right now: nothing without a document, Edit
-/// when reading one, Save/Cancel while editing.
-function renderEditControls() {
-  const hasDocument = openDocument !== null;
-  editButton.hidden = !hasDocument || editing;
-  saveButton.hidden = !editing;
-  cancelButton.hidden = !editing;
-  documentEditor.hidden = !editing;
-  documentBody.hidden = editing;
-}
-
-function beginEditing() {
-  if (!openDocument) return;
-  editing = true;
-  renderMetadataForm(openDocument.document, openDocument.schema);
-  documentEditor.value = openDocument.markdown;
-  renderEditControls();
-  // Caret at the start, not wherever focus lands — otherwise the view opens
-  // scrolled past the first lines of the document you just chose to edit.
-  documentEditor.focus();
-  documentEditor.setSelectionRange(0, 0);
-  documentEditor.scrollTop = 0;
-}
-
-/// Leave the editor without saving. The rendered body is still in the DOM
-/// underneath, so there is nothing to re-fetch.
-function cancelEditing() {
-  if (openDocument) {
-    renderMetadata(openDocument.document);
-  }
-  editing = false;
-  renderEditControls();
-}
-
-async function saveEditing() {
-  if (!openDocument) return;
-  // Body and metadata in one call: `update_document` applies them together, so
-  // a save either lands whole or is refused whole.
-  //
-  // The precondition is always sent, empty when the document has no
-  // `updated_at` — which is most of them in a hand-authored vault. Omitting it
-  // would mean no check at all, and the save could then overwrite an edit made
-  // while this tab sat open.
-  await updateDocument(
-    openDocument.id,
-    { body: documentEditor.value, ...readMetadataForm() },
-    openDocument.updatedAt ?? '',
-  );
-
-  // Re-read rather than patching the DOM: the server re-renders the Markdown,
-  // and `updated_at` has moved — keeping the stale one would make the *next*
-  // save fail its own precondition.
-  editing = false;
-  await selectDocument(openDocument.id, { updateUrl: false });
 }
 
 function updateActiveRows() {
