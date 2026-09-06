@@ -647,6 +647,10 @@ pub struct CreateDocumentRequest {
 /// every one of these is an `Option` — including `body`.
 #[derive(Debug, Deserialize)]
 pub struct UpdateDocumentRequest {
+    /// Custom sidecar keys to set. A JSON `null` removes the key; keys not
+    /// mentioned are left alone.
+    #[serde(default)]
+    pub fields: std::collections::BTreeMap<String, serde_json::Value>,
     /// The `updated_at` the caller last read. When present the write is
     /// refused with `409` unless the document still carries it, so an editor
     /// cannot silently overwrite a change it never saw.
@@ -791,6 +795,11 @@ pub async fn update_document(
             request.body,
             kataan_core::mutate::DocumentPatch {
                 expected_updated_at: request.expected_updated_at,
+                fields: request
+                    .fields
+                    .iter()
+                    .map(|(name, value)| (name.clone(), kataan_core::convert::json_to_toml(value)))
+                    .collect(),
                 status: request.status,
                 occurred_at: request.occurred_at,
                 aliases: request.aliases,

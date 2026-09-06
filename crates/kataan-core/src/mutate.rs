@@ -82,6 +82,22 @@ pub struct DocumentPatch {
     pub aliases: Option<Vec<String>>,
     pub labels: Option<Vec<String>>,
     pub actor: Option<String>,
+    /// Custom sidecar keys to set or remove.
+    ///
+    /// `Some(value)` sets the key, `None` removes it — the JSON Merge Patch
+    /// convention, where a null means "delete this". An empty map changes
+    /// nothing, so the type's own default is "leave the extras alone".
+    ///
+    /// Without this, a field could be set when a document was created and never
+    /// changed again through any surface: `create_document` took `extra` and
+    /// nothing could touch it afterwards. Every consumer that models anything
+    /// in a custom key — which is what `[nodes.*]` schemas exist to describe —
+    /// had a write-once vault.
+    ///
+    /// Keys kataan defines itself are rejected, as they are on create: they
+    /// have their own patch fields, and writing them here would emit the key
+    /// twice.
+    pub fields: BTreeMap<String, Option<toml::Value>>,
 }
 
 /// Create a new document. Returns its canonical id.
@@ -253,6 +269,17 @@ pub fn update_document(
     if let Some(occurred_at) = patch.occurred_at {
         validate_timestamp(Some(&occurred_at))?;
         sidecar.insert("occurred_at".to_owned(), toml::Value::String(occurred_at));
+    }
+    for (key, value) in patch.fields {
+        if RESERVED_KEYS.contains(&key.as_str()) {
+            return Err(invalid_request(format!(
+                "`{key}` is a reserved sidecar key and cannot be set as a custom field"
+            )));
+        }
+        match value {
+            Some(value) => sidecar.insert(key, value),
+            None => sidecar.remove(&key),
+        };
     }
     sidecar.insert(
         "last_updated_by".to_owned(),

@@ -1,5 +1,6 @@
 pub mod checksum;
 pub mod constants;
+pub mod convert;
 pub mod diagnostic;
 pub mod diagnostic_codes;
 pub mod document;

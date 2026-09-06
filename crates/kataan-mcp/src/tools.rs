@@ -189,6 +189,7 @@ pub fn list() -> Value {
                     "occurred_at": { "type": "string", "description": "When the thing this document describes happened. RFC 3339, and only RFC 3339: a calendar day (2026-08-29) or a moment (2026-08-29T12:00:00Z). A bare 2026 or 2026-08 is ISO 8601 but not RFC 3339 and is rejected." },
                     "aliases": { "type": "array", "items": { "type": "string" } },
                     "labels": { "type": "array", "items": { "type": "string" } },
+                    "fields": { "type": "object", "description": "Custom sidecar keys to set. A `null` value removes the key; keys you do not mention are left alone. Reserved keys kataan defines itself are refused — they have their own arguments." },
                     "expected_updated_at": { "type": "string", "description": "The `updated_at` you last read for this document. When given, the write is refused if the document has changed since — pass it whenever you read, edit, and write back, so you cannot silently discard someone else's change." }
                 },
                 "required": ["id"]
@@ -420,6 +421,7 @@ fn update_document(vault: &Path, args: &Value) -> Result<String> {
     let id = parse_id(args, "id")?;
     let patch = DocumentPatch {
         expected_updated_at: opt_str(args, "expected_updated_at"),
+        fields: patch_fields(args, "fields"),
         status: opt_str(args, "status"),
         occurred_at: opt_str(args, "occurred_at"),
         aliases: opt_str_vec(args, "aliases"),
@@ -531,6 +533,22 @@ fn extra_fields(args: &Value, key: &str) -> std::collections::BTreeMap<String, t
     }
 }
 
+/// Custom fields for an update, where a JSON `null` means "remove this key"
+/// rather than "no value" — the distinction `extra_fields` has no need for,
+/// since a create has nothing to remove.
+fn patch_fields(
+    args: &Value,
+    key: &str,
+) -> std::collections::BTreeMap<String, Option<toml::Value>> {
+    match args.get(key) {
+        Some(Value::Object(fields)) => fields
+            .iter()
+            .map(|(name, value)| (name.clone(), json_to_toml(value)))
+            .collect(),
+        _ => Default::default(),
+    }
+}
+
 /// `direction` defaults to the enum's own default rather than restating it.
 fn opt_direction(args: &Value) -> Result<kataan_core::query::Direction> {
     match opt_str(args, "direction") {
@@ -541,24 +559,7 @@ fn opt_direction(args: &Value) -> Result<kataan_core::query::Direction> {
 
 /// Convert a JSON tool argument to TOML. JSON null has no TOML representation,
 /// so null-valued entries are dropped rather than written as something else.
-fn json_to_toml(value: &Value) -> Option<toml::Value> {
-    Some(match value {
-        Value::Null => return None,
-        Value::Bool(value) => toml::Value::Boolean(*value),
-        Value::Number(number) => match number.as_i64() {
-            Some(integer) => toml::Value::Integer(integer),
-            None => toml::Value::Float(number.as_f64()?),
-        },
-        Value::String(value) => toml::Value::String(value.clone()),
-        Value::Array(items) => toml::Value::Array(items.iter().filter_map(json_to_toml).collect()),
-        Value::Object(fields) => toml::Value::Table(
-            fields
-                .iter()
-                .filter_map(|(name, value)| Some((name.clone(), json_to_toml(value)?)))
-                .collect(),
-        ),
-    })
-}
+use kataan_core::convert::json_to_toml;
 
 fn parse_id(args: &Value, key: &str) -> Result<CanonicalId> {
     CanonicalId::parse(str_arg(args, key)?).map_err(|error| anyhow!("invalid `{key}`: {error}"))

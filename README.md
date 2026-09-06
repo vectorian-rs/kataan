@@ -117,7 +117,7 @@ Tools exposed by `kataan-mcp`:
 | `neighbors` | read | `id`, `predicate?`, `direction?` | What a document is connected to, grouped by predicate and hydrated with each neighbour's type/title/status. Incoming edges use the ontology's inverse predicate. |
 | `subgraph` | read | `types?`, `predicates?` | Export `{nodes, links}` for the vault. Each edge appears once, in the direction it was authored. |
 | `create_document` | write | `type`, `title`, `body`, `parent?`, `aliases?`, `labels?`, `status?`, `occurred_at?`, `fields?` | Create a new document and return its canonical id. `fields` writes extra top-level sidecar keys. |
-| `update_document` | write | `id`, `body?`, `status?`, `aliases?`, `labels?`, `occurred_at?` | Update an existing document's body and/or metadata. Omitted fields are left unchanged. |
+| `update_document` | write | `id`, `body?`, `status?`, `aliases?`, `labels?`, `occurred_at?`, `fields?`, `expected_updated_at?` | Update a document's body and/or metadata. Omitted fields are left unchanged; a `null` inside `fields` removes that key. Pass `expected_updated_at` to be refused rather than overwrite a change you did not see. |
 | `ontology` | read | — | The vault's whole model in one call: types with their declared fields and document counts, edge predicates, and the type-level graph of what may connect to what. |
 | `add_edge` | write | `source`, `predicate`, `target` | Add an ontology-validated edge from one document to another. |
 | `remove_edge` | write | `source`, `predicate`, `target` | Remove an edge. Not ontology-validated, so an edge the ontology now forbids can still be deleted. Idempotent. |

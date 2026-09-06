@@ -1043,3 +1043,122 @@ occurred_at = { type = "instant" }
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Custom fields were write-once: `create_document` took them and nothing could
+/// change them afterwards, so any consumer modelling data in a custom key — the
+/// thing `[nodes.*]` schemas exist to describe — had a vault it could not edit.
+#[test]
+fn update_document_sets_and_removes_custom_fields() {
+    let root = temp_vault("patch-fields");
+    let id = create_document(
+        &root,
+        NewDocument {
+            extra: BTreeMap::from([
+                (
+                    "source_url".to_owned(),
+                    toml::Value::String("https://old".to_owned()),
+                ),
+                (
+                    "keep_me".to_owned(),
+                    toml::Value::String("untouched".to_owned()),
+                ),
+            ]),
+            ..note("Fielded", "body")
+        },
+    )
+    .unwrap();
+
+    let read = |root: &std::path::Path| read_sidecar_table(&root.join(id.toml_path())).unwrap();
+
+    // Set one, add one, remove one, and say nothing about the fourth.
+    update_document(
+        &root,
+        &id,
+        None,
+        DocumentPatch {
+            fields: BTreeMap::from([
+                (
+                    "source_url".to_owned(),
+                    Some(toml::Value::String("https://new".to_owned())),
+                ),
+                ("added".to_owned(), Some(toml::Value::Integer(7))),
+                ("keep_me".to_owned(), None),
+            ]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let sidecar = read(&root);
+    assert_eq!(sidecar["source_url"].as_str(), Some("https://new"));
+    assert_eq!(sidecar["added"].as_integer(), Some(7));
+    assert!(
+        !sidecar.contains_key("keep_me"),
+        "a null did not remove the key"
+    );
+    // Untouched keys survive, as they do for every other patch field.
+    assert_eq!(sidecar["type"].as_str(), Some("note"));
+
+    // Reserved keys are refused here as they are on create — writing one would
+    // emit it twice, since it also has its own patch field.
+    let reserved = update_document(
+        &root,
+        &id,
+        None,
+        DocumentPatch {
+            fields: BTreeMap::from([(
+                "status".to_owned(),
+                Some(toml::Value::String("active".to_owned())),
+            )]),
+            ..Default::default()
+        },
+    );
+    assert!(reserved.is_err(), "`status` has its own patch field");
+
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A field removal is a change, so it must move `updated_at` and not be
+/// mistaken for a no-op.
+#[test]
+fn removing_a_field_is_not_a_no_op() {
+    let root = temp_vault("patch-fields-noop");
+    let id = create_document(
+        &root,
+        NewDocument {
+            extra: BTreeMap::from([("doomed".to_owned(), toml::Value::String("x".to_owned()))]),
+            ..note("Doomed", "body")
+        },
+    )
+    .unwrap();
+    let path = root.join(id.toml_path());
+    let stale = "2000-01-01T00:00:00Z";
+    let mut sidecar = read_sidecar_table(&path).unwrap();
+    sidecar.insert(
+        "updated_at".to_owned(),
+        toml::Value::String(stale.to_owned()),
+    );
+    write_sidecar_table(&path, &sidecar).unwrap();
+
+    update_document(
+        &root,
+        &id,
+        None,
+        DocumentPatch {
+            fields: BTreeMap::from([("doomed".to_owned(), None)]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let after = read_sidecar_table(&path).unwrap();
+    assert!(!after.contains_key("doomed"));
+    assert_ne!(
+        after["updated_at"].as_str(),
+        Some(stale),
+        "a removal left updated_at pointing at an unrelated change"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -128,12 +128,26 @@ Tools:
   (return JSON).
 - Writes — `create_document` (type, title, body, optional parent/aliases/labels/
   status/occurred_at/fields), `update_document` (id, optional body/status/
-  aliases/labels/occurred_at), `add_edge` (source, predicate, target),
+  aliases/labels/occurred_at/fields/expected_updated_at), `add_edge` (source,
+  predicate, target),
   `remove_edge` (same arguments), and `replace_edges_for_predicate` (source,
   predicate, and the complete target list — empty removes the predicate).
   Illegal requests (unknown type, id collision, ontology-forbidden edge, invalid
   status, malformed timestamp) are rejected rather than written. Writes are
   attributed to the `agent` actor.
+
+Two things worth knowing about `update_document`:
+
+- **`fields` sets custom sidecar keys, and a `null` removes one.** Keys you do
+  not mention are left alone. Reserved keys kataan defines itself are refused —
+  they have their own arguments. Patched fields are validated against the type's
+  `[nodes.*]` schema exactly as a create is.
+- **`expected_updated_at` makes a write safe.** Pass the `updated_at` you read,
+  and the write is refused if the document has changed since. Pass an empty
+  string when the document has no `updated_at` at all — that means "expected to
+  have none", and it is the common case in a hand-authored vault. Omitting the
+  argument means no check, so a read-modify-write can silently discard whatever
+  landed in between.
 
 Choosing a read tool:
 
