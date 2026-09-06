@@ -231,20 +231,11 @@ pub fn update_document(
         toml::Value::String(patch.actor.unwrap_or_else(|| ACTOR_AGENT.to_owned())),
     );
 
-    // Only rewrite the body when it actually differs, so a caller that resends
-    // the text it already has does not dirty the file.
-    let body_changed = match &body {
-        Some(body) => {
-            std::fs::read_to_string(&record.markdown_path)
-                .ok()
-                .as_deref()
-                != Some(body.as_str())
-        }
-        None => false,
-    };
-    if body_changed {
-        atomic_write_string(&record.markdown_path, body.as_deref().unwrap_or_default())?;
-    }
+    // Decided before anything is written, so a call that resends the text it
+    // already has stays a no-op.
+    let body_changed = body
+        .as_deref()
+        .is_some_and(|body| crate::write::content_differs(&record.markdown_path, body));
 
     // `updated_at` records when the record changed, so a call that changes
     // nothing must not move it. Otherwise a no-op update would dirty the file
@@ -257,6 +248,11 @@ pub fn update_document(
         toml::Value::String(crate::time::iso8601_utc_now()),
     );
 
+    // Checked before either file is touched. The body used to be written first,
+    // so a patch that changed the body *and* violated the type's schema
+    // returned 400 with the new body already on disk and the sidecar
+    // untouched — the caller told the write was rejected, half of it landed.
+    //
     // The patched table is what will be on disk, so it is what gets checked —
     // including the keys this call did not touch, since a schema can require a
     // field that an unrelated edit would otherwise leave missing.
@@ -266,6 +262,9 @@ pub fn update_document(
         .map_err(|error| invalid_request(format!("patched sidecar is not valid: {error}")))?;
     enforce_document_schema(&vault, &patched)?;
 
+    if body_changed {
+        atomic_write_string(&record.markdown_path, body.as_deref().unwrap_or_default())?;
+    }
     write_sidecar_table(&record.toml_path, &sidecar)?;
     rebuild::rebuild_indexes(root)?;
     Ok(())

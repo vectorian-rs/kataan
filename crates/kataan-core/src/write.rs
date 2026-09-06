@@ -71,10 +71,24 @@ pub fn atomic_write_string(path: impl AsRef<Path>, content: &str) -> Result<()> 
 /// does not.
 pub fn atomic_write_string_if_changed(path: impl AsRef<Path>, content: &str) -> Result<()> {
     let path = path.as_ref();
-    if std::fs::read_to_string(path).is_ok_and(|existing| existing == content) {
+    if !content_differs(path, content) {
         return Ok(());
     }
     atomic_write_string(path, content)
+}
+
+/// Whether writing `content` to `path` would change anything.
+///
+/// An unreadable or absent file counts as different — the write is the way to
+/// find out, and refusing to write because the old bytes could not be read
+/// would be the wrong failure.
+///
+/// Separate from [`atomic_write_string_if_changed`] because a caller sometimes
+/// has to know *before* it is allowed to write: `update_document` decides
+/// whether the call is a no-op, validates the result, and only then commits, so
+/// it needs the comparison and the write at different points.
+pub fn content_differs(path: impl AsRef<Path>, content: &str) -> bool {
+    !std::fs::read_to_string(path).is_ok_and(|existing| existing == content)
 }
 
 /// What the file at `path` should end up with: the mode it already has, or the

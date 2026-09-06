@@ -977,3 +977,69 @@ approved_by = { type = "reference", to = ["topic"] }
     assert!(crate::validate::validate(&root).unwrap().is_ok());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// A rejected update must leave *both* files untouched.
+///
+/// The body was written before the schema check, so a patch that changed the
+/// body and violated the type's schema returned an error with the new body
+/// already on disk — the caller told the write was rejected, half of it landed.
+#[test]
+fn a_rejected_update_leaves_the_body_untouched() {
+    let root = temp_vault("update-atomicity");
+    let id = create_document(&root, note("Subject", "original body")).unwrap();
+    with_note_schema(
+        &root,
+        r#"
+[nodes.note.fields]
+occurred_at = { type = "instant" }
+"#,
+    );
+
+    let markdown = root.join(id.markdown_path());
+    let sidecar = root.join(id.toml_path());
+    let markdown_before = std::fs::read_to_string(&markdown).unwrap();
+    let sidecar_before = std::fs::read_to_string(&sidecar).unwrap();
+
+    // Changes the body *and* violates the schema: a full-date does not satisfy
+    // `instant`.
+    let rejected = update_document(
+        &root,
+        &id,
+        Some("replacement body".to_owned()),
+        DocumentPatch {
+            occurred_at: Some("2026-08-29".to_owned()),
+            ..Default::default()
+        },
+    );
+    assert!(rejected.is_err(), "the patch violates the schema");
+
+    assert_eq!(
+        std::fs::read_to_string(&markdown).unwrap(),
+        markdown_before,
+        "the body was written despite the patch being rejected"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&sidecar).unwrap(),
+        sidecar_before,
+        "the sidecar changed despite the patch being rejected"
+    );
+
+    // The same patch with a valid timestamp still lands, body included.
+    update_document(
+        &root,
+        &id,
+        Some("replacement body".to_owned()),
+        DocumentPatch {
+            occurred_at: Some("2026-08-29T12:00:00Z".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&markdown).unwrap(),
+        "replacement body"
+    );
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
