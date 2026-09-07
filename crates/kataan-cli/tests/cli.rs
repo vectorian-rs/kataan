@@ -126,3 +126,87 @@ fn validate_reports_diagnostics_on_stdout_and_exits_nonzero() {
         "diagnostics should be on stdout, got: {stdout}"
     );
 }
+
+#[test]
+fn help_lists_every_value_each_enum_flag_accepts() {
+    // argh has no equivalent of clap's generated `[possible values: ...]`, so
+    // the accepted values are written into the doc comments by hand. That is a
+    // list in two places — the enum and its prose — and this is what stops them
+    // drifting: the rejection message is generated, so anything it names must
+    // appear in the help text a user reads first.
+    let help = String::from_utf8(
+        kataan()
+            .args(["documents", "--help"])
+            .output()
+            .expect("run help")
+            .stdout,
+    )
+    .unwrap();
+
+    for (flag, values) in [
+        ("--direction", ["out", "in", "both"].as_slice()),
+        ("--include", ["metadata", "full", "markdown"].as_slice()),
+        (
+            "--order",
+            ["id", "occurred_at", "created_at", "updated_at"].as_slice(),
+        ),
+    ] {
+        for value in values {
+            assert!(
+                help.contains(value),
+                "`{flag}` accepts `{value}`, but help never mentions it:\n{help}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_rejected_flag_value_names_the_ones_that_work() {
+    let output = kataan()
+        .args(["documents", ".", "--order", "nonsense"])
+        .output()
+        .expect("run documents");
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    for value in ["id", "occurred_at", "created_at", "updated_at"] {
+        assert!(
+            stderr.contains(value),
+            "rejection did not name `{value}`: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_list_flag_takes_commas_or_repetition() {
+    // argh has no delimiter option, so `--id a,b` is split in the CLI — the same
+    // way `wire::Csv` splits it out of a URL query string. Both spellings must
+    // reach core as the same list.
+    let vault = std::env::temp_dir().join(format!("kataan-cli-lists-{}", std::process::id()));
+    init_vault(&vault);
+
+    let run = |args: &[&str]| {
+        let output = kataan()
+            .arg("documents")
+            .arg(&vault)
+            .args(args)
+            .output()
+            .expect("run documents");
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    let commas = run(&["--id", "type/note,type/person", "--id", "nope/missing"]);
+    let repeated = run(&[
+        "--id",
+        "type/note",
+        "--id",
+        "type/person",
+        "--id",
+        "nope/missing",
+    ]);
+    assert_eq!(commas, repeated);
+    assert!(commas.contains("nope/missing"), "{commas}");
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}

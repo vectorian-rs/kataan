@@ -18,7 +18,7 @@ percent-encoding = { version = "2", optional = true }
 anyhow.workspace = true
 axum.workspace = true
 ammonia = "4"
-clap.workspace = true
+argh.workspace = true
 ignore.workspace = true
 kataan-core = { path = "../kataan-core" }
 kataan-search = { path = "../kataan-search" }

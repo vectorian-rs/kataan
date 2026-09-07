@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use argh::{FromArgValue, FromArgs};
 use serde::Serialize;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -33,114 +33,198 @@ impl From<&kataan_core::diagnostic::Diagnostic> for JsonDiagnostic {
     }
 }
 
-#[derive(Debug, Parser)]
-#[command(name = "kataan-cli")]
-#[command(about = "Filesystem-native Markdown/TOML knowledge workspace")]
+/// Filesystem-native Markdown/TOML knowledge workspace.
+#[derive(Debug, FromArgs)]
 struct Cli {
-    #[command(subcommand)]
+    #[argh(subcommand)]
     command: Command,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, FromArgs)]
+#[argh(subcommand)]
 enum Command {
-    Init {
-        path: PathBuf,
-        #[arg(long)]
-        name: String,
-    },
-    Validate {
-        path: PathBuf,
-        /// Emit the report as JSON on stdout instead of plain lines.
-        #[arg(long)]
-        json: bool,
-    },
-    RebuildIndexes {
-        path: PathBuf,
-    },
-    /// The vault's model as JSON: types and their declared fields, edge
-    /// predicates, and the type-level graph of what may connect to what.
-    Ontology {
-        path: PathBuf,
-    },
-    /// Graph queries over the vault, emitted as JSON on stdout.
-    Graph {
-        #[command(subcommand)]
-        command: GraphCommand,
-    },
-    /// List or batch-fetch documents as JSON on stdout.
-    Documents {
-        path: PathBuf,
-        #[command(flatten)]
-        query: DocumentArgs,
-    },
-    Guide,
+    Init(InitArgs),
+    Validate(ValidateArgs),
+    RebuildIndexes(RebuildIndexesArgs),
+    Ontology(OntologyArgs),
+    Graph(GraphArgs),
+    Documents(DocumentsArgs),
+    Guide(GuideArgs),
 }
 
-/// The `documents` filters, as command-line flags.
-///
-/// Deliberately field-for-field with `kataan_core::query::DocumentQuery`, and
-/// converted by the `From` below — the same query, spelled for a shell, so the
-/// CLI cannot quietly support a different set of filters from HTTP and MCP.
-#[derive(Debug, clap::Args)]
-pub struct DocumentArgs {
-    /// Fetch these ids specifically (repeatable or comma-separated). Order is
-    /// preserved and unknown ids come back in `missing`.
-    #[arg(long = "id", value_delimiter = ',')]
-    ids: Vec<String>,
-    /// Restrict to a document type. Subtypes count.
-    #[arg(long = "type")]
-    r#type: Option<String>,
-    #[arg(long)]
-    status: Option<String>,
-    /// Documents carrying every one of these labels.
-    #[arg(long = "label", value_delimiter = ',')]
-    labels: Vec<String>,
-    /// Documents whose id is this folder or below it.
-    #[arg(long)]
-    path_prefix: Option<String>,
-    /// Restrict to documents with an edge to this id.
-    #[arg(long)]
-    linked_to: Option<String>,
-    /// With --linked-to: restrict to one predicate.
-    #[arg(long)]
-    predicate: Option<String>,
-    /// With --linked-to: which direction to follow.
-    #[arg(long, default_value = "both")]
-    direction: DirectionArg,
-    /// Only documents whose occurred_at is on or after this RFC 3339 bound.
-    /// Inclusive, and compared at the bound's own precision, so a bare day
-    /// covers the whole day.
-    #[arg(long)]
-    after: Option<String>,
-    /// Only documents whose occurred_at is on or before this bound.
-    #[arg(long)]
-    before: Option<String>,
-    /// Sort by: id, occurred-at, created-at, updated-at.
-    #[arg(long, default_value = "id")]
-    order: OrderArg,
-    /// Reverse the sort. With --order updated-at, "what changed most recently".
-    #[arg(long)]
-    desc: bool,
-    /// How much of each document to return. `full` adds declared fields,
-    /// timestamps and edges for free; `markdown` adds the body, at one file
-    /// read per document.
-    #[arg(long, default_value = "metadata")]
-    include: IncludeArg,
-    /// Page size, at most 1000. Omitting it errors rather than truncating when
-    /// more than 100 documents match.
-    #[arg(long)]
+/// Create a new vault.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "init")]
+struct InitArgs {
+    /// vault path
+    #[argh(positional)]
+    path: PathBuf,
+    /// human name for the vault
+    #[argh(option)]
+    name: String,
+}
+
+/// Check the vault against its own model and report what is wrong.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "validate")]
+struct ValidateArgs {
+    /// vault path
+    #[argh(positional)]
+    path: PathBuf,
+    /// emit the report as JSON on stdout instead of plain lines
+    #[argh(switch)]
+    json: bool,
+}
+
+/// Regenerate folder indexes and checksums.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "rebuild-indexes")]
+struct RebuildIndexesArgs {
+    /// vault path
+    #[argh(positional)]
+    path: PathBuf,
+}
+
+/// The vault's model as JSON: types and their declared fields, edge predicates,
+/// and the type-level graph of what may connect to what.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "ontology")]
+struct OntologyArgs {
+    /// vault path
+    #[argh(positional)]
+    path: PathBuf,
+}
+
+/// Graph queries over the vault, emitted as JSON on stdout.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "graph")]
+struct GraphArgs {
+    #[argh(subcommand)]
+    command: GraphCommand,
+}
+
+#[derive(Debug, FromArgs)]
+#[argh(subcommand)]
+enum GraphCommand {
+    Export(GraphExportArgs),
+    Neighbors(GraphNeighborsArgs),
+}
+
+/// Export nodes and links. Output is deterministic, so it diffs cleanly across
+/// runs and can be committed as a build artifact.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "export")]
+struct GraphExportArgs {
+    /// vault path
+    #[argh(positional)]
+    path: PathBuf,
+    /// restrict to these document types (repeatable or comma-separated)
+    #[argh(option, long = "type")]
+    types: Vec<String>,
+    /// restrict to these edge predicates (repeatable or comma-separated)
+    #[argh(option, long = "predicate")]
+    predicates: Vec<String>,
+    /// refuse rather than export more than this many nodes
+    #[argh(option)]
     limit: Option<usize>,
-    #[arg(long, default_value_t = 0)]
+}
+
+/// Show what a document is connected to, in either or both directions.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "neighbors")]
+struct GraphNeighborsArgs {
+    /// vault path
+    #[argh(positional)]
+    path: PathBuf,
+    /// canonical id, e.g. topics/rust
+    #[argh(positional)]
+    id: String,
+    /// restrict to one predicate
+    #[argh(option)]
+    predicate: Option<String>,
+    /// which direction to follow: out, in, both (default both)
+    #[argh(option, default = "DirectionArg::Both")]
+    direction: DirectionArg,
+}
+
+/// Print the agent guide.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "guide")]
+struct GuideArgs {}
+
+// Field-for-field with `kataan_core::query::DocumentQuery` and converted by the
+// `From` below — the same query, spelled for a shell, so the CLI cannot quietly
+// support a different set of filters from HTTP and MCP. Kept out of the doc
+// comment because argh prints that verbatim as the command's help.
+/// List or batch-fetch documents as JSON on stdout.
+#[derive(Debug, FromArgs)]
+#[argh(subcommand, name = "documents")]
+struct DocumentsArgs {
+    /// vault path
+    #[argh(positional)]
+    path: PathBuf,
+    /// fetch these ids specifically (repeatable or comma-separated); order is
+    /// preserved and unknown ids come back in `missing`
+    #[argh(option, long = "id")]
+    ids: Vec<String>,
+    /// restrict to a document type; subtypes count
+    #[argh(option, long = "type")]
+    r#type: Option<String>,
+    /// restrict to a status
+    #[argh(option)]
+    status: Option<String>,
+    /// documents carrying every one of these labels (repeatable or
+    /// comma-separated)
+    #[argh(option, long = "label")]
+    labels: Vec<String>,
+    /// documents whose id is this folder or below it
+    #[argh(option)]
+    path_prefix: Option<String>,
+    /// restrict to documents with an edge to this id
+    #[argh(option)]
+    linked_to: Option<String>,
+    /// with --linked-to: restrict to one predicate
+    #[argh(option)]
+    predicate: Option<String>,
+    /// with --linked-to: which direction to follow: out, in, both (default
+    /// both)
+    #[argh(option, default = "DirectionArg::Both")]
+    direction: DirectionArg,
+    /// only documents whose occurred_at is on or after this RFC 3339 bound;
+    /// inclusive, and compared at the bound's own precision, so a bare day
+    /// covers the whole day
+    #[argh(option)]
+    after: Option<String>,
+    /// only documents whose occurred_at is on or before this bound
+    #[argh(option)]
+    before: Option<String>,
+    /// sort by: id, occurred_at, created_at, updated_at (default id)
+    #[argh(option, default = "OrderArg::Id")]
+    order: OrderArg,
+    /// reverse the sort; with --order updated_at, "what changed most recently"
+    #[argh(switch)]
+    desc: bool,
+    /// how much of each document to return: metadata, full, markdown (default
+    /// metadata). `full` adds declared fields, timestamps and edges for free;
+    /// `markdown` adds the body, at one file read per document
+    #[argh(option, default = "IncludeArg::Metadata")]
+    include: IncludeArg,
+    /// page size, at most 1000; omitting it errors rather than truncating when
+    /// more than 100 documents match
+    #[argh(option)]
+    limit: Option<usize>,
+    /// how many matches to skip; use with --limit to page
+    #[argh(option, default = "0")]
     offset: usize,
 }
 
-impl From<DocumentArgs> for kataan_core::query::DocumentQuery {
-    fn from(args: DocumentArgs) -> Self {
+impl From<DocumentsArgs> for kataan_core::query::DocumentQuery {
+    fn from(args: DocumentsArgs) -> Self {
         Self {
-            ids: args.ids.into(),
+            ids: split_lists(args.ids).into(),
             r#type: args.r#type,
             status: args.status,
-            labels: args.labels.into(),
+            labels: split_lists(args.labels).into(),
             path_prefix: args.path_prefix,
             linked_to: args.linked_to,
             predicate: args.predicate,
@@ -156,13 +240,32 @@ impl From<DocumentArgs> for kataan_core::query::DocumentQuery {
     }
 }
 
-/// `--direction` and `--include` values, so `--help` lists them and shell
-/// completion offers them.
+/// Flatten `--label a,b --label c` into one list.
 ///
-/// Mirrors rather than derives `ValueEnum` on the core types: that would put
-/// clap in `kataan-core`, which no library consumer of it should have to build.
-/// The `From` impls are exhaustive, so a new variant fails to compile here.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+/// argh has no delimiter option, so the splitting is done here — and it is done
+/// the same way `wire::Csv` does it for a URL query string, which is the point:
+/// the same flag spelled either way reaches core as the same list.
+fn split_lists(values: Vec<String>) -> Vec<String> {
+    values
+        .iter()
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Command-line spellings of the core enums.
+///
+/// Mirrors rather than the core types themselves: `FromArgValue` is argh's
+/// trait and `Direction` is kataan-core's, so the orphan rule forbids the impl
+/// anywhere but here — deriving on the core types would mean putting an
+/// argument parser inside the library. The `From` impls are exhaustive, so a
+/// new variant fails to compile rather than silently going missing.
+///
+/// argh spells the values `occurred_at` rather than clap's `occurred-at`, which
+/// is what HTTP and MCP already accept.
+#[derive(Debug, Clone, Copy, FromArgValue)]
 enum DirectionArg {
     Out,
     In,
@@ -179,7 +282,7 @@ impl From<DirectionArg> for kataan_core::query::Direction {
     }
 }
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, FromArgValue)]
 enum IncludeArg {
     Metadata,
     Full,
@@ -196,8 +299,7 @@ impl From<IncludeArg> for kataan_core::query::Include {
     }
 }
 
-/// `--order` values, kebab-cased for the command line.
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, FromArgValue)]
 enum OrderArg {
     Id,
     OccurredAt,
@@ -214,35 +316,6 @@ impl From<OrderArg> for kataan_core::query::Order {
             OrderArg::UpdatedAt => Self::UpdatedAt,
         }
     }
-}
-
-#[derive(Debug, Subcommand)]
-enum GraphCommand {
-    /// Export nodes and links. Output is deterministic, so it diffs cleanly
-    /// across runs and can be committed as a build artifact.
-    Export {
-        path: PathBuf,
-        /// Restrict to these document types (repeatable or comma-separated).
-        #[arg(long = "type", value_delimiter = ',')]
-        types: Vec<String>,
-        /// Restrict to these edge predicates (repeatable or comma-separated).
-        #[arg(long = "predicate", value_delimiter = ',')]
-        predicates: Vec<String>,
-        /// Refuse rather than export more than this many nodes.
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-    /// Show what a document is connected to, in either or both directions.
-    Neighbors {
-        path: PathBuf,
-        /// Canonical id, e.g. topics/rust.
-        id: String,
-        /// Restrict to one predicate.
-        #[arg(long)]
-        predicate: Option<String>,
-        #[arg(long, default_value = "both")]
-        direction: DirectionArg,
-    },
 }
 
 /// Print a line to stdout, treating a closed pipe as a clean exit.
@@ -278,20 +351,20 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let cli = Cli::parse();
+    let cli: Cli = argh::from_env();
 
     match cli.command {
-        Command::Init { path, name } => {
-            kataan_core::init::init_vault(&path, &name)?;
-            info!(path = %path.display(), "initialized vault");
+        Command::Init(args) => {
+            kataan_core::init::init_vault(&args.path, &args.name)?;
+            info!(path = %args.path.display(), "initialized vault");
         }
-        Command::Validate { path, json } => {
+        Command::Validate(args) => {
             // Diagnostics are this command's result: print them to stdout (plain
             // lines, or JSON with --json), keep operational logs on stderr, and
             // signal validity via the exit code.
-            let report = kataan_core::validate::validate(path)?;
+            let report = kataan_core::validate::validate(args.path)?;
             let ok = report.is_ok();
-            if json {
+            if args.json {
                 let out = JsonReport {
                     ok,
                     diagnostics: report
@@ -321,49 +394,44 @@ fn run() -> Result<()> {
                 std::process::exit(1);
             }
         }
-        Command::RebuildIndexes { path } => {
-            kataan_core::rebuild::rebuild_indexes(&path)?;
-            info!(path = %path.display(), "rebuilt indexes");
+        Command::RebuildIndexes(args) => {
+            kataan_core::rebuild::rebuild_indexes(&args.path)?;
+            info!(path = %args.path.display(), "rebuilt indexes");
         }
-        Command::Ontology { path } => {
-            let vault = kataan_core::vault::LoadedVault::load(&path)?;
+        Command::Ontology(args) => {
+            let vault = kataan_core::vault::LoadedVault::load(&args.path)?;
             let response = kataan_core::schema::ontology_response(&vault);
             print_line(&serde_json::to_string_pretty(&response)?)?;
         }
-        Command::Graph { command } => match command {
-            GraphCommand::Export {
-                path,
-                types,
-                predicates,
-                limit,
-            } => {
-                let vault = kataan_core::vault::LoadedVault::load(&path)?;
-                let graph = kataan_core::query::subgraph(&vault, &types, &predicates, limit)?;
+        Command::Graph(args) => match args.command {
+            GraphCommand::Export(args) => {
+                let vault = kataan_core::vault::LoadedVault::load(&args.path)?;
+                let graph = kataan_core::query::subgraph(
+                    &vault,
+                    &split_lists(args.types),
+                    &split_lists(args.predicates),
+                    args.limit,
+                )?;
                 print_line(&serde_json::to_string_pretty(&graph)?)?;
             }
-            GraphCommand::Neighbors {
-                path,
-                id,
-                predicate,
-                direction,
-            } => {
-                let vault = kataan_core::vault::LoadedVault::load(&path)?;
-                let id = kataan_core::id::CanonicalId::parse(&id)?;
+            GraphCommand::Neighbors(args) => {
+                let vault = kataan_core::vault::LoadedVault::load(&args.path)?;
+                let id = kataan_core::id::CanonicalId::parse(&args.id)?;
                 let result = kataan_core::query::neighbors(
                     &vault,
                     &id,
-                    predicate.as_deref(),
-                    direction.into(),
+                    args.predicate.as_deref(),
+                    args.direction.into(),
                 )?;
                 print_line(&serde_json::to_string_pretty(&result)?)?;
             }
         },
-        Command::Documents { path, query } => {
-            let vault = kataan_core::vault::LoadedVault::load(&path)?;
-            let page = kataan_core::query::documents(&vault, &query.into())?;
+        Command::Documents(args) => {
+            let vault = kataan_core::vault::LoadedVault::load(&args.path)?;
+            let page = kataan_core::query::documents(&vault, &args.into())?;
             print_line(&serde_json::to_string_pretty(&page)?)?;
         }
-        Command::Guide => {
+        Command::Guide(_) => {
             print_line(AGENT_GUIDE)?;
         }
     }

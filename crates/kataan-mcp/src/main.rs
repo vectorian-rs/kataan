@@ -10,7 +10,7 @@ use std::{
 };
 
 use anyhow::Result;
-use clap::Parser;
+use argh::FromArgs;
 use serde_json::{json, Value};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -26,18 +26,17 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// the client decides whether it can proceed.
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
-#[derive(Debug, Parser)]
-#[command(name = "kataan-mcp")]
-#[command(about = "MCP server for a kataan vault (read + write over stdio)")]
+/// MCP server for a kataan vault (read + write over stdio).
+#[derive(Debug, FromArgs)]
 struct Cli {
-    /// Path to the vault to serve.
-    #[arg(long)]
+    /// path to the vault to serve
+    #[argh(option)]
     vault: PathBuf,
 }
 
 fn main() -> Result<()> {
     init_tracing();
-    let cli = Cli::parse();
+    let cli: Cli = argh::from_env();
 
     // Build the search index up front so `search` works from the first call.
     if let Err(error) = tools::reindex_search(&cli.vault) {

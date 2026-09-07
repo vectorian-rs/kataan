@@ -13,7 +13,7 @@ kataan guide
 kataan documents <vault-path> [--type T] [--status S] [--label L] [--id ID]
                               [--path-prefix P] [--linked-to ID] [--predicate P]
                               [--direction out|in|both] [--after RFC3339] [--before RFC3339]
-                              [--order id|occurred-at|created-at|updated-at] [--desc]
+                              [--order id|occurred_at|created_at|updated_at] [--desc]
                               [--include metadata|full|markdown] [--limit N] [--offset N]
 kataan graph export <vault-path> [--type T] [--predicate P] [--limit N]
 kataan graph neighbors <vault-path> <id> [--predicate P] [--direction out|in|both]
@@ -442,8 +442,8 @@ folders = ["companies/*/customers/*"]
 and `desc`:
 
 ```sh
-kataan documents <vault> --order updated-at --desc --limit 20   # what changed
-kataan documents <vault> --after 2026-01-01 --before 2026-12-31 --order occurred-at
+kataan documents <vault> --order updated_at --desc --limit 20   # what changed
+kataan documents <vault> --after 2026-01-01 --before 2026-12-31 --order occurred_at
 ```
 
 Bounds are inclusive and compared at their own precision, so a bare

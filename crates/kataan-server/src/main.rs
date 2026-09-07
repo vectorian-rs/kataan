@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::Parser;
+use argh::FromArgs;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -13,14 +13,15 @@ mod watch;
 
 use state::AppState;
 
-#[derive(Debug, Parser)]
-#[command(name = "kataan-server")]
-#[command(about = "Kataan HTTP API server")]
+/// Kataan HTTP API server.
+#[derive(Debug, FromArgs)]
 struct Cli {
-    #[arg(long)]
+    /// vault to serve
+    #[argh(option)]
     vault: PathBuf,
 
-    #[arg(long, default_value = "127.0.0.1:3001")]
+    /// address to bind (default 127.0.0.1:3001)
+    #[argh(option, default = "String::from(\"127.0.0.1:3001\")")]
     bind: String,
 }
 
@@ -28,7 +29,7 @@ struct Cli {
 async fn main() {
     init_tracing();
 
-    let cli = Cli::parse();
+    let cli: Cli = argh::from_env();
     let state = match AppState::new(cli.vault) {
         Ok(state) => state,
         Err(error) => {

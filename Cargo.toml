@@ -19,7 +19,7 @@ anyhow = "1"
 axum = "0.7"
 blake3 = "1"
 ignore = "0.4"
-clap = { version = "4", features = ["derive"] }
+argh = "0.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
