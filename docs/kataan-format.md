@@ -21,6 +21,91 @@ The system should be understandable without a database or proprietary format:
 - Intake input is preserved before it is transformed.
 - The server keeps a metadata-only in-memory vault index; Markdown bodies are read on demand.
 
+## Orientation: four things, often confused
+
+Types, the ontology, metadata keys and edges are four separate mechanisms. Each
+is specified in its own section below; this is how they fit together, because
+the commonest mistake is to look for one of them in another's place — "where
+does the `book` type say a book may have a description?" has no answer, because
+types do not describe fields at all.
+
+### Documents and their metadata keys
+
+A document is a Markdown/TOML pair. The sidecar carries three kinds of key:
+
+| | Keys | If absent |
+| :-- | :-- | :-- |
+| **Mandatory** | `type`, `markdown` | The sidecar does not parse: `missing field 'markdown'` |
+| **Modelled, optional** | `status`, `markdown_checksum`, `aliases`, `labels`, `edges`, `created_by`, `last_updated_by`, `occurred_at`, `created_at`, `updated_at` | Fine — every one is optional |
+| **Unmodelled** | anything else | Fine — kept verbatim through any write |
+
+The third row is a guarantee, not an accident: a vault may put `linkedin`,
+`kind` or anything else on a document and kataan will preserve it. See
+[What a write preserves](#what-a-write-preserves).
+
+A folder index (`index.toml`) is a document *and* a folder header, so it also
+carries `name`, `description`, `default_type`, `folder_checksum` and the derived
+`documents` / `subfolders` lists. See [Folder indexes](#folder-indexes).
+
+### Types — what exists, and where it lives
+
+A type is itself a document: `type/book.toml`, of type `type-definition`. It
+declares where documents of that type may live (`folders`), an optional
+supertype (`extends`), and an icon.
+
+**A type declares no fields.** It answers "what kinds of thing are there, and
+where do they sit", never "what must one carry". See [Types](#types).
+
+### The ontology — the vocabulary of relationships, and optional field rules
+
+`ontology.toml` holds two independent things:
+
+- `[edges.<predicate>]` — the relationship vocabulary: which types may sit at
+  each end (`from`, `to`), whether it is `symmetric` or has an `inverse`, its
+  `cardinality`, and a description.
+- `[nodes.<type>]` — *optional* field schemas: `required`, and per-field types.
+
+`[nodes.*]` is the only place a field constraint can come from. A vault with no
+`[nodes.*]` constrains no fields at all, which is a legitimate way to run one.
+
+Two properties worth knowing before relying on it:
+
+- **A schema constrains what it declares and never forbids what it does not.**
+  Adding a schema cannot retroactively invalidate existing documents, and an
+  undeclared key stays legal.
+- **Node schemas are checked on leaf documents only.** A folder index is skipped,
+  so `required` does not apply to one.
+
+### Edges — and what they cannot carry
+
+An edge is a predicate and a list of target ids:
+
+```toml
+[edges]
+invested_in = ["organizations/focused-energy", "organizations/proxima-fusion"]
+```
+
+**An edge instance carries no metadata of its own** — no properties, no dates,
+no attributes. The *predicate* carries rules, in `ontology.toml`; the edge
+carries only the ids.
+
+That is a deliberate limit with a direct consequence: a relationship that needs
+facts about itself — when an employment started, who asserted it, how confident
+you are — has to become a document. Model it as a node of its own with edges to
+both ends, and its dates and provenance are then ordinary metadata keys on that
+document, validated like any other. See
+[Relationship ontology](#relationship-ontology).
+
+### What constrains what
+
+- `type` and `markdown` are required by the document model itself.
+- Where a document may live comes from its **type**.
+- Which edges are legal between which types comes from the **ontology's
+  predicates**.
+- Field requirements and field types come from **`[nodes.*]`**, if the vault
+  declares any, and only for leaf documents.
+- Nothing else rejects a key, and nothing removes one.
+
 ## Vault structure
 
 A Kataan vault is a normal directory:
