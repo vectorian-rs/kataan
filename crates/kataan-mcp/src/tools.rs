@@ -12,7 +12,7 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 
 use kataan_core::{
-    mutate::{self, DocumentPatch, NewDocument},
+    mutate,
     schema::schema_response,
     vault::{LoadedVault, Vault},
 };
@@ -23,10 +23,23 @@ mod catalogue;
 
 pub use catalogue::list;
 
-use args::{
-    extra_fields, opt_direction, opt_str, opt_str_vec, parse_id, patch_fields, str_arg, str_vec,
-    to_pretty,
-};
+use args::*;
+
+/// Serialize a tool's result. Every read returns JSON, never HTML.
+fn to_pretty<T: serde::Serialize>(value: &T) -> Result<String> {
+    serde_json::to_string_pretty(value).context("failed to serialize response")
+}
+
+/// Deserialize a tool's whole argument object, naming the tool if it fails.
+///
+/// The `{error:#}` is deliberate: `to_string()` on an `anyhow::Error` prints
+/// only the outermost context, so an agent was told "invalid arguments" without
+/// being told which field or what was expected — everything serde had worked
+/// out was dropped on the floor.
+fn parse_args<T: serde::de::DeserializeOwned>(tool: &str, args: &Value) -> Result<T> {
+    serde_json::from_value(args.clone())
+        .map_err(|error| anyhow!("invalid arguments for `{tool}`: {error}"))
+}
 
 /// Refresh the search index after a committed write.
 ///
@@ -82,14 +95,13 @@ pub fn call(vault: &Path, name: &str, args: &Value) -> Result<String> {
 }
 
 fn search(vault: &Path, args: &Value) -> Result<String> {
-    let query: SearchQuery =
-        serde_json::from_value(args.clone()).context("invalid search arguments")?;
+    let query: SearchQuery = parse_args("search", args)?;
     let response = SearchIndex::open_default(vault)?.search(&query)?;
     to_pretty(&response)
 }
 
 fn get_document(vault: &Path, args: &Value) -> Result<String> {
-    let id = parse_id(args, "id")?;
+    let id = canonical("id", &parse_args::<IdArgs>("get_document", args)?.id)?;
     let document = Vault::open(vault)?.load_document(&id)?;
     to_pretty(&json!({
         "id": document.id.as_str(),
@@ -104,8 +116,7 @@ fn documents(vault: &Path, args: &Value) -> Result<String> {
     // Deserialized straight into the core type, the way `search` already
     // consumes `SearchQuery`. The hand-assembly this replaces had to be kept in
     // step with `DocumentQuery` by hand, and had already fallen out of step.
-    let query: kataan_core::query::DocumentQuery =
-        serde_json::from_value(args.clone()).context("invalid documents arguments")?;
+    let query: kataan_core::query::DocumentQuery = parse_args("documents", args)?;
     let loaded = LoadedVault::load(vault)?;
     to_pretty(&kataan_core::query::documents(&loaded, &query)?)
 }
@@ -116,7 +127,7 @@ fn list_folders(vault: &Path) -> Result<String> {
 }
 
 fn get_folder(vault: &Path, args: &Value) -> Result<String> {
-    let id = parse_id(args, "id")?;
+    let id = canonical("id", &parse_args::<IdArgs>("get_folder", args)?.id)?;
     let loaded = LoadedVault::load(vault)?;
     let (mut folders, mut documents) = (Vec::new(), Vec::new());
     for child in loaded.graph.children_of(&id) {
@@ -134,7 +145,7 @@ fn get_folder(vault: &Path, args: &Value) -> Result<String> {
 }
 
 fn resolve_path(vault: &Path, args: &Value) -> Result<String> {
-    let path = str_arg(args, "path")?;
+    let path = parse_args::<PathArgs>("resolve_path", args)?.path;
     let loaded = LoadedVault::load(vault)?;
     let id = loaded
         .resolve_path(&path)
@@ -146,7 +157,7 @@ fn resolve_path(vault: &Path, args: &Value) -> Result<String> {
 }
 
 fn schema(vault: &Path, args: &Value) -> Result<String> {
-    let kind = str_arg(args, "kind")?;
+    let kind = parse_args::<SchemaArgs>("schema", args)?.kind;
     let loaded = LoadedVault::load(vault).ok();
     let response = schema_response(&kind, loaded.as_ref())
         .ok_or_else(|| anyhow!("unknown schema kind `{kind}`"))?;
@@ -163,14 +174,14 @@ fn vault_info(vault: &Path) -> Result<String> {
 }
 
 fn neighbors(vault: &Path, args: &Value) -> Result<String> {
-    let id = parse_id(args, "id")?;
-    let direction = opt_direction(args)?;
+    let request: NeighborsArgs = parse_args("neighbors", args)?;
+    let id = canonical("id", &request.id)?;
     let loaded = LoadedVault::load(vault)?;
     let result = kataan_core::query::neighbors(
         &loaded,
         &id,
-        opt_str(args, "predicate").as_deref(),
-        direction,
+        request.predicate.as_deref(),
+        request.direction,
     )?;
     to_pretty(&result)
 }
@@ -183,60 +194,45 @@ fn neighbors(vault: &Path, args: &Value) -> Result<String> {
 const DEFAULT_SUBGRAPH_NODES: usize = 200;
 
 fn subgraph(vault: &Path, args: &Value) -> Result<String> {
+    let request: SubgraphArgs = parse_args("subgraph", args)?;
     let loaded = LoadedVault::load(vault)?;
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .map_or(DEFAULT_SUBGRAPH_NODES, |n| n as usize);
     let graph = kataan_core::query::subgraph(
         &loaded,
-        &str_vec(args, "types"),
-        &str_vec(args, "predicates"),
-        Some(limit),
+        &request.types,
+        &request.predicates,
+        Some(request.limit.unwrap_or(DEFAULT_SUBGRAPH_NODES)),
     )?;
     to_pretty(&graph)
 }
 
 fn create_document(vault: &Path, args: &Value) -> Result<String> {
-    let request = NewDocument {
-        r#type: str_arg(args, "type")?,
-        title: str_arg(args, "title")?,
-        body: str_arg(args, "body")?,
-        parent: opt_str(args, "parent"),
-        aliases: str_vec(args, "aliases"),
-        labels: str_vec(args, "labels"),
-        status: opt_str(args, "status"),
-        // Writes over MCP are always attributed to the agent actor.
-        actor: None,
-        occurred_at: opt_str(args, "occurred_at"),
-        extra: extra_fields(args, "fields"),
-    };
+    let mut request = parse_args::<CreateArgs>("create_document", args)?.document;
+    // Writes over MCP are always attributed to the agent actor, whatever the
+    // caller said.
+    request.actor = None;
     let id = mutate::create_document(vault, request)?;
     refresh_search_after_write(vault, &id);
     to_pretty(&json!({ "id": id.as_str() }))
 }
 
 fn update_document(vault: &Path, args: &Value) -> Result<String> {
-    let id = parse_id(args, "id")?;
-    let patch = DocumentPatch {
-        expected_updated_at: opt_str(args, "expected_updated_at"),
-        fields: patch_fields(args, "fields"),
-        status: opt_str(args, "status"),
-        occurred_at: opt_str(args, "occurred_at"),
-        aliases: opt_str_vec(args, "aliases"),
-        labels: opt_str_vec(args, "labels"),
-        // Writes over MCP are always attributed to the agent actor.
-        actor: None,
-    };
-    mutate::update_document(vault, &id, opt_str(args, "body"), patch)?;
+    let request: UpdateArgs = parse_args("update_document", args)?;
+    let id = canonical("id", &request.id)?;
+    let mut patch = request.edit.patch;
+    // Writes over MCP are always attributed to the agent actor.
+    patch.actor = None;
+    mutate::update_document(vault, &id, request.edit.body, patch)?;
     refresh_search_after_write(vault, &id);
     to_pretty(&json!({ "id": id.as_str(), "updated": true }))
 }
 
 fn remove_edge(vault: &Path, args: &Value) -> Result<String> {
-    let source = parse_id(args, "source")?;
-    let target = parse_id(args, "target")?;
-    let predicate = str_arg(args, "predicate")?;
+    let request: EdgeArgs = parse_args("remove_edge", args)?;
+    let (source, target) = (
+        canonical("source", &request.source)?,
+        canonical("target", &request.target)?,
+    );
+    let predicate = request.predicate;
     mutate::remove_edge(vault, &source, &predicate, &target)?;
     refresh_search_after_write(vault, &source);
     to_pretty(
@@ -245,14 +241,13 @@ fn remove_edge(vault: &Path, args: &Value) -> Result<String> {
 }
 
 fn replace_edges_for_predicate(vault: &Path, args: &Value) -> Result<String> {
-    let source = parse_id(args, "source")?;
-    let predicate = str_arg(args, "predicate")?;
-    let targets = str_vec(args, "targets")
-        .into_iter()
-        .map(|target| {
-            kataan_core::id::CanonicalId::parse(&target)
-                .map_err(|error| anyhow!("invalid target `{target}`: {error}"))
-        })
+    let request: ReplaceEdgesArgs = parse_args("replace_edges_for_predicate", args)?;
+    let source = canonical("source", &request.source)?;
+    let predicate = request.predicate;
+    let targets = request
+        .targets
+        .iter()
+        .map(|target| canonical("targets", target))
         .collect::<Result<Vec<_>>>()?;
     mutate::replace_edges_for_predicate(vault, &source, &predicate, &targets)?;
     refresh_search_after_write(vault, &source);
@@ -264,9 +259,12 @@ fn replace_edges_for_predicate(vault: &Path, args: &Value) -> Result<String> {
 }
 
 fn add_edge(vault: &Path, args: &Value) -> Result<String> {
-    let source = parse_id(args, "source")?;
-    let target = parse_id(args, "target")?;
-    let predicate = str_arg(args, "predicate")?;
+    let request: EdgeArgs = parse_args("add_edge", args)?;
+    let (source, target) = (
+        canonical("source", &request.source)?,
+        canonical("target", &request.target)?,
+    );
+    let predicate = request.predicate;
     mutate::add_edge(vault, &source, &predicate, &target)?;
     refresh_search_after_write(vault, &source);
     to_pretty(
@@ -290,6 +288,57 @@ mod tests {
     /// Parse a read tool's JSON string result back into a Value.
     fn json_result(vault: &Path, name: &str, args: Value) -> Value {
         serde_json::from_str(&call(vault, name, &args).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_wrong_typed_argument_is_refused_rather_than_defaulted() {
+        // The failure this replaced: every tool picked its arguments out of a
+        // `Value` field by field, and a picker has to invent something when the
+        // value is not the type it wanted. `str_vec` returned an empty list for
+        // anything that was not an array, so this call created the document,
+        // dropped the aliases, and reported success — a write silently
+        // discarding what the caller asked for.
+        let dir = temp_vault();
+        let vault = dir.path();
+
+        let refused = call(
+            vault,
+            "create_document",
+            &json!({
+                "type": "note",
+                "title": "Alpha",
+                "body": "a",
+                "aliases": "A,a1"
+            }),
+        )
+        .expect_err("a string is not a list of aliases");
+
+        // The message has to name what was wrong, or an agent cannot correct
+        // itself: `to_string()` on the error chain would say only "invalid
+        // arguments for `create_document`".
+        let message = format!("{refused:#}");
+        assert!(message.contains("create_document"), "{message}");
+        assert!(message.contains("expected a sequence"), "{message}");
+
+        // And nothing was written.
+        assert!(
+            !vault.join("notes/alpha.toml").exists(),
+            "document created anyway"
+        );
+    }
+
+    #[test]
+    fn a_defaulted_argument_cannot_be_silently_wrong() {
+        // Same class, read side: `limit` went through `as_u64().unwrap_or(200)`,
+        // so a string limit silently became the default ceiling and the caller
+        // was answered as though it had asked for that.
+        let dir = temp_vault();
+        let message = format!(
+            "{:#}",
+            call(dir.path(), "subgraph", &json!({ "limit": "500" }))
+                .expect_err("a string is not a node count")
+        );
+        assert!(message.contains("expected usize"), "{message}");
     }
 
     #[test]

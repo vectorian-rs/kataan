@@ -1,84 +1,127 @@
-//! Pulling typed arguments out of an MCP call's untyped JSON.
+//! The arguments each tool accepts, as types.
 //!
-//! An agent sends whatever it sends, so every one of these has to say what it
-//! does with a missing or wrong-typed value rather than assume one.
+//! Every tool deserializes its whole argument object into one of these rather
+//! than picking fields out of a `Value`. The difference is not stylistic: a
+//! picker answers "what is at this key, if it is the type I expected" and has
+//! to invent something when the answer is no. `str_vec` returned an empty list
+//! for anything that was not an array, so `create_document` with
+//! `"aliases": "a,b"` created the document and silently dropped the aliases,
+//! reporting success. Deserializing says "this is not a list of strings" and
+//! refuses the call.
+//!
+//! These types are also what the tool schemas are generated from, so the
+//! catalogue an agent reads and the parser it is checked against cannot
+//! disagree.
 
-use anyhow::{anyhow, Context, Result};
-use serde_json::Value;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-use kataan_core::id::CanonicalId;
+use kataan_core::{
+    id::CanonicalId,
+    mutate::{DocumentEdit, NewDocument},
+    query::Direction,
+};
 
-pub(super) fn to_pretty<T: serde::Serialize>(value: &T) -> Result<String> {
-    serde_json::to_string_pretty(value).context("failed to serialize response")
+/// A tool that takes one canonical id.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IdArgs {
+    /// Canonical id, e.g. `organizations/bull`.
+    pub id: String,
 }
 
-pub(super) fn str_arg(args: &Value, key: &str) -> Result<String> {
-    opt_str(args, key).ok_or_else(|| anyhow!("missing string argument `{key}`"))
+/// A tool that takes one filesystem path.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PathArgs {
+    /// Vault-relative or absolute path, e.g. `notes/my-note.md`.
+    pub path: String,
 }
 
-pub(super) fn opt_str(args: &Value, key: &str) -> Option<String> {
-    args.get(key).and_then(Value::as_str).map(str::to_owned)
+/// `schema`, which describes one kind or one vault document type.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SchemaArgs {
+    /// `document`, `folder-index`, `vault`, `type-definition`, or the name of a
+    /// type declared by the vault.
+    pub kind: String,
 }
 
-pub(super) fn str_vec(args: &Value, key: &str) -> Vec<String> {
-    args.get(key)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+/// `neighbors`: what one document is connected to.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NeighborsArgs {
+    /// Canonical id, e.g. `organizations/bull`.
+    pub id: String,
+    /// Restrict to one predicate; omit for all.
+    #[serde(default)]
+    pub predicate: Option<String>,
+    /// `out` = edges this document declares, `in` = edges pointing at it,
+    /// `both` (default).
+    #[serde(default)]
+    pub direction: Direction,
 }
 
-/// `Some(list)` only when `key` is present, so an omitted field leaves a patch
-/// field unchanged rather than clearing it.
-pub(super) fn opt_str_vec(args: &Value, key: &str) -> Option<Vec<String>> {
-    args.get(key).map(|_| str_vec(args, key))
+/// `subgraph`: nodes and links for the whole vault.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SubgraphArgs {
+    /// Restrict to these document types; omit for all.
+    #[serde(default)]
+    pub types: Vec<String>,
+    /// Restrict to these edge predicates; omit for all.
+    #[serde(default)]
+    pub predicates: Vec<String>,
+    /// Refuse rather than return more than this many nodes. Defaults to 200
+    /// here; the maximum is 5000.
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
-/// Extra sidecar fields from an object-valued argument. `mutate` rejects any
-/// key kataan defines, so no filtering is needed here.
-pub(super) fn extra_fields(
-    args: &Value,
-    key: &str,
-) -> std::collections::BTreeMap<String, toml::Value> {
-    match args.get(key).and_then(json_to_toml) {
-        Some(toml::Value::Table(fields)) => fields.into_iter().collect(),
-        _ => Default::default(),
-    }
+/// `create_document`. The document itself is `kataan_core`'s own
+/// [`NewDocument`], so this surface cannot accept a document the HTTP API would
+/// not.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct CreateArgs {
+    #[serde(flatten)]
+    pub document: NewDocument,
 }
 
-/// Custom fields for an update, where a JSON `null` means "remove this key"
-/// rather than "no value" — the distinction `extra_fields` has no need for,
-/// since a create has nothing to remove.
-pub(super) fn patch_fields(
-    args: &Value,
-    key: &str,
-) -> std::collections::BTreeMap<String, Option<toml::Value>> {
-    match args.get(key) {
-        Some(Value::Object(fields)) => fields
-            .iter()
-            .map(|(name, value)| (name.clone(), json_to_toml(value)))
-            .collect(),
-        _ => Default::default(),
-    }
+/// `update_document`: which document, and the edit to apply to it.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(super) struct UpdateArgs {
+    /// Canonical id of the document to update.
+    pub id: String,
+    #[serde(flatten)]
+    pub edit: DocumentEdit,
 }
 
-/// `direction` defaults to the enum's own default rather than restating it.
-pub(super) fn opt_direction(args: &Value) -> Result<kataan_core::query::Direction> {
-    match opt_str(args, "direction") {
-        Some(value) => value.parse().map_err(|error: String| anyhow!(error)),
-        None => Ok(kataan_core::query::Direction::default()),
-    }
+/// `add_edge` and `remove_edge`: one edge, named by its three parts.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct EdgeArgs {
+    /// Canonical id of the document that declares the edge.
+    pub source: String,
+    /// Predicate name, which must exist in `ontology.toml`.
+    pub predicate: String,
+    /// Canonical id of the document the edge points at.
+    pub target: String,
 }
 
-/// Convert a JSON tool argument to TOML. JSON null has no TOML representation,
-/// so null-valued entries are dropped rather than written as something else.
-use kataan_core::convert::json_to_toml;
+/// `replace_edges_for_predicate`: the whole target list for one predicate.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReplaceEdgesArgs {
+    /// Canonical id of the document that declares the edges.
+    pub source: String,
+    /// Predicate name, which must exist in `ontology.toml`.
+    pub predicate: String,
+    /// The complete new target list. An empty list removes every edge for this
+    /// predicate.
+    pub targets: Vec<String>,
+}
 
-pub(super) fn parse_id(args: &Value, key: &str) -> Result<CanonicalId> {
-    CanonicalId::parse(str_arg(args, key)?).map_err(|error| anyhow!("invalid `{key}`: {error}"))
+/// Parse a canonical id, naming the argument it came from.
+pub(super) fn canonical(field: &str, value: &str) -> anyhow::Result<CanonicalId> {
+    CanonicalId::parse(value).map_err(|error| anyhow::anyhow!("invalid `{field}`: {error}"))
 }

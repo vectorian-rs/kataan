@@ -18,48 +18,8 @@ use crate::state::AppState;
 
 use super::{blocking, core_error, read_loaded_vault, reject_cross_site, ApiError, OkResponse};
 
-/// A new document. Mirrors the MCP `create_document` arguments exactly, so the
-/// two surfaces cannot drift into accepting different things.
-#[derive(Debug, Deserialize)]
-pub struct CreateDocumentRequest {
-    pub r#type: String,
-    pub title: String,
-    pub body: String,
-    pub parent: Option<String>,
-    #[serde(default)]
-    pub aliases: Vec<String>,
-    #[serde(default)]
-    pub labels: Vec<String>,
-    pub status: Option<String>,
-    pub actor: Option<String>,
-    pub occurred_at: Option<String>,
-    /// Extra top-level sidecar keys, validated against the type's `[nodes.*]`
-    /// schema before anything is written. `GET /api/schema/<type>` describes
-    /// what belongs here.
-    #[serde(default)]
-    pub fields: std::collections::BTreeMap<String, toml::Value>,
-}
-
-/// A partial update. An omitted field means "leave it alone", which is why
-/// every one of these is an `Option` — including `body`.
-#[derive(Debug, Deserialize)]
-pub struct UpdateDocumentRequest {
-    /// Custom sidecar keys to set. A JSON `null` removes the key; keys not
-    /// mentioned are left alone.
-    #[serde(default)]
-    pub fields: std::collections::BTreeMap<String, serde_json::Value>,
-    /// The `updated_at` the caller last read. When present the write is
-    /// refused with `409` unless the document still carries it, so an editor
-    /// cannot silently overwrite a change it never saw.
-    pub expected_updated_at: Option<String>,
-    pub body: Option<String>,
-    pub status: Option<String>,
-    pub occurred_at: Option<String>,
-    pub aliases: Option<Vec<String>>,
-    pub labels: Option<Vec<String>>,
-    pub actor: Option<String>,
-}
-
+/// One edge, named by its three parts. Deserialized straight into the shape
+/// `mutate` takes, as MCP does with the same names.
 #[derive(Debug, Deserialize)]
 pub struct EdgeRequest {
     pub source: String,
@@ -146,27 +106,13 @@ where
 pub async fn create_document(
     headers: HeaderMap,
     State(state): State<AppState>,
-    Json(request): Json<CreateDocumentRequest>,
+    Json(request): Json<kataan_core::mutate::NewDocument>,
 ) -> Result<(StatusCode, Json<CreatedResponse>), ApiError> {
     reject_cross_site(&headers)?;
     let id = write_action(state, move |root| {
-        kataan_core::mutate::create_document(
-            root,
-            kataan_core::mutate::NewDocument {
-                r#type: request.r#type,
-                title: request.title,
-                body: request.body,
-                parent: request.parent,
-                aliases: request.aliases,
-                labels: request.labels,
-                status: request.status,
-                actor: request.actor,
-                occurred_at: request.occurred_at,
-                extra: request.fields,
-            },
-        )
-        .map_err(core_error)
-        .map(|id| (id.clone(), id))
+        kataan_core::mutate::create_document(root, request)
+            .map_err(core_error)
+            .map(|id| (id.clone(), id))
     })
     .await?;
     Ok((
@@ -181,31 +127,14 @@ pub async fn update_document(
     headers: HeaderMap,
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<UpdateDocumentRequest>,
+    Json(edit): Json<kataan_core::mutate::DocumentEdit>,
 ) -> Result<Json<OkResponse>, ApiError> {
     reject_cross_site(&headers)?;
     let id = CanonicalId::parse(&id).map_err(ApiError::bad_request)?;
     write_action(state, move |root| {
-        kataan_core::mutate::update_document(
-            root,
-            &id,
-            request.body,
-            kataan_core::mutate::DocumentPatch {
-                expected_updated_at: request.expected_updated_at,
-                fields: request
-                    .fields
-                    .iter()
-                    .map(|(name, value)| (name.clone(), kataan_core::convert::json_to_toml(value)))
-                    .collect(),
-                status: request.status,
-                occurred_at: request.occurred_at,
-                aliases: request.aliases,
-                labels: request.labels,
-                actor: request.actor,
-            },
-        )
-        .map_err(core_error)
-        .map(|()| ((), id))
+        kataan_core::mutate::update_document(root, &id, edit.body, edit.patch)
+            .map_err(core_error)
+            .map(|()| ((), id))
     })
     .await?;
     Ok(Json(OkResponse { ok: true }))

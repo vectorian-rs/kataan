@@ -137,7 +137,11 @@ fn handle_message(vault: &std::path::Path, message: &Value) -> Option<Value> {
             // the model sees the message), not a JSON-RPC protocol error.
             Some(match tools::call(vault, name, &arguments) {
                 Ok(text) => ok_response(id, tool_content(&text, false)),
-                Err(error) => ok_response(id, tool_content(&error.to_string(), true)),
+                // `{error:#}` prints the whole context chain. `to_string()` gives only
+                // the outermost one, so a caller was told "invalid arguments for
+                // `create_document`" without the part serde had already worked out —
+                // which field, and what type was expected.
+                Err(error) => ok_response(id, tool_content(&format!("{error:#}"), true)),
             })
         }
         // notifications/initialized, notifications/cancelled, etc. — no reply.

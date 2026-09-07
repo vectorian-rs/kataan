@@ -23,21 +23,46 @@ use crate::{
 
 /// A document to create. `parent` places it under a specific folder id; when
 /// absent the document goes in the type's configured folder.
-#[derive(Debug, Clone, Default)]
+/// Deserialized directly by every write surface, so HTTP and MCP accept exactly
+/// the same document and neither can drift into accepting a different one. It
+/// is also what their request schemas are generated from.
+#[derive(Debug, Clone, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct NewDocument {
+    /// The document's type. Must be registered in the vault.
     pub r#type: String,
+    /// Human title. Slugified into the id.
     pub title: String,
+    /// Markdown body.
     pub body: String,
+    /// Folder id to place it under. Defaults to the type's own folder.
+    #[serde(default)]
     pub parent: Option<String>,
+    #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default)]
     pub labels: Vec<String>,
+    /// One of the vault's allowed status values.
+    #[serde(default)]
     pub status: Option<String>,
+    /// Who is making the write, recorded as `created_by`.
+    #[serde(default)]
     pub actor: Option<String>,
-    /// When the thing this document describes happened. Validated on write, so
-    /// a malformed value is rejected rather than stored.
+    /// When the thing this document describes happened. RFC 3339, and only RFC
+    /// 3339: a calendar day (2026-08-29) or a moment (2026-08-29T12:00:00Z).
+    /// Validated on write, so a malformed value is rejected rather than stored.
+    #[serde(default)]
     pub occurred_at: Option<String>,
     /// Extra top-level sidecar keys to write alongside the ones kataan defines.
     /// Rejected if they collide with a reserved key (see [`RESERVED_KEYS`]).
+    ///
+    /// Spelled `fields` on the wire, which is what both surfaces already called
+    /// it and what the type's `[nodes.*]` schema describes.
+    ///
+    /// `toml::Value` has no `JsonSchema` impl, so the generated schema
+    /// describes these as free-form JSON — accurate, since kataan does not
+    /// constrain their shape here; the type's `[nodes.*]` schema does.
+    #[serde(default, rename = "fields")]
+    #[schemars(with = "BTreeMap<String, serde_json::Value>")]
     pub extra: BTreeMap<String, toml::Value>,
 }
 
@@ -59,7 +84,7 @@ const RESERVED_KEYS: &[&str] = &[
 ];
 
 /// Fields to change on an existing document. `None` leaves a field unchanged.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct DocumentPatch {
     /// The `updated_at` the caller last saw. When set, the write is refused
     /// unless the document still carries it.
@@ -76,11 +101,17 @@ pub struct DocumentPatch {
     /// without that distinction the protection would cover almost nothing. A
     /// document that gains a timestamp has been written by someone, which is
     /// exactly the conflict worth refusing.
+    #[serde(default)]
     pub expected_updated_at: Option<String>,
+    #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
     pub occurred_at: Option<String>,
+    #[serde(default)]
     pub aliases: Option<Vec<String>>,
+    #[serde(default)]
     pub labels: Option<Vec<String>>,
+    #[serde(default)]
     pub actor: Option<String>,
     /// Custom sidecar keys to set or remove.
     ///
@@ -97,7 +128,24 @@ pub struct DocumentPatch {
     /// Keys kataan defines itself are rejected, as they are on create: they
     /// have their own patch fields, and writing them here would emit the key
     /// twice.
+    #[serde(default)]
+    #[schemars(with = "BTreeMap<String, Option<serde_json::Value>>")]
     pub fields: BTreeMap<String, Option<toml::Value>>,
+}
+
+/// A whole update as a caller sends it: the Markdown body and the metadata
+/// patch together.
+///
+/// One type for both, because a save is one request. `update_document` takes
+/// them as separate arguments — the body is a file and the patch is a sidecar —
+/// but no caller should have to know that, and both surfaces deserialize this.
+#[derive(Debug, Clone, Default, serde::Deserialize, schemars::JsonSchema)]
+pub struct DocumentEdit {
+    /// Replacement Markdown body. Omit to leave the body untouched.
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(flatten)]
+    pub patch: DocumentPatch,
 }
 
 /// Create a new document. Returns its canonical id.
