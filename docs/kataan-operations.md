@@ -119,7 +119,7 @@ The `kataan-mcp` crate is a Model Context Protocol server speaking JSON-RPC over
 stdio (no SDK dependency). It is **read + write**:
 
 - Reads: `search`, `get_document`, `documents`, `list_folders`, `get_folder`,
-  `resolve`, `resolve_path`, `neighbors`, `subgraph`, `schema`, `vault_info` —
+  `resolve_path`, `neighbors`, `subgraph`, `schema`, `vault_info` —
   returning JSON.
 - Model discovery: `schema` (per kataan kind *or* per vault document type) and
   `ontology` (types, predicates, and the type-level graph) on HTTP, MCP and CLI.

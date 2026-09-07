@@ -54,7 +54,7 @@ pub fn list() -> Value {
         ),
         tool(
             "resolve_path",
-            "Resolve a filesystem path to a canonical document id. Accepts either file of a document pair (notes/x.md, notes/x.toml), a folder's index (resolves to the folder id), or the extensionless form. Use when you have a path from outside kataan and need an id for the other tools.",
+            "Resolve a filesystem path to a canonical document id. Accepts either file of a document pair (notes/x.md, notes/x.toml), a folder's index (resolves to the folder id), or the extensionless form. Use when you have a path from outside kataan and need an id for the other tools. Returns {id, folder, type_folder, is_folder_index} — the same shape the HTTP API returns.",
             object(
                 &[("path", "string", "Vault-relative or absolute path, e.g. notes/my-note.md.")],
                 &["path"],

@@ -192,6 +192,11 @@ async fn a_document_route_is_its_canonical_id() {
         body.get("route_token").is_none(),
         "route_token should be gone: {body}"
     );
+    // The whole projection, not just the id: this is the shape MCP returns too,
+    // and the two drifted apart once already.
+    assert_eq!(body["folder"], "type");
+    assert_eq!(body["type_folder"], "type");
+    assert_eq!(body["is_folder_index"], false);
 
     fs::remove_dir_all(root).unwrap();
 }

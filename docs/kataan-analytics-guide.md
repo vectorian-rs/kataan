@@ -346,14 +346,16 @@ resolution.
 
 ## Gotchas
 
-**MCP and HTTP do not return identical shapes for `resolve`.** HTTP returns five
-fields; MCP returns `{id}` for `resolve` and `{id, is_folder_index}` for
-`resolve_path`. Do not assume parity there. The bulk and graph reads *are*
-identical across surfaces — verified byte-for-byte.
+**MCP and HTTP return the same shape for `resolve_path`.** They did not once —
+HTTP returned four fields where MCP returned `{id, is_folder_index}`, because
+each surface built its own projection. Both now serialize
+`LoadedVault::resolved`, so `{id, folder, type_folder, is_folder_index}` is what
+either gives you. The bulk and graph reads are identical too — verified
+byte-for-byte.
 
 **MCP reloads the whole vault per call.** Every tool call re-reads and re-parses
 every document. Fine for interactive use; if you are issuing hundreds of calls,
-use HTTP (which holds the vault in memory) or the CLI.
+use HTTP, which holds the vault in memory.
 
 **`search` is ranked full-text, not a filter.** It requires query text and
 returns BM25 hits. For "every document of type X", use `documents()` — that is

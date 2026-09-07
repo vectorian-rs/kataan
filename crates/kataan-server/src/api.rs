@@ -9,7 +9,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use kataan_core::{id::CanonicalId, title::title_from_id};
+use kataan_core::title::title_from_id;
 
 use crate::{state::AppState, watch::WatchStatus};
 
@@ -105,17 +105,6 @@ pub struct HighlightResponse {
     pub extension: Option<String>,
     pub language: String,
     pub html: String,
-}
-
-/// A resolved document: its canonical id plus enough context to fetch or route
-/// to it without a second lookup. Shared by both resolve endpoints, which
-/// differ only in how the id is looked up.
-#[derive(Debug, Serialize)]
-pub struct ResolveResponse {
-    pub id: String,
-    pub folder: String,
-    pub type_folder: String,
-    pub is_folder_index: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -452,7 +441,7 @@ pub async fn raw_file_by_path(
 pub async fn resolve_path(
     State(state): State<AppState>,
     Query(query): Query<PathQuery>,
-) -> Result<Json<ResolveResponse>, ApiError> {
+) -> Result<Json<kataan_core::vault::ResolvedDocument>, ApiError> {
     let loaded = read_loaded_vault(&state)?;
     let id = loaded
         .resolve_path(&query.path)
@@ -463,25 +452,11 @@ pub async fn resolve_path(
             ))
         })?
         .clone();
-    Ok(Json(resolved(&loaded, &id)))
+    // The projection lives in core, so an agent and a browser get the same
+    // answer to the same question.
+    Ok(Json(loaded.resolved(&id)))
 }
 
-/// The shared projection behind both resolve endpoints: they differ only in how
-/// the id was found, not in what a caller gets back.
-fn resolved(loaded: &kataan_core::vault::LoadedVault, id: &CanonicalId) -> ResolveResponse {
-    ResolveResponse {
-        id: id.as_str().to_owned(),
-        folder: id.containing_folder().to_owned(),
-        type_folder: id.top_level_folder().to_owned(),
-        is_folder_index: loaded
-            .documents
-            .get(id)
-            .is_some_and(|record| record.is_folder_index),
-    }
-}
-
-/// Filters arrive as a query string; `ids` and `labels` accept comma-separated
-/// lists.
 pub async fn documents(
     State(state): State<AppState>,
     Query(query): Query<kataan_core::query::DocumentQuery>,

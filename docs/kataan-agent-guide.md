@@ -131,7 +131,7 @@ cargo run -p kataan-mcp -- --vault <vault-path>
 Tools:
 
 - Reads — `search`, `get_document`, `documents`, `list_folders`, `get_folder`,
-  `resolve`, `resolve_path`, `neighbors`, `subgraph`, `schema`, `vault_info`
+  `resolve_path`, `neighbors`, `subgraph`, `schema`, `vault_info`
   (return JSON).
 - Writes — `create_document` (type, title, body, optional parent/aliases/labels/
   status/occurred_at/fields), `update_document` (id, optional body/status/

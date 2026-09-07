@@ -139,13 +139,10 @@ fn resolve_path(vault: &Path, args: &Value) -> Result<String> {
     let id = loaded
         .resolve_path(&path)
         .ok_or_else(|| anyhow!("`{path}` does not resolve to a document in this vault"))?;
-    to_pretty(&json!({
-        "id": id.as_str(),
-        "is_folder_index": loaded
-            .documents
-            .get(id)
-            .is_some_and(|record| record.is_folder_index),
-    }))
+    // The same projection HTTP returns. These two answered the same question
+    // differently until the shape moved into core: an agent got `id` and
+    // `is_folder_index`, a browser also got `folder` and `type_folder`.
+    to_pretty(&loaded.resolved(id))
 }
 
 fn schema(vault: &Path, args: &Value) -> Result<String> {
@@ -293,6 +290,36 @@ mod tests {
     /// Parse a read tool's JSON string result back into a Value.
     fn json_result(vault: &Path, name: &str, args: Value) -> Value {
         serde_json::from_str(&call(vault, name, &args).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn resolve_path_answers_an_agent_what_it_answers_a_browser() {
+        // These two surfaces returned different shapes for the same question:
+        // MCP gave `id` and `is_folder_index`, HTTP also gave `folder` and
+        // `type_folder`, because each built its own projection. Both now
+        // serialize `LoadedVault::resolved`, and this asserts the tool emits
+        // that whole shape rather than a subset of it.
+        let dir = temp_vault();
+        let vault = dir.path();
+
+        let resolved = json_result(vault, "resolve_path", json!({ "path": "type/note.md" }));
+        let expected = serde_json::to_value(
+            LoadedVault::load(vault)
+                .unwrap()
+                .resolved(&kataan_core::id::CanonicalId::parse("type/note").unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(resolved, expected);
+        // Named individually so a field silently dropped from the projection
+        // fails here rather than passing because both sides lost it.
+        for field in ["id", "folder", "type_folder", "is_folder_index"] {
+            assert!(
+                resolved.get(field).is_some(),
+                "`{field}` missing: {resolved}"
+            );
+        }
+        assert_eq!(resolved["type_folder"], "type");
     }
 
     #[test]

@@ -57,6 +57,27 @@ pub struct LoadedVault {
     pub graph: VaultGraph,
 }
 
+/// A document located in the vault: its canonical id, where it sits, and
+/// whether it is a folder's own index rather than a leaf.
+///
+/// The shape every surface returns for a resolution. `folder` and `type_folder`
+/// are derived from the id, and `is_folder_index` is the one part that needs
+/// the loaded vault — which is why this is built here and not from an id alone.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct ResolvedDocument {
+    pub id: String,
+    /// The folder containing the document, or the empty string at the root.
+    pub folder: String,
+    /// The document's top-level folder, which is its type folder.
+    pub type_folder: String,
+    /// Whether this id names a folder's `index` pair rather than a leaf
+    /// document. A caller routing to it needs to know: a folder index is
+    /// reached as the folder, not as a document inside it.
+    pub is_folder_index: bool,
+}
+
 impl LoadedVault {
     pub fn load(root: impl AsRef<Path>) -> Result<Self> {
         let vault = Vault::open(root)?;
@@ -90,6 +111,25 @@ impl LoadedVault {
     /// vault, so a path outside the root, or one naming a deleted or ignored
     /// file, cannot resolve. Traversal is rejected before the lookup:
     /// [`CanonicalId::parse`] refuses any segment containing `.`.
+    /// A resolved document: its id plus enough context to fetch or route to it
+    /// without a second lookup.
+    ///
+    /// Lives here rather than in a surface so HTTP and MCP cannot answer the
+    /// same question differently. They used to: the same `resolve_path` gave a
+    /// browser four fields and an agent two, because each surface built its own
+    /// projection and only one of them was ever extended.
+    pub fn resolved(&self, id: &CanonicalId) -> ResolvedDocument {
+        ResolvedDocument {
+            id: id.as_str().to_owned(),
+            folder: id.containing_folder().to_owned(),
+            type_folder: id.top_level_folder().to_owned(),
+            is_folder_index: self
+                .documents
+                .get(id)
+                .is_some_and(|record| record.is_folder_index),
+        }
+    }
+
     pub fn resolve_path(&self, path: impl AsRef<Path>) -> Option<&CanonicalId> {
         let path = path.as_ref();
         let relative = if path.is_absolute() {

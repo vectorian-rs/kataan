@@ -111,7 +111,7 @@ Tools exposed by `kataan-mcp`:
 | `get_folder` | read | `id` | List direct child folders and documents under a folder id, e.g. `notes`. |
 | `schema` | read | `kind` | Return the TOML schema for a kind such as `document`, `ontology`, or `index`. |
 | `vault_info` | read | none | Return the vault configuration/index. |
-| `resolve_path` | read | `path` | Resolve a filesystem path to a canonical id. Accepts either file of a pair (`notes/x.md`, `notes/x.toml`), a folder's `index`, or the extensionless form. |
+| `resolve_path` | read | `path` | Resolve a filesystem path to a canonical id. Accepts either file of a pair (`notes/x.md`, `notes/x.toml`), a folder's `index`, or the extensionless form. Returns `{id, folder, type_folder, is_folder_index}` — the same shape `GET /api/resolve-path` returns. |
 | `documents` | read | `ids?`, `type?`, `status?`, `labels?`, `path_prefix?`, `linked_to?`, `predicate?`, `direction?`, `include?`, `limit?`, `offset?` | List or batch-fetch documents in one call. Metadata only unless `include: "markdown"`. Matching more than `limit` is an error, not a truncation. |
 | `neighbors` | read | `id`, `predicate?`, `direction?` | What a document is connected to, grouped by predicate and hydrated with each neighbour's type/title/status. Incoming edges use the ontology's inverse predicate. |
 | `subgraph` | read | `types?`, `predicates?`, `limit?` | Export `{nodes, links}` for the vault. Each edge appears once, in the direction it was authored. Too large is an error, not a truncation — `limit` defaults to 200 over MCP and lowers the ceiling, never raises it. |
