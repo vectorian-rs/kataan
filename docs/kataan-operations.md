@@ -122,7 +122,8 @@ stdio (no SDK dependency). It is **read + write**:
   `resolve_path`, `neighbors`, `subgraph`, `schema`, `vault_info` —
   returning JSON.
 - Model discovery: `schema` (per kataan kind *or* per vault document type) and
-  `ontology` (types, predicates, and the type-level graph) on HTTP, MCP and CLI.
+  `ontology` (types, predicates, and the type-level graph). Both are on HTTP and
+  MCP; the CLI has `ontology` only.
 - Writes: `create_document`, `update_document`, `add_edge`, `remove_edge`,
   `replace_edges_for_predicate` — routed through the
   validated mutation layer, with the search index refreshed after each write.
@@ -136,6 +137,38 @@ predicates declared in `ontology.toml` are invisible to it.
 Tool failures (unknown type, id collision, ontology-illegal edge, invalid status)
 surface as MCP `isError` results rather than corrupting the vault. Reads return
 JSON, never HTML — Markdown rendering lives only in `kataan-server`.
+
+## What each surface exposes
+
+**Capability lives in `kataan-core`. HTTP and MCP are thin adapters that differ
+in presentation, not in what they can do.** Both read, both write, both go
+through the same validated mutation layer, and a query type is deserialized
+directly by each rather than assembled per surface — so the two cannot answer
+the same question differently.
+
+The divergences that remain are deliberate:
+
+- **HTTP only** — rendered HTML (`DocumentResponse.html`), `/file/highlight`,
+  raw file bytes, and `/watch`. Things a browser needs and an agent does not.
+  Reads over MCP return JSON, never HTML: rendering lives only in
+  `kataan-server`.
+- **MCP only** — no extra capability, but tighter *defaults*. Token economy is
+  the constraint: `subgraph` defaults to a 200-node ceiling over MCP where HTTP
+  allows the full 5000, because a whole-vault export is tens of thousands of
+  tokens spent before an agent has read a word of it. Tool descriptions steer
+  toward `neighbors` for a single document.
+- **CLI** — deliberately narrower than both. It does things *to* a vault:
+  create, check, repair indexes, read the model, export the graph. Asking
+  questions *of* one is HTTP and MCP only. A third spelling of a query is a
+  third place for it to drift, and that drift is exactly what this division
+  exists to prevent.
+
+Addressing follows one convention: a document or folder is named by its
+canonical id as a URL path — `GET /api/documents/notes/alpha`,
+`GET /api/folders/projects/snappy`, `PATCH /api/documents/notes/alpha` — so
+reads and writes address a resource identically and at any depth. Files are
+named by their vault path (`?path=`), because a file path is not an id and may
+contain characters the id grammar forbids.
 
 ## Intake vs organized knowledge
 

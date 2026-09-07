@@ -58,10 +58,11 @@ GET  /api/health
 GET  /api/watch
 GET  /api/vault
 GET  /api/folders
-GET  /api/folders/:folder
-GET  /api/folder?id=<canonical-folder-id>
-GET  /api/document?id=<canonical-document-id>
+GET  /api/folders/<canonical-folder-id>
 GET  /api/documents/<canonical-document-id>
+     # A document or folder is addressed by its id as a path, at any depth, and
+     # the same way writes address it. Files use `?path=` — a file path is not
+     # an id and may contain characters the id grammar forbids.
 GET  /api/file?path=<vault-relative-file-path>
 GET  /api/file/highlight?path=<vault-relative-file-path>&theme=<theme>
 GET  /api/file/raw?path=<vault-relative-file-path>
@@ -104,15 +105,16 @@ Examples:
 curl http://127.0.0.1:3001/api/health
 curl http://127.0.0.1:3001/api/vault
 curl http://127.0.0.1:3001/api/folders
-curl 'http://127.0.0.1:3001/api/document?id=notes/example-note'
+curl http://127.0.0.1:3001/api/documents/notes/example-note
 curl -X POST http://127.0.0.1:3001/api/rebuild-indexes
 curl -X POST http://127.0.0.1:3001/api/validate
 ```
 
-The HTTP API is read/repair oriented — it has no write endpoints. To create or
-change content you have two options: edit the Markdown/TOML pairs directly on
-disk and then call `POST /api/rebuild-indexes` and `POST /api/validate`, or use
-the MCP server below, which validates each change for you.
+The HTTP API reads *and* writes: `POST /api/documents`, `PATCH
+/api/documents/<id>`, and `POST`/`PUT`/`DELETE /api/edges` go through the same
+validated mutation layer the MCP tools use, so either surface produces a
+well-formed vault. You can also edit the Markdown/TOML pairs directly on disk
+and then call `POST /api/rebuild-indexes` and `POST /api/validate`.
 
 ## MCP server (read + write)
 

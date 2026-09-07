@@ -42,13 +42,6 @@ pub struct FolderSummaryResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct FolderResponse {
-    pub folder: String,
-    pub index: kataan_core::index::FolderIndex,
-    pub documents: Vec<FolderDocumentResponse>,
-}
-
-#[derive(Debug, Serialize)]
 pub struct CanonicalFolderResponse {
     pub id: String,
     pub metadata: Option<kataan_core::document::DocumentMetadata>,
@@ -116,14 +109,6 @@ pub struct PathQuery {
 pub struct ValidateResponse {
     pub ok: bool,
     pub diagnostics: Vec<DiagnosticResponse>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct IdQuery {
-    pub id: String,
-    /// Which syntax-highlighting theme fenced code blocks render with. Absent
-    /// means dark, matching the file preview.
-    pub theme: Option<String>,
 }
 
 /// Just the theme, for routes that take their id from the path.
@@ -207,8 +192,6 @@ pub fn router(state: AppState) -> Router {
         .route("/search/reindex", post(search_reindex))
         .route("/vault", get(vault))
         .route("/folders", get(folders))
-        .route("/folder", get(folder_by_id))
-        .route("/document", get(document_by_id))
         .route("/file", get(file_by_path))
         .route("/file/raw", get(raw_file_by_path))
         .route("/file/highlight", get(highlight_file_by_path))
@@ -218,7 +201,7 @@ pub fn router(state: AppState) -> Router {
         .route("/graph/subgraph", get(subgraph))
         .route("/schema/:kind", get(schema))
         .route("/ontology", get(ontology))
-        .route("/folders/:folder", get(folder))
+        .route("/folders/*folder", get(folder))
         .route("/documents/*id", get(document))
         .route("/documents", post(create_document))
         .route("/documents/*id", patch(update_document))
@@ -360,53 +343,11 @@ pub async fn folders(State(state): State<AppState>) -> Result<Json<FoldersRespon
 pub async fn folder(
     State(state): State<AppState>,
     Path(folder): Path<String>,
-) -> Result<Json<FolderResponse>, ApiError> {
-    let loaded = read_loaded_vault(&state)?;
-    let id = kataan_core::id::CanonicalId::parse(&folder).map_err(ApiError::bad_request)?;
-    let Some(record) = loaded.documents.get(&id) else {
-        if is_file_backed_folder(&loaded, &id) {
-            return Ok(Json(FolderResponse {
-                folder,
-                index: file_backed_folder_index(&loaded, &id),
-                documents: Vec::new(),
-            }));
-        }
-        return Err(ApiError::not_found(format!(
-            "folder `{folder}` does not exist"
-        )));
-    };
-    let documents = direct_documents(&loaded, &id);
-    let index = kataan_core::index::FolderIndex {
-        name: document_name(record).unwrap_or_else(|| title_from_id(&folder)),
-        description: None,
-        default_type: Some(record.metadata.r#type.clone()),
-        folder_checksum: None,
-        type_folders: Default::default(),
-        documents: Vec::new(),
-        subfolders: Vec::new(),
-    };
-
-    Ok(Json(FolderResponse {
-        folder,
-        index,
-        documents,
-    }))
-}
-
-pub async fn folder_by_id(
-    State(state): State<AppState>,
-    Query(query): Query<IdQuery>,
 ) -> Result<Json<CanonicalFolderResponse>, ApiError> {
-    blocking(move || canonical_folder_response(&state, &query.id))
-        .await
-        .map(Json)
-}
-
-pub async fn document_by_id(
-    State(state): State<AppState>,
-    Query(query): Query<IdQuery>,
-) -> Result<Json<DocumentResponse>, ApiError> {
-    blocking(move || document_response(&state, &query.id, query.theme.as_deref()))
+    // `*folder`, not `:folder`: a folder id has as many segments as the folder
+    // is deep, and `:folder` matched only the first — `books/mesopotamia` was
+    // unreachable by path, which is why a second query-string spelling existed.
+    blocking(move || canonical_folder_response(&state, &folder))
         .await
         .map(Json)
 }

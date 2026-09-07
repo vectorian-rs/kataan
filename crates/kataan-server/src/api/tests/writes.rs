@@ -107,7 +107,7 @@ async fn the_http_api_can_create_update_and_link_documents() {
     let response = request(
         test_app(&root),
         "GET",
-        "/api/document?id=notes/written-over-http",
+        "/api/documents/notes/written-over-http",
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -124,7 +124,7 @@ async fn the_http_api_can_create_update_and_link_documents() {
     let response = request(
         test_app(&root),
         "GET",
-        "/api/document?id=notes/written-over-http",
+        "/api/documents/notes/written-over-http",
     )
     .await;
     let document: serde_json::Value = json_response(response).await;
@@ -236,7 +236,7 @@ async fn write_routes_refuse_a_cross_site_request() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     // And nothing was written.
-    let response = request(test_app(&root), "GET", "/api/document?id=notes/forged").await;
+    let response = request(test_app(&root), "GET", "/api/documents/notes/forged").await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     fs::remove_dir_all(root).unwrap();

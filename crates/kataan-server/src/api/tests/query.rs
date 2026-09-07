@@ -36,7 +36,7 @@ markdown = "HU-otp-travel-POC-SOW1-260429.md"
     let response = request(
         app,
         "GET",
-        "/api/document?id=projects%2Fsnappy%2Fsows%2Fotp-travel%2FHU-otp-travel-POC-SOW1-260429",
+        "/api/documents/projects/snappy/sows/otp-travel/HU-otp-travel-POC-SOW1-260429",
     )
     .await;
 
@@ -153,7 +153,7 @@ async fn internal_document_links_become_app_routes_end_to_end() {
     kataan_core::rebuild::rebuild_indexes(&root).unwrap();
 
     let app = test_app(&root);
-    let response = request(app, "GET", "/api/document?id=notes/alpha").await;
+    let response = request(app, "GET", "/api/documents/notes/alpha").await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = json_response(response).await;
     let html = body["html"].as_str().unwrap();

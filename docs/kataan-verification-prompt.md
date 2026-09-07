@@ -22,13 +22,13 @@ Either the entire code or the recent changes. Ask back if the user did not defin
 - Graph build (HashMap keyed by canonical ID; inverse adjacency precomputed)
 - Facet index (`union(ancestors, labels)` filterable without per-query path walks)
 - Watcher behavior (debounced, batched; minimal-patch path vs. full-reload fallback heuristic)
-- Read-lock hold times (no large-body reads under lock; mpsc write queue does not starve readers)
+- Read-lock hold times (no large-body reads under lock; the write mutex does not starve readers)
 - Rebuild cost (per-folder atomic, post-order, no full-vault rewrites for local edits)
 
 ### 3. Safety
 - Atomic writes (tempfile-in-same-dir → fsync → rename; no torn TOML or Markdown)
-- Single-writer guarantee (mpsc command queue; no concurrent mutation paths around it)
-- Write serialization (single-writer command queue; every write followed by index rebuild so state stays consistent)
+- Single-writer guarantee (a process-wide mutex held across the mutation and the refresh that follows it; no concurrent mutation paths around it)
+- Write serialization (every write is followed by a vault reload and a search-index refresh, all under the same lock, so state stays consistent and a caller sees its own write)
 - Agent write path (writes go through the validated mutation layer; no silent overwrite of human edits; destructive file deletion is a human decision)
 - Edge mutation safety: `add_edge` and every target of `replace_edges_for_predicate` are ontology-validated before commit; `remove_edge` is not, by design, so a wrong or now-illegal edge can still be deleted
 - MCP surface (read + write tools; writes routed through the validated mutation layer; illegal requests rejected as `isError`, never written)

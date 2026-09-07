@@ -215,8 +215,19 @@ export async function getFolders() {
   return getJson<{ folders: FolderSummary[] }>('/api/folders');
 }
 
+/// A canonical id as a URL path.
+///
+/// Encoded per segment, so the slashes that separate id segments stay slashes
+/// and everything else is escaped. Ids are `[a-z0-9-]` by grammar, so nothing
+/// here actually needs escaping today — it is written this way so the rule
+/// holds if the grammar ever widens, and so reads and writes address a document
+/// identically.
+function idPath(id: string) {
+  return id.split('/').map(encodeURIComponent).join('/');
+}
+
 export async function getFolder(id: string) {
-  return getJson<CanonicalFolderResponse>(`/api/folder?id=${encodeURIComponent(id)}`);
+  return getJson<CanonicalFolderResponse>(`/api/folders/${idPath(id)}`);
 }
 
 /// Resolve a vault path (or a canonical id, which is the extensionless form)
@@ -230,11 +241,10 @@ export async function getOntology() {
 }
 
 export async function getDocument(id: string, theme?: string) {
-  const params = new URLSearchParams({ id });
   // Fenced code blocks are highlighted server-side, so the theme has to travel
   // with the request; without it every block renders dark in light mode.
-  if (theme) params.set('theme', theme);
-  return getJson<DocumentResponse>(`/api/document?${params}`);
+  const query = theme ? `?theme=${encodeURIComponent(theme)}` : '';
+  return getJson<DocumentResponse>(`/api/documents/${idPath(id)}${query}`);
 }
 
 /// Save a document's Markdown body.
@@ -255,29 +265,10 @@ export type DocumentEdit = {
 };
 
 export async function updateDocument(id: string, edit: DocumentEdit, expectedUpdatedAt?: string) {
-  const path = id.split('/').map(encodeURIComponent).join('/');
-  const response = await fetch(`${API_BASE}/api/documents/${path}`, {
+  const response = await fetch(`${API_BASE}/api/documents/${idPath(id)}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ ...edit, expected_updated_at: expectedUpdatedAt }),
-  });
-  if (response.status === 409) {
-    throw new Error(
-      'This document changed on disk since you opened it. Reload to see the current version — your text is still here until you do.',
-    );
-  }
-  if (!response.ok) {
-    throw new Error(`Save failed: ${response.status} ${await response.text()}`);
-  }
-  return response.json() as Promise<{ ok: boolean }>;
-}
-
-export async function updateDocumentBody(id: string, body: string, expectedUpdatedAt?: string) {
-  const path = id.split('/').map(encodeURIComponent).join('/');
-  const response = await fetch(`${API_BASE}/api/documents/${path}`, {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ body, expected_updated_at: expectedUpdatedAt }),
   });
   if (response.status === 409) {
     throw new Error(

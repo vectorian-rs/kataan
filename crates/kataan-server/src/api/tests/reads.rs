@@ -76,7 +76,7 @@ async fn folders_count_includes_nested_documents() {
 }
 
 #[tokio::test]
-async fn folder_endpoint_returns_folder_index() {
+async fn a_folder_is_addressed_by_its_id_as_a_path() {
     let root = test_vault();
     let app = test_app(&root);
 
@@ -84,7 +84,8 @@ async fn folder_endpoint_returns_folder_index() {
 
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = json_response(response).await;
-    assert!(body["index"]["name"].is_string());
+    assert_eq!(body["id"], "type");
+    assert!(body["metadata"].is_object(), "{body}");
     assert_eq!(body["documents"].as_array().unwrap().len(), 7);
 
     fs::remove_dir_all(root).unwrap();
@@ -122,12 +123,7 @@ markdown = "demo.md"
     .unwrap();
     let app = test_app(&root);
 
-    let response = request(
-        app.clone(),
-        "GET",
-        "/api/folder?id=projects%2Fsnappy%2Fsows",
-    )
-    .await;
+    let response = request(app.clone(), "GET", "/api/folders/projects/snappy/sows").await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = json_response(response).await;
     // `sows` holds one document (`demo`) and no subfolders.
@@ -137,7 +133,7 @@ markdown = "demo.md"
     assert_eq!(documents[0]["slug"], "demo");
 
     // The parent lists `sows` as a subfolder child with an index.
-    let response = request(app, "GET", "/api/folder?id=projects%2Fsnappy").await;
+    let response = request(app, "GET", "/api/folders/projects/snappy").await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = json_response(response).await;
     let child = body["folders"]
@@ -175,15 +171,55 @@ async fn folders_list_includes_the_file_backed_code_folder() {
 }
 
 #[tokio::test]
-async fn folder_detail_of_code_is_a_file_backed_index() {
+async fn one_spelling_addresses_a_resource_however_deep_it_sits() {
+    // The reason there were two conventions: `/api/folders/:folder` matched a
+    // single path segment, so a nested folder was unreachable by path and a
+    // `?id=` spelling existed alongside it — returning a *different type* for
+    // the same concept. `*folder` addresses any depth, so one spelling does.
+    let root = test_vault();
+    fs::create_dir_all(root.join("projects/snappy/sows")).unwrap();
+    for folder in ["projects/snappy", "projects/snappy/sows"] {
+        fs::write(root.join(folder).join("index.md"), "# Nested\n").unwrap();
+        fs::write(
+            root.join(folder).join("index.toml"),
+            "type = \"project\"\nmarkdown = \"index.md\"\n",
+        )
+        .unwrap();
+    }
+    kataan_core::rebuild::rebuild_indexes(&root).unwrap();
+
+    for (path, id) in [
+        ("/api/folders/projects", "projects"),
+        ("/api/folders/projects/snappy", "projects/snappy"),
+        ("/api/folders/projects/snappy/sows", "projects/snappy/sows"),
+    ] {
+        let response = request(test_app(&root), "GET", path).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let body: serde_json::Value = json_response(response).await;
+        assert_eq!(body["id"], id, "{path}");
+    }
+
+    // Documents address the same way, and the same way writes always have.
+    let response = request(test_app(&root), "GET", "/api/documents/type/note").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = json_response(response).await;
+    assert_eq!(body["id"], "type/note");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn a_file_backed_folder_answers_rather_than_404s() {
+    // `code` is a declared type folder with no folder-index document, so it has
+    // no metadata of its own — but it exists and must be listable.
     let root = test_vault();
     let app = test_app(&root);
 
     let response = request(app, "GET", "/api/folders/code").await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = json_response(response).await;
-    assert_eq!(body["index"]["name"], "Code");
-    assert_eq!(body["index"]["default_type"], "code");
+    assert_eq!(body["id"], "code");
+    assert!(body["metadata"].is_null(), "{body}");
     assert!(body["documents"].as_array().unwrap().is_empty());
 
     fs::remove_dir_all(root).unwrap();
@@ -197,7 +233,7 @@ async fn canonical_code_folder_lists_raw_subdirs_and_files() {
     fs::write(root.join("code/tools/lib.rs"), "// lib\n").unwrap();
     let app = test_app(&root);
 
-    let response = request(app, "GET", "/api/folder?id=code").await;
+    let response = request(app, "GET", "/api/folders/code").await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = json_response(response).await;
     // File-backed folders carry no document metadata.
@@ -232,7 +268,7 @@ async fn any_indexless_type_folder_is_file_backed_not_404() {
     fs::create_dir_all(root.join("assets")).unwrap();
     let app = test_app(&root);
 
-    let response = request(app, "GET", "/api/folder?id=assets").await;
+    let response = request(app, "GET", "/api/folders/assets").await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = json_response(response).await;
     assert!(body["metadata"].is_null());
@@ -267,7 +303,7 @@ async fn file_endpoints_reject_symlink_files_and_intermediate_dirs() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{uri}");
     }
 
-    let response = request(app, "GET", "/api/folder?id=projects").await;
+    let response = request(app, "GET", "/api/folders/projects").await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = json_response(response).await;
     let files = body["files"].as_array().unwrap();

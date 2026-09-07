@@ -404,24 +404,6 @@ pub(super) fn is_file_backed_folder(
             .is_ok_and(|top_id| !loaded.documents.contains_key(&top_id))
 }
 
-pub(super) fn file_backed_folder_index(
-    loaded: &kataan_core::vault::LoadedVault,
-    id: &kataan_core::id::CanonicalId,
-) -> kataan_core::index::FolderIndex {
-    kataan_core::index::FolderIndex {
-        name: title_from_id(id.as_str()),
-        description: None,
-        default_type: loaded
-            .index
-            .type_for_folder(id.top_level_folder())
-            .map(str::to_owned),
-        folder_checksum: None,
-        type_folders: Default::default(),
-        documents: Vec::new(),
-        subfolders: Vec::new(),
-    }
-}
-
 pub(super) fn direct_file_backed_folders(
     state: &AppState,
     id: &str,
