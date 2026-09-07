@@ -30,6 +30,7 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 toml = { version = "0.8", features = ["preserve_order"] }
 toml_edit = "0.22"
+serde_urlencoded = "0.7"
 tower-http = { version = "0.5", features = ["cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

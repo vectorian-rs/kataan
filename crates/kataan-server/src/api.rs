@@ -155,22 +155,12 @@ pub struct NeighborsQuery {
 /// no filter on that axis.
 #[derive(Debug, Deserialize)]
 pub struct SubgraphQuery {
-    pub types: Option<String>,
-    pub predicates: Option<String>,
+    #[serde(default)]
+    pub types: kataan_core::wire::Csv,
+    #[serde(default)]
+    pub predicates: kataan_core::wire::Csv,
     /// Lowers the node ceiling; omitted means `MAX_SUBGRAPH_NODES`.
     pub limit: Option<usize>,
-}
-
-fn comma_separated(value: Option<&String>) -> Vec<String> {
-    value
-        .map(|raw| {
-            raw.split(',')
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 #[derive(Debug, Deserialize)]
@@ -492,65 +482,21 @@ fn resolved(loaded: &kataan_core::vault::LoadedVault, id: &CanonicalId) -> Resol
 
 /// Filters arrive as a query string; `ids` and `labels` accept comma-separated
 /// lists.
-#[derive(Debug, Deserialize)]
-pub struct DocumentsQuery {
-    pub ids: Option<String>,
-    pub r#type: Option<String>,
-    pub status: Option<String>,
-    pub labels: Option<String>,
-    pub path_prefix: Option<String>,
-    pub linked_to: Option<String>,
-    pub predicate: Option<String>,
-    #[serde(default)]
-    pub direction: kataan_core::query::Direction,
-    #[serde(default)]
-    pub include: kataan_core::query::Include,
-    pub limit: Option<usize>,
-    #[serde(default)]
-    pub offset: usize,
-    pub after: Option<String>,
-    pub before: Option<String>,
-    #[serde(default)]
-    pub order: kataan_core::query::Order,
-    #[serde(default)]
-    pub desc: bool,
-}
-
 pub async fn documents(
     State(state): State<AppState>,
-    Query(query): Query<DocumentsQuery>,
+    Query(query): Query<kataan_core::query::DocumentQuery>,
 ) -> Result<Json<kataan_core::query::DocumentPage>, ApiError> {
+    // Deserialized straight into the core type: `DocumentQuery`'s wire shape is
+    // flat and its list fields accept `a,b`, so there is nothing left for an
+    // adapter to translate — or to get wrong.
+    //
     // `include=markdown` reads one file per matched document.
-    blocking(move || documents_response(&state, query))
-        .await
-        .map(Json)
-}
-
-fn documents_response(
-    state: &AppState,
-    query: DocumentsQuery,
-) -> Result<kataan_core::query::DocumentPage, ApiError> {
-    let loaded = read_loaded_vault(state)?;
-    let request = kataan_core::query::DocumentQuery {
-        ids: comma_separated(query.ids.as_ref()),
-        r#type: query.r#type,
-        status: query.status,
-        labels: comma_separated(query.labels.as_ref()),
-        path_prefix: query.path_prefix,
-        linked_to: query.linked_to.map(|id| kataan_core::query::LinkedTo {
-            id,
-            predicate: query.predicate,
-            direction: query.direction,
-        }),
-        after: query.after,
-        before: query.before,
-        order: query.order,
-        desc: query.desc,
-        include: query.include,
-        limit: query.limit,
-        offset: query.offset,
-    };
-    kataan_core::query::documents(&loaded, &request).map_err(core_error)
+    blocking(move || {
+        let loaded = read_loaded_vault(&state)?;
+        kataan_core::query::documents(&loaded, &query).map_err(core_error)
+    })
+    .await
+    .map(Json)
 }
 
 pub async fn neighbors(
@@ -578,11 +524,15 @@ pub async fn subgraph(
     // response body being unbounded too.
     blocking(move || {
         let loaded = read_loaded_vault(&state)?;
-        let types = comma_separated(query.types.as_ref());
-        let predicates = comma_separated(query.predicates.as_ref());
         // Through `core_error`, not a bare `?`: a limit the caller chose is the
         // caller's mistake, and the blanket conversion would report it as a 500.
-        kataan_core::query::subgraph(&loaded, &types, &predicates, query.limit).map_err(core_error)
+        kataan_core::query::subgraph(
+            &loaded,
+            query.types.as_slice(),
+            query.predicates.as_slice(),
+            query.limit,
+        )
+        .map_err(core_error)
     })
     .await
     .map(Json)

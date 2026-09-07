@@ -5,6 +5,7 @@
 //! thing steering a model towards `neighbors` instead of a whole-vault
 //! `subgraph`, so it is worth editing as carefully as the code it describes.
 
+use schemars::schema_for;
 use serde_json::{json, Value};
 
 /// The tool catalogue returned by `tools/list`, with JSON Schema for each input.
@@ -35,26 +36,11 @@ pub fn list() -> Value {
         tool(
             "documents",
             "List or batch-fetch documents. Replaces fetching ids one at a time. All filters optional; an empty query lists the vault. Returns metadata by default — ask for markdown only when you need bodies, since each one is a file read. Matching more documents than `limit` is an error, not a truncation: narrow the query or page with `offset`.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "ids": { "type": "array", "items": { "type": "string" }, "description": "Fetch these ids; order preserved, unknown ids returned in `missing`." },
-                    "type": { "type": "string", "description": "Restrict to a document type." },
-                    "status": { "type": "string", "description": "Restrict to a status." },
-                    "labels": { "type": "array", "items": { "type": "string" }, "description": "Documents carrying every one of these labels." },
-                    "path_prefix": { "type": "string", "description": "Restrict to ids under this folder." },
-                    "linked_to": { "type": "string", "description": "Restrict to documents with an edge to this id." },
-                    "predicate": { "type": "string", "description": "With linked_to: restrict to one predicate." },
-                    "direction": { "type": "string", "enum": ["out", "in", "both"], "description": "With linked_to: which direction to follow." },
-                    "after": { "type": "string", "description": "Only documents whose occurred_at is on or after this RFC 3339 bound. Inclusive, and compared at the bound's own precision — a bare 2026-08-29 covers that whole day, instants included. Documents with no occurred_at are excluded whenever a bound is given." },
-                    "before": { "type": "string", "description": "Only documents whose occurred_at is on or before this bound. Same precision rule as `after`." },
-                    "order": { "type": "string", "enum": ["id", "occurred_at", "created_at", "updated_at"], "description": "Sort key, default `id`. Ties always break on id, so paging is stable. Documents missing the chosen timestamp sort last in both directions." },
-                    "desc": { "type": "boolean", "description": "Reverse the order. `order: updated_at` with this set answers \"what changed most recently\"." },
-                    "include": { "type": "string", "enum": ["metadata", "full", "markdown"], "description": "`metadata` (default) is the summary; `full` adds each document's declared fields, timestamps and edges at no extra cost; `markdown` adds the body, which is one file read per document." },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "description": "Page size. Above 1000 is an error, not a clamp; omitting it errors rather than truncating when more documents match than the default." },
-                    "offset": { "type": "integer", "minimum": 0 }
-                }
-            }),
+            // Generated from `DocumentQuery` rather than written out here. The
+            // hand-written copy carried thirteen property descriptions that had
+            // to track the struct by hand, and had already drifted from it in
+            // shape — it described `linked_to` as flat while the type nested it.
+            schema_for::<kataan_core::query::DocumentQuery>(),
         ),
         tool(
             "list_folders",
@@ -212,4 +198,12 @@ fn object(fields: &[(&str, &str, &str)], required: &[&str]) -> Value {
         );
     }
     json!({ "type": "object", "properties": properties, "required": required })
+}
+
+/// A tool's `inputSchema`, taken from the type the tool deserializes.
+///
+/// One definition instead of two: the doc comments on the struct become the
+/// descriptions an agent reads, so a field cannot be added without one.
+fn schema_for<T: schemars::JsonSchema>() -> Value {
+    serde_json::to_value(schema_for!(T)).expect("schema serializes")
 }

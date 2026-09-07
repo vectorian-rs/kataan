@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use kataan_core::query::Direction;
 use serde::Serialize;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -71,51 +70,130 @@ enum Command {
     /// List or batch-fetch documents as JSON on stdout.
     Documents {
         path: PathBuf,
-        /// Fetch these ids specifically (repeatable or comma-separated).
-        #[arg(long = "id", value_delimiter = ',')]
-        ids: Vec<String>,
-        #[arg(long = "type")]
-        r#type: Option<String>,
-        #[arg(long)]
-        status: Option<String>,
-        #[arg(long = "label", value_delimiter = ',')]
-        labels: Vec<String>,
-        #[arg(long)]
-        path_prefix: Option<String>,
-        /// Restrict to documents with an edge to this id.
-        #[arg(long)]
-        linked_to: Option<String>,
-        #[arg(long)]
-        predicate: Option<String>,
-        #[arg(long, default_value = "both")]
-        direction: Direction,
-        /// Only documents whose occurred_at is on or after this RFC 3339 bound.
-        /// Inclusive, and compared at the bound's own precision, so a bare day
-        /// covers the whole day.
-        #[arg(long)]
-        after: Option<String>,
-        /// Only documents whose occurred_at is on or before this bound.
-        #[arg(long)]
-        before: Option<String>,
-        /// Sort by: id, occurred-at, created-at, updated-at.
-        #[arg(long, default_value = "id")]
-        order: OrderArg,
-        /// Reverse the sort. With --order updated-at, "what changed most recently".
-        #[arg(long)]
-        desc: bool,
-        /// Include each document's full metadata: declared fields, timestamps
-        /// and edges. Free — it is already in memory.
-        #[arg(long)]
-        full: bool,
-        /// Include Markdown bodies (one file read per document).
-        #[arg(long)]
-        markdown: bool,
-        #[arg(long)]
-        limit: Option<usize>,
-        #[arg(long, default_value_t = 0)]
-        offset: usize,
+        #[command(flatten)]
+        query: DocumentArgs,
     },
     Guide,
+}
+
+/// The `documents` filters, as command-line flags.
+///
+/// Deliberately field-for-field with `kataan_core::query::DocumentQuery`, and
+/// converted by the `From` below — the same query, spelled for a shell, so the
+/// CLI cannot quietly support a different set of filters from HTTP and MCP.
+#[derive(Debug, clap::Args)]
+pub struct DocumentArgs {
+    /// Fetch these ids specifically (repeatable or comma-separated). Order is
+    /// preserved and unknown ids come back in `missing`.
+    #[arg(long = "id", value_delimiter = ',')]
+    ids: Vec<String>,
+    /// Restrict to a document type. Subtypes count.
+    #[arg(long = "type")]
+    r#type: Option<String>,
+    #[arg(long)]
+    status: Option<String>,
+    /// Documents carrying every one of these labels.
+    #[arg(long = "label", value_delimiter = ',')]
+    labels: Vec<String>,
+    /// Documents whose id is this folder or below it.
+    #[arg(long)]
+    path_prefix: Option<String>,
+    /// Restrict to documents with an edge to this id.
+    #[arg(long)]
+    linked_to: Option<String>,
+    /// With --linked-to: restrict to one predicate.
+    #[arg(long)]
+    predicate: Option<String>,
+    /// With --linked-to: which direction to follow.
+    #[arg(long, default_value = "both")]
+    direction: DirectionArg,
+    /// Only documents whose occurred_at is on or after this RFC 3339 bound.
+    /// Inclusive, and compared at the bound's own precision, so a bare day
+    /// covers the whole day.
+    #[arg(long)]
+    after: Option<String>,
+    /// Only documents whose occurred_at is on or before this bound.
+    #[arg(long)]
+    before: Option<String>,
+    /// Sort by: id, occurred-at, created-at, updated-at.
+    #[arg(long, default_value = "id")]
+    order: OrderArg,
+    /// Reverse the sort. With --order updated-at, "what changed most recently".
+    #[arg(long)]
+    desc: bool,
+    /// How much of each document to return. `full` adds declared fields,
+    /// timestamps and edges for free; `markdown` adds the body, at one file
+    /// read per document.
+    #[arg(long, default_value = "metadata")]
+    include: IncludeArg,
+    /// Page size, at most 1000. Omitting it errors rather than truncating when
+    /// more than 100 documents match.
+    #[arg(long)]
+    limit: Option<usize>,
+    #[arg(long, default_value_t = 0)]
+    offset: usize,
+}
+
+impl From<DocumentArgs> for kataan_core::query::DocumentQuery {
+    fn from(args: DocumentArgs) -> Self {
+        Self {
+            ids: args.ids.into(),
+            r#type: args.r#type,
+            status: args.status,
+            labels: args.labels.into(),
+            path_prefix: args.path_prefix,
+            linked_to: args.linked_to,
+            predicate: args.predicate,
+            direction: args.direction.into(),
+            after: args.after,
+            before: args.before,
+            order: args.order.into(),
+            desc: args.desc,
+            include: args.include.into(),
+            limit: args.limit,
+            offset: args.offset,
+        }
+    }
+}
+
+/// `--direction` and `--include` values, so `--help` lists them and shell
+/// completion offers them.
+///
+/// Mirrors rather than derives `ValueEnum` on the core types: that would put
+/// clap in `kataan-core`, which no library consumer of it should have to build.
+/// The `From` impls are exhaustive, so a new variant fails to compile here.
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum DirectionArg {
+    Out,
+    In,
+    Both,
+}
+
+impl From<DirectionArg> for kataan_core::query::Direction {
+    fn from(value: DirectionArg) -> Self {
+        match value {
+            DirectionArg::Out => Self::Out,
+            DirectionArg::In => Self::In,
+            DirectionArg::Both => Self::Both,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum IncludeArg {
+    Metadata,
+    Full,
+    Markdown,
+}
+
+impl From<IncludeArg> for kataan_core::query::Include {
+    fn from(value: IncludeArg) -> Self {
+        match value {
+            IncludeArg::Metadata => Self::Metadata,
+            IncludeArg::Full => Self::Full,
+            IncludeArg::Markdown => Self::Markdown,
+        }
+    }
 }
 
 /// `--order` values, kebab-cased for the command line.
@@ -163,7 +241,7 @@ enum GraphCommand {
         #[arg(long)]
         predicate: Option<String>,
         #[arg(long, default_value = "both")]
-        direction: Direction,
+        direction: DirectionArg,
     },
 }
 
@@ -271,55 +349,18 @@ fn run() -> Result<()> {
             } => {
                 let vault = kataan_core::vault::LoadedVault::load(&path)?;
                 let id = kataan_core::id::CanonicalId::parse(&id)?;
-                let result =
-                    kataan_core::query::neighbors(&vault, &id, predicate.as_deref(), direction)?;
+                let result = kataan_core::query::neighbors(
+                    &vault,
+                    &id,
+                    predicate.as_deref(),
+                    direction.into(),
+                )?;
                 print_line(&serde_json::to_string_pretty(&result)?)?;
             }
         },
-        Command::Documents {
-            path,
-            ids,
-            r#type,
-            status,
-            labels,
-            path_prefix,
-            linked_to,
-            predicate,
-            direction,
-            after,
-            before,
-            order,
-            desc,
-            full,
-            markdown,
-            limit,
-            offset,
-        } => {
+        Command::Documents { path, query } => {
             let vault = kataan_core::vault::LoadedVault::load(&path)?;
-            let query = kataan_core::query::DocumentQuery {
-                ids,
-                r#type,
-                status,
-                labels,
-                path_prefix,
-                linked_to: linked_to.map(|id| kataan_core::query::LinkedTo {
-                    id,
-                    predicate,
-                    direction,
-                }),
-                after,
-                before,
-                order: order.into(),
-                desc,
-                include: match (markdown, full) {
-                    (true, _) => kataan_core::query::Include::Markdown,
-                    (false, true) => kataan_core::query::Include::Full,
-                    (false, false) => kataan_core::query::Include::Metadata,
-                },
-                limit,
-                offset,
-            };
-            let page = kataan_core::query::documents(&vault, &query)?;
+            let page = kataan_core::query::documents(&vault, &query.into())?;
             print_line(&serde_json::to_string_pretty(&page)?)?;
         }
         Command::Guide => {

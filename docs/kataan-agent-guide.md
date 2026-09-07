@@ -12,8 +12,10 @@ kataan guide
 
 kataan documents <vault-path> [--type T] [--status S] [--label L] [--id ID]
                               [--path-prefix P] [--linked-to ID] [--predicate P]
-                              [--markdown] [--limit N] [--offset N]
-kataan graph export <vault-path> [--type T] [--predicate P]
+                              [--direction out|in|both] [--after RFC3339] [--before RFC3339]
+                              [--order id|occurred-at|created-at|updated-at] [--desc]
+                              [--include metadata|full|markdown] [--limit N] [--offset N]
+kataan graph export <vault-path> [--type T] [--predicate P] [--limit N]
 kataan graph neighbors <vault-path> <id> [--predicate P] [--direction out|in|both]
 ```
 
@@ -61,7 +63,9 @@ GET  /api/file?path=<vault-relative-file-path>
 GET  /api/file/highlight?path=<vault-relative-file-path>&theme=<theme>
 GET  /api/file/raw?path=<vault-relative-file-path>
 GET  /api/resolve-path?path=<vault-relative-or-absolute-path>
-GET  /api/documents?type=&status=&labels=&ids=&path_prefix=&linked_to=&predicate=&direction=&include=&limit=&offset=
+GET  /api/documents?type=&status=&labels=&ids=&path_prefix=&linked_to=&predicate=&direction=&after=&before=&order=&desc=&include=&limit=&offset=
+     # `ids` and `labels` take a comma-separated list here and a JSON array over
+     # MCP; both surfaces deserialize the same query type, so nothing else differs.
 GET  /api/graph/neighbors?id=<canonical-id>&predicate=<predicate>&direction=out|in|both
 GET  /api/graph/subgraph?types=<comma-separated>&predicates=<comma-separated>&limit=
 GET  /api/schema/document

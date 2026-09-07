@@ -15,7 +15,8 @@ fn batch_fetch_preserves_order_and_reports_misses() {
                 "topics/systems".to_owned(),
                 "notes/does-not-exist".to_owned(),
                 "topics/rust".to_owned(),
-            ],
+            ]
+            .into(),
             ..Default::default()
         }),
     )
@@ -89,7 +90,7 @@ fn full_returns_declared_fields_without_reading_the_body() {
     let page = documents(
         &vault,
         &q(DocumentQuery {
-            ids: vec!["topics/rust".to_owned()],
+            ids: vec!["topics/rust".to_owned()].into(),
             include: Include::Full,
             ..Default::default()
         }),

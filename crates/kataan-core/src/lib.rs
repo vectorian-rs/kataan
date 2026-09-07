@@ -23,6 +23,7 @@ pub mod types;
 pub mod validate;
 pub mod vault;
 pub mod walk;
+pub mod wire;
 pub mod write;
 
 #[cfg(test)]

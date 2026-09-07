@@ -17,3 +17,8 @@ thiserror.workspace = true
 time.workspace = true
 toml.workspace = true
 toml_edit.workspace = true
+
+[dev-dependencies]
+# Proves `DocumentQuery` deserializes from a URL query string, which is how the
+# HTTP surface consumes it — the whole point of the flat wire shape.
+serde_urlencoded.workspace = true

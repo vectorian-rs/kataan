@@ -12,8 +12,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    document::display_name, id::CanonicalId, title::title_from_id, vault::LoadedVault, Error,
-    Result,
+    document::display_name, id::CanonicalId, title::title_from_id, vault::LoadedVault, wire::Csv,
+    Error, Result,
 };
 
 /// Which direction to follow edges in.
@@ -26,6 +26,10 @@ pub enum Direction {
     Both,
 }
 
+/// Parses the same spellings the schema advertises. Used by the MCP
+/// `neighbors` tool, whose arguments are read one at a time rather than
+/// deserialized into a struct — `documents` needs none of this, since it
+/// deserializes [`DocumentQuery`] whole.
 impl std::str::FromStr for Direction {
     type Err = String;
 
@@ -130,24 +134,46 @@ pub struct LinkedTo {
 
 /// Filters for [`documents`]. Every field is optional; an empty query lists the
 /// vault, bounded by `limit`.
+///
+/// The shape *is* the wire shape, so every surface deserializes this type
+/// directly — `axum::extract::Query`, `serde_json::from_value`, and clap — and
+/// the doc comments below are the schema an agent reads. Three hand-written
+/// adapters used to stand in the way, one per surface, each free to drift from
+/// the others; the MCP tool's copy had already drifted in shape.
+///
+/// That is also why `linked_to` is three flat fields rather than a nested
+/// struct: a URL query string cannot express nesting. [`link_filter`] puts them
+/// back together.
+///
+/// [`link_filter`]: Self::link_filter
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DocumentQuery {
     /// Fetch these ids specifically. Order is preserved and unresolved ids are
     /// reported in `missing` rather than failing the call.
     #[serde(default)]
-    pub ids: Vec<String>,
+    pub ids: Csv,
+    /// Restrict to a document type. Subtypes count: a type declaring
+    /// `extends = "company"` is matched by `type = "company"`.
     #[serde(default)]
     pub r#type: Option<String>,
+    /// Restrict to a status.
     #[serde(default)]
     pub status: Option<String>,
     /// Documents carrying every one of these labels.
     #[serde(default)]
-    pub labels: Vec<String>,
+    pub labels: Csv,
     /// Documents whose id is this folder or below it.
     #[serde(default)]
     pub path_prefix: Option<String>,
+    /// Restrict to documents with an edge to this id.
     #[serde(default)]
-    pub linked_to: Option<LinkedTo>,
+    pub linked_to: Option<String>,
+    /// With `linked_to`: restrict to one predicate. Ignored without it.
+    #[serde(default)]
+    pub predicate: Option<String>,
+    /// With `linked_to`: which direction to follow. Ignored without it.
+    #[serde(default)]
+    pub direction: Direction,
     /// Keep documents whose `occurred_at` is on or after this bound.
     ///
     /// Inclusive, and compared *at the precision of the bound*: `after` and
@@ -165,19 +191,42 @@ pub struct DocumentQuery {
     #[serde(default)]
     pub before: Option<String>,
     /// Sort order. Defaults to canonical id, which is what the vault's own
-    /// ordering is, so paging is stable without asking for anything.
+    /// ordering is, so paging is stable without asking for anything. Ties
+    /// always break on id, and documents missing the chosen timestamp sort last
+    /// in both directions.
     #[serde(default)]
     pub order: Order,
     /// Reverse the order. `order = updated_at` with this set is "what changed
     /// most recently".
     #[serde(default)]
     pub desc: bool,
+    /// How much of each document to return.
     #[serde(default)]
     pub include: Include,
+    /// Page size, at most 1000. Asking for more is an error rather than a
+    /// clamp, and omitting it errors rather than truncating when more than 100
+    /// documents match — a caller rebuilding a graph must not be able to
+    /// mistake a partial answer for a complete one.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// How many matches to skip. Use with `limit` to page.
     #[serde(default)]
     pub offset: usize,
+}
+
+impl DocumentQuery {
+    /// The edge filter, assembled from the three flat fields.
+    ///
+    /// `predicate` and `direction` mean nothing on their own — an edge filter
+    /// needs something to be linked *to* — so they are silently ignored without
+    /// `linked_to` rather than narrowing anything.
+    pub fn link_filter(&self) -> Option<LinkedTo> {
+        self.linked_to.as_ref().map(|id| LinkedTo {
+            id: id.clone(),
+            predicate: self.predicate.clone(),
+            direction: self.direction,
+        })
+    }
 }
 
 /// What [`documents`] sorts on.
@@ -261,7 +310,7 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
     }
 
     // `linked_to` is resolved once, not per candidate.
-    let linked: Option<BTreeSet<CanonicalId>> = match &query.linked_to {
+    let linked: Option<BTreeSet<CanonicalId>> = match query.link_filter() {
         Some(link) => {
             let id = CanonicalId::parse(&link.id).map_err(|error| {
                 Error::InvalidRequest(format!("invalid `linked_to.id`: {error}"))
@@ -286,8 +335,8 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
     } else {
         // Preserve request order, and report ids that do not exist rather than
         // failing the whole batch.
-        let mut resolved = Vec::with_capacity(query.ids.len());
-        for raw in &query.ids {
+        let mut resolved = Vec::with_capacity(query.ids.as_slice().len());
+        for raw in query.ids.as_slice() {
             match CanonicalId::parse(raw)
                 .ok()
                 .and_then(|id| vault.documents.get_key_value(&id))
@@ -325,6 +374,7 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
                     .is_none_or(|status| record.metadata.status.as_ref() == Some(status))
                 && query
                     .labels
+                    .as_slice()
                     .iter()
                     .all(|label| record.metadata.labels.contains(label))
                 && path_prefix.as_ref().is_none_or(|(prefix, with_slash)| {

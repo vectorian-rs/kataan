@@ -101,40 +101,11 @@ fn get_document(vault: &Path, args: &Value) -> Result<String> {
 }
 
 fn documents(vault: &Path, args: &Value) -> Result<String> {
-    let direction = opt_direction(args)?;
-    // `Include` already derives Deserialize with the lowercase names.
-    let include = match args.get("include") {
-        Some(value) => serde_json::from_value(value.clone()).context("invalid `include`")?,
-        None => kataan_core::query::Include::default(),
-    };
-    let query = kataan_core::query::DocumentQuery {
-        ids: str_vec(args, "ids"),
-        r#type: opt_str(args, "type"),
-        status: opt_str(args, "status"),
-        labels: str_vec(args, "labels"),
-        path_prefix: opt_str(args, "path_prefix"),
-        linked_to: opt_str(args, "linked_to").map(|id| kataan_core::query::LinkedTo {
-            id,
-            predicate: opt_str(args, "predicate"),
-            direction,
-        }),
-        after: opt_str(args, "after"),
-        before: opt_str(args, "before"),
-        order: match args.get("order") {
-            Some(value) => serde_json::from_value(value.clone()).context("invalid `order`")?,
-            None => kataan_core::query::Order::default(),
-        },
-        desc: args
-            .get("desc")
-            .and_then(Value::as_bool)
-            .unwrap_or_default(),
-        include,
-        limit: args
-            .get("limit")
-            .and_then(Value::as_u64)
-            .map(|n| n as usize),
-        offset: args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize,
-    };
+    // Deserialized straight into the core type, the way `search` already
+    // consumes `SearchQuery`. The hand-assembly this replaces had to be kept in
+    // step with `DocumentQuery` by hand, and had already fallen out of step.
+    let query: kataan_core::query::DocumentQuery =
+        serde_json::from_value(args.clone()).context("invalid documents arguments")?;
     let loaded = LoadedVault::load(vault)?;
     to_pretty(&kataan_core::query::documents(&loaded, &query)?)
 }

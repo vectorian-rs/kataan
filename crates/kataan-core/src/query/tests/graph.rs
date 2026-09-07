@@ -221,11 +221,9 @@ fn linked_to_agrees_with_neighbors() {
     let via_documents = documents(
         &vault,
         &q(DocumentQuery {
-            linked_to: Some(LinkedTo {
-                id: "topics/systems".to_owned(),
-                predicate: Some("has_subtopic".to_owned()),
-                direction: Direction::In,
-            }),
+            linked_to: Some("topics/systems".to_owned()),
+            predicate: Some("has_subtopic".to_owned()),
+            direction: Direction::In,
             ..Default::default()
         }),
     )
