@@ -1,3 +1,9 @@
 {
-  "extends": "astro/tsconfigs/strict"
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    // `bun:test` is a Bun built-in module, so `astro check` needs Bun's types
+    // to see it. Without this the validator tests type-check as a missing
+    // module and the gate fails on the tests it exists to run.
+    "types": ["@types/bun"]
+  }
 }

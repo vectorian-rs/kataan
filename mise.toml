@@ -108,6 +108,9 @@ run = [
   "cargo test --locked -p kataan-server --no-default-features",
   "bun --filter @kataan/web format:check",
   "bun --filter @kataan/web check",
+  # The response validators are the one part of the frontend that can be tested
+  # without a browser, and the part where being wrong is silent.
+  "bun --filter @kataan/web test",
 ]
 
 [tasks.server]

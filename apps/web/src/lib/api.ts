@@ -1,154 +1,184 @@
 const API_BASE = import.meta.env.PUBLIC_KATAAN_API_BASE ?? '';
 
-export type VaultIndex = {
-  schema_version: string;
-  name: string;
-  created_at?: string;
-  updated_at?: string;
-  type_folders: Record<string, string>;
-};
+import {
+  array,
+  boolean,
+  type Infer,
+  literals,
+  number,
+  object,
+  optional,
+  mapOf,
+  record,
+  type Shape,
+  string,
+} from './shape';
 
+// Each response shape is declared once, below, and its TypeScript type is
+// inferred from it. The shape checks the response at the boundary; the type is
+// what the rest of the app sees. Two declarations of the same thing — a `type`
+// and a validator — is the arrangement that drifts, so there is only one.
+//
+// `unknown` and `record` mark the places where the *vault* decides the shape,
+// not kataan: a document's metadata keys, a JSON Schema, a `[nodes.*]`
+// declaration. There is nothing to check those against here.
+
+const vaultIndex = object({
+  schema_version: string,
+  name: string,
+  created_at: optional(string),
+  updated_at: optional(string),
+  type_folders: record,
+});
+export type VaultIndex = Infer<typeof vaultIndex>;
+
+/// Recursive: a field schema describes the interior of a table with more field
+/// schemas. Declared as a lazy `Shape` because it refers to itself.
 export type FieldSchema = {
   type: string;
-  items?: string | null;
+  items?: string;
   to?: string[];
-  description?: string | null;
-  /// The interior of a table, or of each element of an array of tables.
+  description?: string;
   fields?: Record<string, FieldSchema>;
-  /// Keys the table must carry.
   required?: string[];
 };
+const fieldSchema: Shape<FieldSchema> = (value, path) =>
+  object({
+    type: string,
+    items: optional(string),
+    to: optional(array(string)),
+    description: optional(string),
+    // Recursive, and safe because this runs when the shape is *called*, by
+    // which point `fieldSchema` is defined.
+    fields: optional(mapOf(fieldSchema)),
+    required: optional(array(string)),
+  })(value, path) as FieldSchema;
 
-export type OntologyType = {
-  name: string;
-  extends?: string;
-  folders: string[];
-  required: string[];
-  fields: Record<string, FieldSchema>;
-  document_count: number;
-  folder_index_count: number;
-};
+const ontologyType = object({
+  name: string,
+  extends: optional(string),
+  folders: array(string),
+  required: array(string),
+  fields: mapOf(fieldSchema),
+  document_count: number,
+  folder_index_count: number,
+});
+export type OntologyType = Infer<typeof ontologyType>;
 
-export type OntologyEdge = {
-  predicate: string;
-  from: string[];
-  to: string[];
-  inverse?: string;
-  symmetric: boolean;
-  cardinality?: string;
-  description?: string;
-};
+const ontologyEdge = object({
+  predicate: string,
+  from: array(string),
+  to: array(string),
+  inverse: optional(string),
+  symmetric: boolean,
+  cardinality: optional(string),
+  description: optional(string),
+});
+export type OntologyEdge = Infer<typeof ontologyEdge>;
 
-export type OntologyLink = {
-  source: string;
-  predicate: string;
-  target: string;
-};
+const ontologyLink = object({ source: string, predicate: string, target: string });
+export type OntologyLink = Infer<typeof ontologyLink>;
 
-export type OntologyResponse = {
-  types: OntologyType[];
-  edges: OntologyEdge[];
-  links: OntologyLink[];
-};
+const ontologyResponse = object({
+  types: array(ontologyType),
+  edges: array(ontologyEdge),
+  links: array(ontologyLink),
+});
+export type OntologyResponse = Infer<typeof ontologyResponse>;
 
-export type FolderSummary = {
-  type: string;
-  folder: string;
-  name?: string;
-  icon?: string;
-  document_count: number;
-};
+const folderSummary = object({
+  type: string,
+  folder: string,
+  name: optional(string),
+  icon: optional(string),
+  document_count: number,
+});
+export type FolderSummary = Infer<typeof folderSummary>;
 
-export type FolderChild = {
-  id: string;
-  name: string;
-  has_index: boolean;
-};
+const foldersResponse = object({ folders: array(folderSummary) });
 
-export type FolderDocument = {
-  id: string;
-  slug: string;
-  markdown: string;
-  toml: string;
-};
+const folderChild = object({ id: string, name: string, has_index: boolean });
+export type FolderChild = Infer<typeof folderChild>;
 
-export type FolderFile = {
-  name: string;
-  path: string;
-  extension?: string;
-};
+const folderDocument = object({ id: string, slug: string, markdown: string, toml: string });
+export type FolderDocument = Infer<typeof folderDocument>;
 
-export type CanonicalFolderResponse = {
-  id: string;
-  metadata?: Record<string, unknown>;
-  markdown?: string;
-  folders: FolderChild[];
-  documents: FolderDocument[];
-  files: FolderFile[];
-};
+const folderFile = object({ name: string, path: string, extension: optional(string) });
+export type FolderFile = Infer<typeof folderFile>;
 
-export type DocumentResponse = {
-  id: string;
-  type_folder: string;
-  metadata: Record<string, unknown>;
-  markdown: string;
-  html: string;
-};
+const canonicalFolderResponse = object({
+  id: string,
+  metadata: optional(record),
+  markdown: optional(string),
+  folders: array(folderChild),
+  documents: array(folderDocument),
+  files: array(folderFile),
+});
+export type CanonicalFolderResponse = Infer<typeof canonicalFolderResponse>;
 
-export type FileResponse = {
-  path: string;
-  name: string;
-  extension?: string;
-  kind: 'html' | 'json' | 'text' | 'image' | 'pdf' | 'unsupported';
-  content: string;
-};
+const documentResponse = object({
+  id: string,
+  type_folder: string,
+  metadata: record,
+  markdown: string,
+  html: string,
+});
+export type DocumentResponse = Infer<typeof documentResponse>;
 
-export type HighlightResponse = {
-  path: string;
-  name: string;
-  extension?: string;
-  language: string;
-  html: string;
-};
+const fileResponse = object({
+  path: string,
+  name: string,
+  extension: optional(string),
+  kind: literals('html', 'json', 'text', 'image', 'pdf', 'unsupported'),
+  content: string,
+});
+export type FileResponse = Infer<typeof fileResponse>;
 
-export type ResolveResponse = {
-  id: string;
-  folder: string;
-  type_folder: string;
-  is_folder_index: boolean;
-};
+const highlightResponse = object({
+  path: string,
+  name: string,
+  extension: optional(string),
+  language: string,
+  html: string,
+});
+export type HighlightResponse = Infer<typeof highlightResponse>;
 
-export type Diagnostic = {
-  severity: 'error' | 'warning' | 'info';
-  code: string;
-  message: string;
-  path?: string;
-};
+const resolvedDocument = object({
+  id: string,
+  folder: string,
+  type_folder: string,
+  is_folder_index: boolean,
+});
+export type ResolveResponse = Infer<typeof resolvedDocument>;
 
-export type ValidateResponse = {
-  ok: boolean;
-  diagnostics: Diagnostic[];
-};
+const diagnostic = object({
+  severity: literals('error', 'warning', 'info'),
+  code: string,
+  message: string,
+  path: optional(string),
+});
+export type Diagnostic = Infer<typeof diagnostic>;
 
-export type TomlSchemaResponse = {
-  kind: string;
-  schema: Record<string, unknown>;
-  constraints: {
-    allowed_status: string[];
-    allowed_actors: string[];
-    allowed_types: string[];
-    allowed_edge_predicates: string[];
-    notes: string[];
-  };
-  toml_template: string;
+const validateResponse = object({ ok: boolean, diagnostics: array(diagnostic) });
+export type ValidateResponse = Infer<typeof validateResponse>;
+
+const tomlSchemaResponse = object({
+  kind: string,
+  schema: record,
+  constraints: object({
+    allowed_status: array(string),
+    allowed_actors: array(string),
+    allowed_types: array(string),
+    allowed_edge_predicates: array(string),
+    notes: array(string),
+  }),
+  toml_template: string,
   /// The vault's `[nodes.<kind>]` declaration, when `kind` names a document
   /// type that has one. This is what makes the type different from every other
   /// document, and what the write boundary enforces.
-  node_schema?: {
-    required: string[];
-    fields: Record<string, FieldSchema>;
-  };
-};
+  node_schema: optional(object({ required: array(string), fields: mapOf(fieldSchema) })),
+});
+export type TomlSchemaResponse = Infer<typeof tomlSchemaResponse>;
 
 export type SearchQuery = {
   q?: string;
@@ -164,55 +194,59 @@ export type SearchQuery = {
   offset?: number;
 };
 
-export type SearchResponse = {
-  query: string;
-  mode: 'keyword';
-  results: SearchResult[];
-  facets: SearchFacetCount[];
-};
+const searchResult = object({
+  kind: literals('document', 'folder'),
+  id: optional(string),
+  path: string,
+  title: optional(string),
+  type: optional(string),
+  status: optional(string),
+  extension: optional(string),
+  facets: array(string),
+  snippet: optional(string),
+  score: number,
+});
+export type SearchResult = Infer<typeof searchResult>;
 
-export type SearchResult = {
-  kind: 'document' | 'folder';
-  id?: string;
-  path: string;
-  title?: string;
-  type?: string;
-  status?: string;
-  extension?: string;
-  facets: string[];
-  snippet?: string;
-  score: number;
-};
+const searchFacetCount = object({ facet: string, count: number });
+export type SearchFacetCount = Infer<typeof searchFacetCount>;
 
-export type SearchFacetCount = {
-  facet: string;
-  count: number;
-};
+const searchResponse = object({
+  query: string,
+  mode: literals('keyword'),
+  results: array(searchResult),
+  facets: array(searchFacetCount),
+});
+export type SearchResponse = Infer<typeof searchResponse>;
 
-export type SearchStatus = {
-  index_path: string;
-  exists: boolean;
-  item_count: number;
-  document_count: number;
-  folder_count: number;
-  last_indexed_at?: string | null;
-};
+const searchStatus = object({
+  index_path: string,
+  exists: boolean,
+  item_count: number,
+  document_count: number,
+  folder_count: number,
+  last_indexed_at: optional(string),
+});
+export type SearchStatus = Infer<typeof searchStatus>;
 
-export type SearchReindexResponse = {
-  ok: boolean;
-  index_path: string;
-  item_count: number;
-  document_count: number;
-  folder_count: number;
-  indexed_at: string;
-};
+const searchReindexResponse = object({
+  ok: boolean,
+  index_path: string,
+  item_count: number,
+  document_count: number,
+  folder_count: number,
+  indexed_at: string,
+});
+export type SearchReindexResponse = Infer<typeof searchReindexResponse>;
+
+const okResponse = object({ ok: boolean });
 
 export async function getVault() {
-  return getJson<VaultIndex>('/api/vault');
+  return getJson('/api/vault', vaultIndex);
 }
 
 export async function getFolders() {
-  return getJson<{ folders: FolderSummary[] }>('/api/folders');
+  return getJson('/api/folders', foldersResponse);
 }
 
 /// A canonical id as a URL path.
@@ -227,24 +261,24 @@ function idPath(id: string) {
 }
 
 export async function getFolder(id: string) {
-  return getJson<CanonicalFolderResponse>(`/api/folders/${idPath(id)}`);
+  return getJson(`/api/folders/${idPath(id)}`, canonicalFolderResponse);
 }
 
 /// Resolve a vault path (or a canonical id, which is the extensionless form)
 /// to the document it names.
 export async function resolvePath(path: string) {
-  return getJson<ResolveResponse>(`/api/resolve-path?path=${encodeURIComponent(path)}`);
+  return getJson(`/api/resolve-path?path=${encodeURIComponent(path)}`, resolvedDocument);
 }
 
 export async function getOntology() {
-  return getJson<OntologyResponse>('/api/ontology');
+  return getJson('/api/ontology', ontologyResponse);
 }
 
 export async function getDocument(id: string, theme?: string) {
   // Fenced code blocks are highlighted server-side, so the theme has to travel
   // with the request; without it every block renders dark in light mode.
   const query = theme ? `?theme=${encodeURIComponent(theme)}` : '';
-  return getJson<DocumentResponse>(`/api/documents/${idPath(id)}${query}`);
+  return getJson(`/api/documents/${idPath(id)}${query}`, documentResponse);
 }
 
 /// Save a document's Markdown body.
@@ -282,13 +316,13 @@ export async function updateDocument(id: string, edit: DocumentEdit, expectedUpd
 }
 
 export async function getFile(path: string) {
-  return getJson<FileResponse>(`/api/file?path=${encodeURIComponent(path)}`);
+  return getJson(`/api/file?path=${encodeURIComponent(path)}`, fileResponse);
 }
 
 export async function getHighlightedFile(path: string, theme?: string) {
   const params = new URLSearchParams({ path });
   if (theme) params.set('theme', theme);
-  return getJson<HighlightResponse>(`/api/file/highlight?${params.toString()}`);
+  return getJson(`/api/file/highlight?${params.toString()}`, highlightResponse);
 }
 
 export function getRawFileUrl(path: string) {
@@ -296,15 +330,15 @@ export function getRawFileUrl(path: string) {
 }
 
 export async function getSchema(kind: string) {
-  return getJson<TomlSchemaResponse>(`/api/schema/${encodeURIComponent(kind)}`);
+  return getJson(`/api/schema/${encodeURIComponent(kind)}`, tomlSchemaResponse);
 }
 
 export async function validateVault() {
-  return postJson<ValidateResponse>('/api/validate');
+  return postJson('/api/validate', validateResponse);
 }
 
 export async function rebuildIndexes() {
-  return postJson<{ ok: boolean }>('/api/rebuild-indexes');
+  return postJson('/api/rebuild-indexes', okResponse);
 }
 
 export async function searchVault(query: SearchQuery) {
@@ -317,15 +351,15 @@ export async function searchVault(query: SearchQuery) {
   appendQueryParam(params, 'path_prefix', query.path_prefix);
   appendQueryParam(params, 'limit', query.limit);
   appendQueryParam(params, 'offset', query.offset);
-  return getJson<SearchResponse>(`/api/search?${params.toString()}`);
+  return getJson(`/api/search?${params.toString()}`, searchResponse);
 }
 
 export async function getSearchStatus() {
-  return getJson<SearchStatus>('/api/search/status');
+  return getJson('/api/search/status', searchStatus);
 }
 
 export async function reindexSearch() {
-  return postJson<SearchReindexResponse>('/api/search/reindex');
+  return postJson('/api/search/reindex', searchReindexResponse);
 }
 
 function appendQueryParam(
@@ -337,19 +371,28 @@ function appendQueryParam(
   params.set(key, String(value));
 }
 
-async function getJson<T>(path: string): Promise<T> {
+async function getJson<T>(path: string, shape: Shape<T>): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);
-  return parseJson<T>(response);
+  return parseJson(response, shape, label(path));
 }
 
-async function postJson<T>(path: string): Promise<T> {
+/// The endpoint, without its query string, to name in a validation failure.
+/// The query is noise once you know which route answered.
+function label(path: string) {
+  return path.split('?')[0];
+}
+
+async function postJson<T>(path: string, shape: Shape<T>): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, { method: 'POST' });
-  return parseJson<T>(response);
+  return parseJson(response, shape, label(path));
 }
 
-async function parseJson<T>(response: Response): Promise<T> {
+async function parseJson<T>(response: Response, shape: Shape<T>, path: string): Promise<T> {
   if (response.ok) {
-    return response.json() as Promise<T>;
+    // Checked, not asserted. `as Promise<T>` would let a changed response shape
+    // travel as far as the DOM before anything noticed, and the symptom would
+    // be an `undefined` nowhere near the cause.
+    return shape(await response.json(), path);
   }
 
   const errorMessage = await readErrorMessage(response);
