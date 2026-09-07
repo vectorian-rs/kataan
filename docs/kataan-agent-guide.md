@@ -10,19 +10,22 @@ kataan validate <vault-path>            # add --json for a machine-readable repo
 kataan rebuild-indexes <vault-path>
 kataan guide
 
-kataan documents <vault-path> [--type T] [--status S] [--label L] [--id ID]
-                              [--path-prefix P] [--linked-to ID] [--predicate P]
-                              [--direction out|in|both] [--after RFC3339] [--before RFC3339]
-                              [--order id|occurred_at|created_at|updated_at] [--desc]
-                              [--include metadata|full|markdown] [--limit N] [--offset N]
+kataan ontology <vault-path>
 kataan graph export <vault-path> [--type T] [--predicate P] [--limit N]
 kataan graph neighbors <vault-path> <id> [--predicate P] [--direction out|in|both]
 ```
 
-`documents` and `graph` print JSON on stdout. `graph export` is deterministic, so
+`ontology` and `graph` print JSON on stdout. `graph export` is deterministic, so
 its output diffs cleanly across runs and can be committed as a build artifact —
 which is the intended way to rebuild a graph file from inside the vault repo,
 without running a server.
+
+**Querying documents is an API and MCP feature, not a CLI one.** The CLI covers
+what you need *to* a vault — create it, check it, repair its indexes, export its
+graph. Asking questions *of* one is `GET /api/documents` or the `documents`
+tool, both of which take the filters described throughout this guide. There is
+no `kataan documents`: a third spelling of the same query would be a third place
+for it to drift, and the two that remain deserialize the identical type.
 
 Command results go to stdout (`validate` prints `valid` or the diagnostics, or a
 `{ "ok", "diagnostics": [...] }` object with `--json`); logs and confirmations go
@@ -442,8 +445,12 @@ folders = ["companies/*/customers/*"]
 and `desc`:
 
 ```sh
-kataan documents <vault> --order updated_at --desc --limit 20   # what changed
-kataan documents <vault> --after 2026-01-01 --before 2026-12-31 --order occurred_at
+# what changed most recently
+curl 'localhost:3001/api/documents?order=updated_at&desc=true&limit=20'
+# or the `documents` tool with
+#   { "order": "updated_at", "desc": true, "limit": 20 }
+
+curl 'localhost:3001/api/documents?after=2026-01-01&before=2026-12-31&order=occurred_at'
 ```
 
 Bounds are inclusive and compared at their own precision, so a bare

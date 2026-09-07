@@ -48,7 +48,6 @@ enum Command {
     RebuildIndexes(RebuildIndexesArgs),
     Ontology(OntologyArgs),
     Graph(GraphArgs),
-    Documents(DocumentsArgs),
     Guide(GuideArgs),
 }
 
@@ -152,99 +151,11 @@ struct GraphNeighborsArgs {
 #[argh(subcommand, name = "guide")]
 struct GuideArgs {}
 
-// Field-for-field with `kataan_core::query::DocumentQuery` and converted by the
-// `From` below — the same query, spelled for a shell, so the CLI cannot quietly
-// support a different set of filters from HTTP and MCP. Kept out of the doc
-// comment because argh prints that verbatim as the command's help.
-/// List or batch-fetch documents as JSON on stdout.
-#[derive(Debug, FromArgs)]
-#[argh(subcommand, name = "documents")]
-struct DocumentsArgs {
-    /// vault path
-    #[argh(positional)]
-    path: PathBuf,
-    /// fetch these ids specifically (repeatable or comma-separated); order is
-    /// preserved and unknown ids come back in `missing`
-    #[argh(option, long = "id")]
-    ids: Vec<String>,
-    /// restrict to a document type; subtypes count
-    #[argh(option, long = "type")]
-    r#type: Option<String>,
-    /// restrict to a status
-    #[argh(option)]
-    status: Option<String>,
-    /// documents carrying every one of these labels (repeatable or
-    /// comma-separated)
-    #[argh(option, long = "label")]
-    labels: Vec<String>,
-    /// documents whose id is this folder or below it
-    #[argh(option)]
-    path_prefix: Option<String>,
-    /// restrict to documents with an edge to this id
-    #[argh(option)]
-    linked_to: Option<String>,
-    /// with --linked-to: restrict to one predicate
-    #[argh(option)]
-    predicate: Option<String>,
-    /// with --linked-to: which direction to follow: out, in, both (default
-    /// both)
-    #[argh(option, default = "DirectionArg::Both")]
-    direction: DirectionArg,
-    /// only documents whose occurred_at is on or after this RFC 3339 bound;
-    /// inclusive, and compared at the bound's own precision, so a bare day
-    /// covers the whole day
-    #[argh(option)]
-    after: Option<String>,
-    /// only documents whose occurred_at is on or before this bound
-    #[argh(option)]
-    before: Option<String>,
-    /// sort by: id, occurred_at, created_at, updated_at (default id)
-    #[argh(option, default = "OrderArg::Id")]
-    order: OrderArg,
-    /// reverse the sort; with --order updated_at, "what changed most recently"
-    #[argh(switch)]
-    desc: bool,
-    /// how much of each document to return: metadata, full, markdown (default
-    /// metadata). `full` adds declared fields, timestamps and edges for free;
-    /// `markdown` adds the body, at one file read per document
-    #[argh(option, default = "IncludeArg::Metadata")]
-    include: IncludeArg,
-    /// page size, at most 1000; omitting it errors rather than truncating when
-    /// more than 100 documents match
-    #[argh(option)]
-    limit: Option<usize>,
-    /// how many matches to skip; use with --limit to page
-    #[argh(option, default = "0")]
-    offset: usize,
-}
-
-impl From<DocumentsArgs> for kataan_core::query::DocumentQuery {
-    fn from(args: DocumentsArgs) -> Self {
-        Self {
-            ids: split_lists(args.ids).into(),
-            r#type: args.r#type,
-            status: args.status,
-            labels: split_lists(args.labels).into(),
-            path_prefix: args.path_prefix,
-            linked_to: args.linked_to,
-            predicate: args.predicate,
-            direction: args.direction.into(),
-            after: args.after,
-            before: args.before,
-            order: args.order.into(),
-            desc: args.desc,
-            include: args.include.into(),
-            limit: args.limit,
-            offset: args.offset,
-        }
-    }
-}
-
-/// Flatten `--label a,b --label c` into one list.
+/// Flatten `--type a,b --type c` into one list.
 ///
-/// argh has no delimiter option, so the splitting is done here — and it is done
-/// the same way `wire::Csv` does it for a URL query string, which is the point:
-/// the same flag spelled either way reaches core as the same list.
+/// argh has no delimiter option, so the splitting is done here — and the same
+/// way `wire::Csv` does it for a URL query string, so a filter spelled either
+/// way reaches core as the same list.
 fn split_lists(values: Vec<String>) -> Vec<String> {
     values
         .iter()
@@ -255,16 +166,13 @@ fn split_lists(values: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// Command-line spellings of the core enums.
+/// The command-line spelling of `kataan_core::query::Direction`.
 ///
-/// Mirrors rather than the core types themselves: `FromArgValue` is argh's
-/// trait and `Direction` is kataan-core's, so the orphan rule forbids the impl
-/// anywhere but here — deriving on the core types would mean putting an
-/// argument parser inside the library. The `From` impls are exhaustive, so a
-/// new variant fails to compile rather than silently going missing.
-///
-/// argh spells the values `occurred_at` rather than clap's `occurred-at`, which
-/// is what HTTP and MCP already accept.
+/// A mirror rather than the core type itself: `FromArgValue` is argh's trait
+/// and `Direction` is kataan-core's, so the orphan rule forbids the impl
+/// anywhere but here — deriving on the core type would mean putting an argument
+/// parser inside the library. The `From` is exhaustive, so a new variant fails
+/// to compile rather than silently going missing.
 #[derive(Debug, Clone, Copy, FromArgValue)]
 enum DirectionArg {
     Out,
@@ -278,42 +186,6 @@ impl From<DirectionArg> for kataan_core::query::Direction {
             DirectionArg::Out => Self::Out,
             DirectionArg::In => Self::In,
             DirectionArg::Both => Self::Both,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, FromArgValue)]
-enum IncludeArg {
-    Metadata,
-    Full,
-    Markdown,
-}
-
-impl From<IncludeArg> for kataan_core::query::Include {
-    fn from(value: IncludeArg) -> Self {
-        match value {
-            IncludeArg::Metadata => Self::Metadata,
-            IncludeArg::Full => Self::Full,
-            IncludeArg::Markdown => Self::Markdown,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, FromArgValue)]
-enum OrderArg {
-    Id,
-    OccurredAt,
-    CreatedAt,
-    UpdatedAt,
-}
-
-impl From<OrderArg> for kataan_core::query::Order {
-    fn from(value: OrderArg) -> Self {
-        match value {
-            OrderArg::Id => Self::Id,
-            OrderArg::OccurredAt => Self::OccurredAt,
-            OrderArg::CreatedAt => Self::CreatedAt,
-            OrderArg::UpdatedAt => Self::UpdatedAt,
         }
     }
 }
@@ -426,11 +298,6 @@ fn run() -> Result<()> {
                 print_line(&serde_json::to_string_pretty(&result)?)?;
             }
         },
-        Command::Documents(args) => {
-            let vault = kataan_core::vault::LoadedVault::load(&args.path)?;
-            let page = kataan_core::query::documents(&vault, &args.into())?;
-            print_line(&serde_json::to_string_pretty(&page)?)?;
-        }
         Command::Guide(_) => {
             print_line(AGENT_GUIDE)?;
         }

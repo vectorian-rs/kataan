@@ -38,7 +38,9 @@ documents(ids?, type?, status?, labels?, path_prefix?, linked_to?,
 
 HTTP: `GET /api/documents?type=organization&limit=1000`
 MCP: the `documents` tool
-CLI: `kataan documents <vault> --type organization --limit 1000`
+
+There is no CLI equivalent: the CLI creates, checks and exports a vault, and
+querying one is an API/MCP feature.
 
 Returns `{ documents: [...], missing: [...], total }`.
 
@@ -384,9 +386,11 @@ For a pipeline that needs a stable snapshot, run inside the vault repo:
 ```sh
 kataan graph export <vault> --type person,organization \
     --predicate works_at,owns,invested_in > graph.json
-kataan documents <vault> --type organization --limit 1000 > organizations.json
 ```
 
-Both write JSON to stdout, both are deterministic, and both are safe to pipe
-into `jq` or `head`. No server required, and the output can be committed so a
-downstream diff shows exactly what changed between runs.
+It writes JSON to stdout, is deterministic, and is safe to pipe into `jq` or
+`head`. No server required, and the output can be committed so a downstream diff
+shows exactly what changed between runs.
+
+For the document set alongside it, run the API and query it — the CLI does not
+list documents.
