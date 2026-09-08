@@ -312,7 +312,7 @@ export async function updateDocument(id: string, edit: DocumentEdit, expectedUpd
   if (!response.ok) {
     throw new Error(`Save failed: ${response.status} ${await response.text()}`);
   }
-  return response.json() as Promise<{ ok: boolean }>;
+  return okResponse(await response.json(), 'PATCH /api/documents');
 }
 
 export async function getFile(path: string) {
