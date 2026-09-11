@@ -222,8 +222,37 @@ fn main() {
     }
 }
 
+/// Parse the command line, keeping the exit codes this CLI promises.
+///
+/// `argh::from_env` exits by itself, with `1` for a bad argument — the same
+/// code `validate` uses for "ran fine, found problems". That collision is the
+/// one [`EXIT_OPERATIONAL_FAILURE`] exists to avoid, and the argh migration
+/// reintroduced it: `kataan-cli validate` with no path exited 1, so a CI script
+/// reading the code could not tell a misconfigured invocation from an invalid
+/// vault.
+fn parse_args() -> Cli {
+    let arguments: Vec<String> = std::env::args().collect();
+    let (binary, rest) = arguments
+        .split_first()
+        .expect("argv always carries the program name");
+    let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
+
+    match Cli::from_args(&[binary.as_str()], &rest) {
+        Ok(cli) => cli,
+        // `--help` is a successful request for help: stdout, exit 0.
+        Err(early) if early.status.is_ok() => {
+            print!("{}", early.output);
+            std::process::exit(0);
+        }
+        Err(early) => {
+            eprint!("{}", early.output);
+            std::process::exit(EXIT_OPERATIONAL_FAILURE);
+        }
+    }
+}
+
 fn run() -> Result<()> {
-    let cli: Cli = argh::from_env();
+    let cli = parse_args();
 
     match cli.command {
         Command::Init(args) => {

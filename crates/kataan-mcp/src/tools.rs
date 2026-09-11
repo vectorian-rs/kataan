@@ -58,7 +58,7 @@ fn refresh_search_after_write(vault: &Path, changed: &kataan_core::id::Canonical
 fn refresh_search_for(vault: &Path, changed: &kataan_core::id::CanonicalId) -> Result<()> {
     let loaded = LoadedVault::load(vault)?;
     let index = SearchIndex::open_default(vault)?;
-    if !index.refresh_document(&loaded, changed)? {
+    if !index.refresh_document_tree(&loaded, changed)? {
         index.reindex_loaded(&loaded)?;
     }
     Ok(())

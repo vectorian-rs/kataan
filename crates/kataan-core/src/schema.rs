@@ -8,7 +8,7 @@ use crate::{
     constants::{ACTOR_VALUES, STATUS_VALUES},
     document::DocumentMetadata,
     index::{FolderIndex, VaultConfig},
-    ontology::{EdgePredicate, FieldType, NodeSchema, Ontology},
+    ontology::{EdgePredicate, FieldSchema, FieldType, NodeSchema, Ontology},
     types::TypeDefinition,
     vault::LoadedVault,
 };
@@ -106,26 +106,55 @@ fn type_toml_template(type_name: &str, node_schema: Option<&NodeSchema>) -> Stri
         return template;
     };
     for field in &schema.required {
-        let declared = schema.fields.get(field).map(|field| field.r#type);
+        let declared = schema.fields.get(field);
         template.push_str(&format!("{field} = {}\n", example_for(declared)));
     }
     template
 }
 
-/// A placeholder of the right TOML shape for a declared field type.
-fn example_for(field_type: Option<FieldType>) -> &'static str {
-    match field_type {
-        Some(FieldType::Integer) => "0",
-        Some(FieldType::Number) => "0.0",
-        Some(FieldType::Boolean) => "false",
-        Some(FieldType::Date) => "\"2026-08-29\"",
-        Some(FieldType::Instant) => "\"2026-08-29T12:00:00Z\"",
-        Some(FieldType::Interval) => "{ from = \"2026-08-29\" }",
-        Some(FieldType::Reference) => "\"folder/document-id\"",
-        Some(FieldType::Array) => "[]",
-        Some(FieldType::Table) => "{}",
-        Some(FieldType::String) | None => "\"\"",
+/// A placeholder of the right TOML shape for a declared field.
+///
+/// Recursive, because a table's *interior* can be required too: a `rate_card`
+/// declared `required = ["currency"]` needs `{ currency = "" }`, not `{}`. The
+/// flat version emitted `{}` and the write boundary — which enforces nested
+/// schemas — then rejected the very template this function exists to hand out.
+fn example_for(schema: Option<&FieldSchema>) -> String {
+    let Some(schema) = schema else {
+        return "\"\"".to_owned();
+    };
+    match schema.r#type {
+        FieldType::Integer => "0".to_owned(),
+        FieldType::Number => "0.0".to_owned(),
+        FieldType::Boolean => "false".to_owned(),
+        FieldType::Date => "\"2026-08-29\"".to_owned(),
+        FieldType::Instant => "\"2026-08-29T12:00:00Z\"".to_owned(),
+        FieldType::Interval => "{ from = \"2026-08-29\" }".to_owned(),
+        FieldType::Reference => "\"folder/document-id\"".to_owned(),
+        FieldType::Table => inline_table(schema),
+        // An array of tables carries the same interior rules per element, so an
+        // empty list is only right when nothing is required inside one.
+        FieldType::Array => match schema.items {
+            Some(FieldType::Table) if !schema.required.is_empty() => {
+                format!("[{}]", inline_table(schema))
+            }
+            _ => "[]".to_owned(),
+        },
+        FieldType::String => "\"\"".to_owned(),
     }
+}
+
+/// The interior of a table, carrying only what it requires.
+fn inline_table(schema: &FieldSchema) -> String {
+    if schema.required.is_empty() {
+        return "{}".to_owned();
+    }
+    let inside = schema
+        .required
+        .iter()
+        .map(|name| format!("{name} = {}", example_for(schema.fields.get(name))))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{ {inside} }}")
 }
 
 /// The vault's whole model in one response: every document type with the fields

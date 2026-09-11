@@ -199,7 +199,13 @@ function beginNavigation(): Stale {
 /// a second click supersedes the whole of it rather than half.
 const searchActions: SearchActions = {
   restoreFolder: async () => {
-    if (selectedFolder) await selectFolder(selectedFolder, { selectFirst: false });
+    // `updateUrl: false`: this puts the *list* back, it does not navigate. With
+    // URL updates on, clearing the search box moved the address to the folder
+    // while the reader still showed the document — and a reload then resolved
+    // something else.
+    if (selectedFolder) {
+      await selectFolder(selectedFolder, { selectFirst: false, updateUrl: false });
+    }
   },
   openDocument: async (id) => {
     const stale = beginNavigation();
@@ -266,20 +272,7 @@ listToggle.addEventListener('click', () => {
 // The model, not the data: what types exist and what may link to what. Read
 // only — it is generated from ontology.toml and the type registry.
 ontologyButton.addEventListener('click', () => {
-  void runAction(
-    async () => {
-      const stale = beginNavigation();
-      selectedDocument = null;
-      selectedFile = null;
-      updateActiveRows();
-      const ontology = await getOntology();
-      if (stale()) return;
-      renderOntology(ontology);
-      clearPanels();
-      setRoute({ kind: 'model' });
-    },
-    { owns: 'document' },
-  );
+  void runAction(() => showModel(beginNavigation()), { owns: 'document' });
 });
 
 validateButton.addEventListener('click', async () => {
@@ -577,10 +570,9 @@ async function restoreRouteSelection() {
   }
 
   if (route.kind === 'model') {
-    const ontology = await getOntology();
-    if (stale()) return;
-    renderOntology(ontology);
-    clearPanels();
+    // Same transition as the button, so restoring the route cannot leave
+    // behind state the button clears.
+    await showModel(stale, { updateUrl: false });
     return;
   }
 
@@ -629,6 +621,26 @@ async function restoreRouteSelection() {
 /// `/api/folder` — so they go out together. Awaiting them one at a time made
 /// opening a five-deep document from a URL five serial round trips before the
 /// document itself was even requested.
+/// Show the vault's model, leaving nothing of the document behind.
+///
+/// The model is not a document, so the reader, the editor and the row
+/// highlight all have to go. Neither transition used to clear `openDocument`:
+/// the Edit button stayed live for a document no longer on screen, and opening
+/// the model *while editing* left the textarea visible over it.
+async function showModel(stale: Stale, options: { updateUrl?: boolean } = {}) {
+  const ontology = await getOntology();
+  if (stale()) return;
+  selectedDocument = null;
+  selectedFile = null;
+  setOpenDocument(null);
+  updateActiveRows();
+  renderOntology(ontology);
+  clearPanels();
+  if (options.updateUrl ?? true) {
+    setRoute({ kind: 'model' });
+  }
+}
+
 async function expandChain(folder: string, stale: Stale) {
   const chain = folderChain(folder);
   const responses = await Promise.all(chain.map((ancestor) => getFolder(ancestor)));
@@ -637,6 +649,16 @@ async function expandChain(folder: string, stale: Stale) {
   // are inserted beneath it.
   for (const [index, ancestor] of chain.entries()) {
     applyFolder(ancestor, responses[index], { selectFirst: false });
+  }
+  // The deepest ancestor is the folder now showing in the list pane, and it has
+  // to be recorded as selected. `applyFolder` only renders — the ancestors used
+  // to go through `selectFolder`, which set this, and dropping that left
+  // `selectedFolder` pointing at wherever the reader had been before, so
+  // clearing a search restored the wrong folder.
+  const deepest = chain[chain.length - 1];
+  if (deepest) {
+    selectedFolder = deepest;
+    updateActiveRows();
   }
 }
 

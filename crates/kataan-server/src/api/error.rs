@@ -13,6 +13,11 @@ use tracing::{debug, error};
 pub fn core_error(error: kataan_core::Error) -> ApiError {
     match error {
         kataan_core::Error::InvalidRequest(message) => ApiError::bad_request(message),
+        // The id is not in the vault: the caller's mistake, and the same answer
+        // `GET` gives. Blanket-mapping every NotFound I/O error would be wrong
+        // — a missing config file is the server's problem — which is why core
+        // reports this one as its own variant.
+        kataan_core::Error::NotFound(message) => ApiError::not_found(message),
         // The request is well formed and would have been accepted a moment ago;
         // the caller needs to re-read, not correct its input.
         kataan_core::Error::Conflict(message) => ApiError::conflict(message),

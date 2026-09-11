@@ -215,6 +215,33 @@ impl SearchIndex {
     /// not exist yet, or predates the current schema, in which case the columns
     /// this inserts into may be absent. The caller falls back to a full
     /// reindex, which is what `reindex_loaded`'s drop-and-recreate is for.
+    /// Refresh a written document *and* the folder indexes above it.
+    ///
+    /// A write does not only change the document named. Creating
+    /// `notes/fresh-folder/deep` makes `notes/fresh-folder` exist for the first
+    /// time — the rebuild generates its index pair — and every ancestor's
+    /// folder checksum changes. Refreshing only the requested id left the new
+    /// folder reachable by id and by folder listing, but absent from search
+    /// until something triggered a full reindex.
+    ///
+    /// Both write surfaces call this rather than `refresh_document`, so neither
+    /// can be the one that forgets.
+    pub fn refresh_document_tree(
+        &self,
+        loaded: &LoadedVault,
+        id: &kataan_core::id::CanonicalId,
+    ) -> Result<bool> {
+        if !self.refresh_document(loaded, id)? {
+            return Ok(false);
+        }
+        for ancestor in ancestor_ids(id) {
+            if !self.refresh_document(loaded, &ancestor)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub fn refresh_document(
         &self,
         loaded: &LoadedVault,
@@ -537,3 +564,20 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+/// Every folder id above `id`, nearest first.
+///
+/// A folder's canonical id is its path with no `/index` suffix, so these are
+/// simply the ancestors of the document's own id.
+fn ancestor_ids(id: &kataan_core::id::CanonicalId) -> Vec<kataan_core::id::CanonicalId> {
+    let mut ancestors = Vec::new();
+    let mut parts: Vec<&str> = id.as_str().split('/').collect();
+    parts.pop();
+    while !parts.is_empty() {
+        if let Ok(parsed) = kataan_core::id::CanonicalId::parse(parts.join("/")) {
+            ancestors.push(parsed);
+        }
+        parts.pop();
+    }
+    ancestors
+}

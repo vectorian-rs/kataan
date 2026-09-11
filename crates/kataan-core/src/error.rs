@@ -43,6 +43,12 @@ pub enum Error {
         supported: String,
     },
 
+    /// The requested document does not exist. Distinct from an I/O failure:
+    /// the vault is fine, the id is not in it. Surfaces as 404 rather than 500,
+    /// which is what a `GET` for the same id already did.
+    #[error("document `{0}` does not exist")]
+    NotFound(String),
+
     /// A caller asked for something the vault won't allow (unknown type,
     /// id collision, illegal edge, …) — a bad request, not on-disk corruption.
     #[error("invalid request: {0}")]

@@ -103,10 +103,18 @@ pub struct DocumentPatch {
     /// exactly the conflict worth refusing.
     #[serde(default)]
     pub expected_updated_at: Option<String>,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub occurred_at: Option<String>,
+    /// Absent leaves the status alone, `null` removes it, a value sets it.
+    ///
+    /// Three states, so the outer `Option` is the patch and the inner one is
+    /// the value — the same JSON Merge Patch convention `fields` uses. With a
+    /// single `Option`, `null` and "not mentioned" were the same thing, so the
+    /// form's blank option reported a successful save and changed nothing.
+    #[serde(default, deserialize_with = "present_or_absent")]
+    pub status: Option<Option<String>>,
+    /// Absent leaves it alone, `null` removes it, a value sets it. See
+    /// [`status`](Self::status).
+    #[serde(default, deserialize_with = "present_or_absent")]
+    pub occurred_at: Option<Option<String>>,
     #[serde(default)]
     pub aliases: Option<Vec<String>>,
     #[serde(default)]
@@ -146,6 +154,19 @@ pub struct DocumentEdit {
     pub body: Option<String>,
     #[serde(flatten)]
     pub patch: DocumentPatch,
+}
+
+/// Deserialize a field that may be absent, `null`, or a value.
+///
+/// `Option<Option<T>>` alone is not enough: serde collapses a `null` into the
+/// outer `None`, which is exactly the ambiguity being removed. Called only when
+/// the key is present, so reaching it at all means "the caller mentioned this".
+fn present_or_absent<'de, T, D>(deserializer: D) -> std::result::Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// Create a new document. Returns its canonical id.
@@ -250,6 +271,7 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
     // `validate_quoted_dates` needs to see as a datetime to report it.
     enforce_document_schema(
         &vault,
+        &id,
         &crate::document::DocumentMetadata {
             r#type: request.r#type.clone(),
             status: request.status.clone(),
@@ -320,9 +342,15 @@ pub fn update_document(
     let mut sidecar = read_sidecar_table(&record.toml_path)?;
     let before = sidecar.clone();
 
-    if let Some(status) = patch.status {
-        validate_status(Some(&status))?;
-        sidecar.insert("status".to_owned(), toml::Value::String(status));
+    match patch.status {
+        Some(Some(status)) => {
+            validate_status(Some(&status))?;
+            sidecar.insert("status".to_owned(), toml::Value::String(status));
+        }
+        Some(None) => {
+            sidecar.remove("status");
+        }
+        None => {}
     }
     if let Some(aliases) = patch.aliases {
         sidecar.insert("aliases".to_owned(), string_array(aliases));
@@ -330,9 +358,15 @@ pub fn update_document(
     if let Some(labels) = patch.labels {
         sidecar.insert("labels".to_owned(), string_array(labels));
     }
-    if let Some(occurred_at) = patch.occurred_at {
-        validate_timestamp(Some(&occurred_at))?;
-        sidecar.insert("occurred_at".to_owned(), toml::Value::String(occurred_at));
+    match patch.occurred_at {
+        Some(Some(occurred_at)) => {
+            validate_timestamp(Some(&occurred_at))?;
+            sidecar.insert("occurred_at".to_owned(), toml::Value::String(occurred_at));
+        }
+        Some(None) => {
+            sidecar.remove("occurred_at");
+        }
+        None => {}
     }
     for (key, value) in patch.fields {
         if RESERVED_KEYS.contains(&key.as_str()) {
@@ -384,7 +418,7 @@ pub fn update_document(
         .clone()
         .try_into()
         .map_err(|error| invalid_request(format!("patched sidecar is not valid: {error}")))?;
-    enforce_document_schema(&vault, &patched)?;
+    enforce_document_schema(&vault, id, &patched)?;
 
     if body_changed {
         atomic_write_string(&record.markdown_path, body.as_deref().unwrap_or_default())?;
@@ -636,6 +670,7 @@ fn validated_edge(
 /// problem.
 fn enforce_document_schema(
     vault: &Vault,
+    id: &CanonicalId,
     metadata: &crate::document::DocumentMetadata,
 ) -> Result<()> {
     let Ok(ontology) = Ontology::load(&vault.root) else {
@@ -647,11 +682,19 @@ fn enforce_document_schema(
     // that means walking the vault. Most types declare none, so the walk is
     // paid for only when a schema can actually use it.
     let known_document_types = if declares_a_reference(&ontology, &metadata.r#type) {
-        vault
+        let mut known: BTreeMap<String, String> = vault
             .load_documents()?
             .into_iter()
             .map(|document| (document.id.as_str().to_owned(), document.metadata.r#type))
-            .collect()
+            .collect();
+        // The document being written counts as existing. On a create it is not
+        // on disk yet, so a schema requiring a reference to the document itself
+        // was unsatisfiable — `validate` accepts that same reference the moment
+        // the file exists, so creation refused what the vault considers legal.
+        // On an update this also makes the *new* type authoritative, which is
+        // what the reference is being checked against.
+        known.insert(id.as_str().to_owned(), metadata.r#type.clone());
+        known
     } else {
         BTreeMap::new()
     };

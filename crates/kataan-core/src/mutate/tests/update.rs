@@ -13,7 +13,7 @@ fn update_document_changes_body_and_stays_valid() {
         &id,
         Some("new body".to_owned()),
         DocumentPatch {
-            status: Some("archived".to_owned()),
+            status: Some(Some("archived".to_owned())),
             ..Default::default()
         },
     )
@@ -39,7 +39,7 @@ fn update_document_preserves_unknown_sidecar_keys() {
         &id,
         Some("changed".to_owned()),
         DocumentPatch {
-            status: Some("active".to_owned()),
+            status: Some(Some("active".to_owned())),
             ..Default::default()
         },
     )
@@ -73,7 +73,7 @@ fn update_document_preserves_comments_and_formatting() {
         &id,
         Some("changed".to_owned()),
         DocumentPatch {
-            status: Some("active".to_owned()),
+            status: Some(Some("active".to_owned())),
             ..Default::default()
         },
     )
@@ -133,7 +133,7 @@ occurred_at = { type = "instant" }
         &id,
         None,
         DocumentPatch {
-            occurred_at: Some("2026-08-29".to_owned()),
+            occurred_at: Some(Some("2026-08-29".to_owned())),
             ..Default::default()
         },
     );
@@ -144,7 +144,7 @@ occurred_at = { type = "instant" }
         &id,
         None,
         DocumentPatch {
-            occurred_at: Some("2026-08-29T12:00:00Z".to_owned()),
+            occurred_at: Some(Some("2026-08-29T12:00:00Z".to_owned())),
             ..Default::default()
         },
     )
@@ -183,7 +183,7 @@ occurred_at = { type = "instant" }
         &id,
         Some("replacement body".to_owned()),
         DocumentPatch {
-            occurred_at: Some("2026-08-29".to_owned()),
+            occurred_at: Some(Some("2026-08-29".to_owned())),
             ..Default::default()
         },
     );
@@ -206,7 +206,7 @@ occurred_at = { type = "instant" }
         &id,
         Some("replacement body".to_owned()),
         DocumentPatch {
-            occurred_at: Some("2026-08-29T12:00:00Z".to_owned()),
+            occurred_at: Some(Some("2026-08-29T12:00:00Z".to_owned())),
             ..Default::default()
         },
     )
@@ -394,6 +394,60 @@ fn two_saves_sharing_one_token_cannot_both_win() {
         "first",
         "the refused write must not have replaced the body"
     );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_null_clears_a_value_while_an_omission_leaves_it() {
+    // The form offers a blank status, sends `null`, and reported success while
+    // changing nothing: a single `Option` could not tell `null` from "not
+    // mentioned". Three states now, the same convention `fields` already used.
+    let root = temp_vault("clear-status");
+    let id = create_document(
+        &root,
+        NewDocument {
+            status: Some("active".to_owned()),
+            occurred_at: Some("2026-08-29".to_owned()),
+            ..note("Subject", "body")
+        },
+    )
+    .unwrap();
+
+    // Omitted: both survive a body change.
+    update_document(
+        &root,
+        &id,
+        Some("changed".to_owned()),
+        DocumentPatch::default(),
+    )
+    .unwrap();
+    let table = read_sidecar_table(&root.join(id.toml_path())).unwrap();
+    assert_eq!(table["status"].as_str(), Some("active"));
+    assert_eq!(table["occurred_at"].as_str(), Some("2026-08-29"));
+
+    // Null: removed.
+    update_document(
+        &root,
+        &id,
+        None,
+        DocumentPatch {
+            status: Some(None),
+            occurred_at: Some(None),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let table = read_sidecar_table(&root.join(id.toml_path())).unwrap();
+    assert!(
+        table.get("status").is_none(),
+        "status survived a null: {table:?}"
+    );
+    assert!(
+        table.get("occurred_at").is_none(),
+        "occurred_at survived a null"
+    );
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
 
     std::fs::remove_dir_all(root).unwrap();
 }

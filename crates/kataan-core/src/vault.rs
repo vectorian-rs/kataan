@@ -288,6 +288,13 @@ impl Vault {
         }
 
         let toml_path = self.root.join(id.toml_path());
+        // Absent is "no such document", not "the filesystem failed". Every
+        // mutation loads its target through here, and reporting a missing one
+        // as an I/O error made `PATCH` on an unknown id a 500 while `GET` on
+        // the same id was a 404.
+        if !crate::walk::is_regular_file(&toml_path) {
+            return Err(Error::NotFound(id.as_str().to_owned()));
+        }
         let metadata = read_metadata(&toml_path)?;
         // `markdown` is attacker-controllable TOML; it must be a plain filename
         // inside the document's own folder, never a path that escapes the vault

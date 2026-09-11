@@ -126,15 +126,27 @@ fn default_file_permissions() -> Option<std::fs::Permissions> {
 
     static MODE: OnceLock<Option<u32>> = OnceLock::new();
     let mode = *MODE.get_or_init(|| {
-        let probe = std::env::temp_dir().join(format!(
-            "kataan-umask-probe-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let file = std::fs::File::create(&probe).ok()?;
+        // In a private directory, and created exclusively.
+        //
+        // This used to be `File::create` on a predictable name in the shared
+        // temp directory — `kataan-umask-probe-<pid>-<thread>`. `File::create`
+        // follows symlinks and truncates, so anything that could plant a
+        // symlink at that path first had kataan empty the file it pointed at.
+        // Reproduced against a sentinel file.
+        //
+        // `create_new` is `O_EXCL`, which refuses to follow a symlink and
+        // refuses an existing file; the directory is fresh and owner-only, so
+        // there is nothing there to point anywhere. `tempfile`'s own file
+        // helpers are deliberately not used here: they create with 0600, and
+        // 0666 & umask is the thing being measured.
+        let directory = tempfile::tempdir().ok()?;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(directory.path().join("umask-probe"))
+            .ok()?;
         let mode = file.metadata().ok().map(|m| m.permissions().mode());
         drop(file);
-        let _ = std::fs::remove_file(&probe);
         mode
     });
     mode.map(std::fs::Permissions::from_mode)

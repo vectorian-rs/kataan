@@ -200,3 +200,46 @@ fn a_list_flag_takes_commas_or_repetition() {
 
     std::fs::remove_dir_all(&vault).unwrap();
 }
+
+#[test]
+fn exit_codes_distinguish_a_bad_invocation_from_an_invalid_vault() {
+    // 1 means "ran fine, found problems"; 2 means "you gave me the wrong
+    // arguments". A CI script reads the code, so collapsing them is a real
+    // break — and it happened: `argh::from_env` exits with 1 of its own accord,
+    // which the migration to argh silently adopted.
+    let vault = std::env::temp_dir().join(format!("kataan-cli-exit-{}", std::process::id()));
+    init_vault(&vault);
+
+    let code = |args: &[&str]| {
+        kataan()
+            .args(args)
+            .output()
+            .expect("run kataan-cli")
+            .status
+            .code()
+            .expect("exited normally")
+    };
+
+    assert_eq!(code(&["validate"]), 2, "missing argument");
+    assert_eq!(code(&["definitely-not-a-command"]), 2, "unknown subcommand");
+    assert_eq!(code(&["--help"]), 0, "help is a successful request");
+    assert_eq!(
+        code(&["validate", vault.to_str().unwrap()]),
+        0,
+        "a valid vault"
+    );
+
+    // Break the vault the way the checksum test does, and the code becomes 1 —
+    // not 2.
+    let document = vault.join("type/note.md");
+    let mut content = std::fs::read_to_string(&document).unwrap();
+    content.push_str("\ntampered\n");
+    std::fs::write(&document, content).unwrap();
+    assert_eq!(
+        code(&["validate", vault.to_str().unwrap()]),
+        1,
+        "an invalid vault"
+    );
+
+    std::fs::remove_dir_all(&vault).unwrap();
+}

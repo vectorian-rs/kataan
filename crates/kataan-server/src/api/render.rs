@@ -275,14 +275,20 @@ pub(super) fn rewrite_markdown_link(
             href: suffix(format!("/{id}")),
             document_id: Some(id),
         }),
-        // A real non-document file: serve the bytes rather than 404 in the SPA.
+        // A real non-document file: its route in the app, which opens the file
+        // preview.
+        //
+        // These used to point at `/api/file/raw`, which serves only SVG and
+        // PDF — so a link to a `.csv`, a `.png` or a `.txt` rendered as a link
+        // that answered 400. The preview knows every kind the server can
+        // classify and says so plainly for the ones it cannot show, which is
+        // the honest answer. Serving arbitrary bytes from the app's own origin
+        // to fix this would trade a broken link for a content-injection
+        // surface.
         LinkTarget::File => {
-            let mut href = format!(
-                "/api/file/raw?path={}",
-                percent_encode_query_value(&vault_relative_path)
-            );
+            let mut href = format!("/{}", percent_encode_path(&vault_relative_path));
             if let Some(query) = query {
-                href.push('&');
+                href.push('?');
                 href.push_str(query);
             }
             Some(RewrittenLink {
@@ -393,6 +399,29 @@ pub(super) fn normalize_markdown_asset_path(base_folder: &str, path: &str) -> Op
     } else {
         Some(parts.join("/"))
     }
+}
+
+/// Percent-encode a vault path for use as a URL path.
+///
+/// Separators stay separators and everything else is escaped, matching how the
+/// client builds a file route — a file path is not an id and may hold spaces,
+/// `&`, `#` and the rest.
+pub(super) fn percent_encode_path(value: &str) -> String {
+    value
+        .split('/')
+        .map(|segment| {
+            let mut output = String::new();
+            for byte in segment.bytes() {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                    output.push(byte as char);
+                } else {
+                    output.push_str(&format!("%{byte:02X}"));
+                }
+            }
+            output
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub(super) fn percent_encode_query_value(value: &str) -> String {
@@ -606,8 +635,10 @@ mod tests {
 mod link_tests {
     use super::*;
 
-    /// A vault where `organizations/datasentics` is a document, `charts/x.svg`
-    /// is a plain file, and nothing else exists.
+    /// A vault where `organizations/datasentics` is a document and anything
+    /// with a non-Markdown extension is a plain file — of any kind, not only
+    /// the two the raw endpoint can serve, which is exactly what made links to
+    /// the rest answer 400.
     fn resolver(path: &str) -> LinkTarget {
         let id = path
             .strip_suffix(".md")
@@ -618,7 +649,7 @@ mod link_tests {
             "organizations/datasentics" | "docs/plan" | "organizations" => {
                 LinkTarget::Document(id.to_owned())
             }
-            _ if path.ends_with(".svg") => LinkTarget::File,
+            _ if path.contains('.') && !path.ends_with(".md") => LinkTarget::File,
             _ => LinkTarget::Missing,
         }
     }
@@ -667,11 +698,31 @@ mod link_tests {
     }
 
     #[test]
-    fn a_non_document_file_link_serves_the_file() {
-        let html = render("[chart](charts/x.svg)", "organizations");
-        assert!(html.contains("/api/file/raw?path="), "{html}");
-        // Not a document, so it must not be marked for in-app selection.
-        assert!(!html.contains("data-document"), "{html}");
+    fn a_non_document_file_link_opens_the_file_in_the_app() {
+        // These pointed at `/api/file/raw`, which serves only SVG and PDF, so a
+        // link to anything else rendered as a link that answered 400. The app's
+        // file route knows every kind the server can classify, and says so for
+        // the ones it cannot show.
+        for (markdown, expected) in [
+            ("[chart](charts/x.svg)", "/organizations/charts/x.svg"),
+            ("[data](data/rows.csv)", "/organizations/data/rows.csv"),
+            ("[shot](shot.png)", "/organizations/shot.png"),
+            // Angle brackets are how Markdown carries a destination with
+            // spaces. `&` and a space both have to survive as a path segment —
+            // the file route already broke once on exactly these.
+            (
+                "[report](<q1 & q2.pdf>)",
+                "/organizations/q1%20%26%20q2.pdf",
+            ),
+        ] {
+            let html = render(markdown, "organizations");
+            assert!(
+                html.contains(&format!("href=\"{expected}\"")),
+                "{markdown} -> {html}"
+            );
+            // Not a document, so it must not be marked for in-app selection.
+            assert!(!html.contains("data-document"), "{html}");
+        }
     }
 
     #[test]

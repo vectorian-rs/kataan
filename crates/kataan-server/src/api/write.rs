@@ -83,7 +83,7 @@ where
                 // does not exist yet or predates the current schema.
                 let refreshed = state
                     .search
-                    .refresh_document(&loaded, &changed)
+                    .refresh_document_tree(&loaded, &changed)
                     .unwrap_or(false);
                 if !refreshed {
                     if let Err(error) = state.search.reindex_loaded(&loaded) {

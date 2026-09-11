@@ -457,3 +457,98 @@ fn a_placement_no_read_can_reach_is_refused() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_generated_template_is_accepted_by_the_write_boundary() {
+    // `type_toml_template` exists to hand out "a minimum sidecar a caller can
+    // actually write rather than one that would be rejected". Once nested
+    // schemas became enforceable, a required table came out as `{}` and the
+    // write boundary refused the template this function had just produced.
+    let root = temp_vault("template-round-trip");
+    let mut ontology = std::fs::read_to_string(root.join("ontology.toml")).unwrap();
+    ontology.push_str(
+        "\n[nodes.note]\nrequired = [\"rate_card\", \"title_line\"]\n\n\
+         [nodes.note.fields]\ntitle_line = { type = \"string\" }\n\n\
+         [nodes.note.fields.rate_card]\ntype = \"table\"\nrequired = [\"currency\"]\n\n\
+         [nodes.note.fields.rate_card.fields]\ncurrency = { type = \"string\" }\n",
+    );
+    std::fs::write(root.join("ontology.toml"), ontology).unwrap();
+
+    let loaded = crate::vault::LoadedVault::load(&root).unwrap();
+    let template = crate::schema::schema_response("note", Some(&loaded))
+        .expect("a declared type has a schema")
+        .toml_template;
+    assert!(
+        template.contains("currency"),
+        "a required nested key must appear in the template:\n{template}"
+    );
+
+    // The real assertion: feed the template's own fields through the boundary.
+    let fields: toml::Table = template.parse().unwrap();
+    let extra = fields
+        .into_iter()
+        .filter(|(key, _)| key != "type" && key != "markdown")
+        .collect();
+
+    create_document(
+        &root,
+        NewDocument {
+            extra,
+            ..note("From Template", "body")
+        },
+    )
+    .expect("the template kataan generates must satisfy the schema kataan enforces");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_document_can_satisfy_a_reference_to_itself() {
+    // Write-time enforcement resolved references against the documents already
+    // on disk, so a schema requiring a reference to the document being created
+    // was unsatisfiable — while `validate` accepted that exact reference once
+    // the file existed. Creation refused what the vault considers legal.
+    let root = temp_vault("self-reference");
+    let mut ontology = std::fs::read_to_string(root.join("ontology.toml")).unwrap();
+    ontology.push_str(
+        "\n[nodes.note]\nrequired = [\"canonical\"]\n\n\
+         [nodes.note.fields]\ncanonical = { type = \"reference\", to = [\"note\"] }\n",
+    );
+    std::fs::write(root.join("ontology.toml"), ontology).unwrap();
+
+    let id = create_document(
+        &root,
+        NewDocument {
+            extra: [(
+                "canonical".to_owned(),
+                toml::Value::String("notes/anchor".to_owned()),
+            )]
+            .into_iter()
+            .collect(),
+            ..note("Anchor", "body")
+        },
+    )
+    .expect("a document may be its own canonical reference");
+    assert_eq!(id.as_str(), "notes/anchor");
+    assert!(crate::validate::validate(&root).unwrap().is_ok());
+
+    // A reference to something that genuinely does not exist is still refused.
+    let refused = create_document(
+        &root,
+        NewDocument {
+            extra: [(
+                "canonical".to_owned(),
+                toml::Value::String("notes/absent".to_owned()),
+            )]
+            .into_iter()
+            .collect(),
+            ..note("Dangling", "body")
+        },
+    );
+    assert!(
+        refused.is_err(),
+        "a dangling reference must still be refused"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
