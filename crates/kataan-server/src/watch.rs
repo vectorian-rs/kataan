@@ -164,6 +164,11 @@ fn process_change_inner(
 
     let mut final_fingerprint = digest;
     let mut rebuilt = false;
+    // The watcher writes too, on its own thread. Held across the rebuild *and*
+    // the reload below, so a repair cannot land between an acknowledged write
+    // and that write's own refresh, and so the snapshot published here cannot
+    // be older than one a concurrent write already published.
+    let _writer = state.lock_writes();
     if should_rebuild {
         info!(vault = %state.vault_path.display(), "filesystem watcher rebuilding repairable index drift");
         kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref())?;

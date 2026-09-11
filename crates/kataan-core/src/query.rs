@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::{
     document::display_name, id::CanonicalId, title::title_from_id, vault::LoadedVault, wire::Csv,
@@ -299,10 +300,11 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
     let after = parse_bound("after", query.after.as_deref())?;
     let before = parse_bound("before", query.before.as_deref())?;
     if let (Some(after), Some(before)) = (&after, &before) {
-        // Comparable because both are RFC 3339 and one may be a prefix of the
-        // other; an inverted range is empty by construction, so say so rather
-        // than returning zero results the caller has to explain.
-        if after > before {
+        // Inverted only when the earliest moment `after` admits is later than
+        // the latest `before` admits. Comparing the spellings instead rejected
+        // `after=2026-08-29T12:00:00Z&before=2026-08-29`, which is a perfectly
+        // ordinary "that afternoon" range under the documented day semantics.
+        if after.span().0 > before.span().1 {
             return Err(Error::InvalidRequest(format!(
                 "`after` ({after}) is later than `before` ({before}), which cannot match anything"
             )));
@@ -438,45 +440,40 @@ pub fn documents(vault: &LoadedVault, query: &DocumentQuery) -> Result<DocumentP
 }
 
 /// Parse a time bound, naming which one failed.
-fn parse_bound(field: &str, value: Option<&str>) -> Result<Option<String>> {
+fn parse_bound(field: &str, value: Option<&str>) -> Result<Option<crate::time::Timestamp>> {
     match value {
         None => Ok(None),
         Some(raw) => crate::time::Timestamp::parse(raw)
-            .map(|timestamp| Some(timestamp.as_str().to_owned()))
+            .map(Some)
             .map_err(|error| Error::InvalidRequest(format!("invalid `{field}`: {error}"))),
     }
 }
 
-/// Whether `occurred_at` falls within the bounds, comparing at each bound's own
-/// precision.
+/// Whether `occurred_at` falls within the bounds.
 ///
-/// RFC 3339 leaves a `full-date` as a prefix of any `date-time` on that day, so
-/// a plain lexicographic test would put `2026-08-29T09:00:00Z` *after* a
-/// `before` bound of `2026-08-29` and drop the instants the bound names.
-/// Truncating the value to the bound's length makes both bounds mean the whole
-/// day when written as a day, and the exact moment when written with a clock.
+/// Compared as spans of real time, not as text. The stored value is arbitrary —
+/// nothing validates a sidecar on load — so it is parsed here and a value that
+/// does not parse is treated like a missing one: it cannot be shown to fall in
+/// a range. Comparing by byte offset instead panicked on any multibyte value,
+/// which took the MCP process down with it.
 fn within_bounds(
     occurred_at: Option<&str>,
-    after: &Option<String>,
-    before: &Option<String>,
+    after: &Option<crate::time::Timestamp>,
+    before: &Option<crate::time::Timestamp>,
 ) -> bool {
     if after.is_none() && before.is_none() {
         return true;
     }
     // A document with no valid time cannot be shown to fall in a range.
-    let Some(value) = occurred_at else {
+    let Some(value) = occurred_at.and_then(|raw| crate::time::Timestamp::parse(raw).ok()) else {
         return false;
-    };
-    let at_precision = |bound: &String| {
-        let end = bound.len().min(value.len());
-        &value[..end]
     };
     after
         .as_ref()
-        .is_none_or(|bound| at_precision(bound) >= bound.as_str())
+        .is_none_or(|bound| value.is_at_or_after(bound))
         && before
             .as_ref()
-            .is_none_or(|bound| at_precision(bound) <= bound.as_str())
+            .is_none_or(|bound| value.is_at_or_before(bound))
 }
 
 /// Sort in place, breaking ties on canonical id so paging is stable.
@@ -491,14 +488,25 @@ fn sort_documents(vault: &LoadedVault, ids: &mut [&CanonicalId], order: Order, d
         return;
     }
 
-    let key = |id: &CanonicalId| -> Option<&str> {
+    // Sorted on the instant, not the spelling. `2026-08-29T10:00:00+02:00` is
+    // 08:00 UTC and belongs before `09:00Z`, but sorts after it as text.
+    // `created_at`/`updated_at` are always UTC as kataan writes them, so this
+    // changes nothing for them; `occurred_at` is author-set and can carry any
+    // offset.
+    //
+    // A value that does not parse sorts with the missing ones rather than
+    // anywhere arbitrary — it is not a time, so it has no place on a timeline.
+    let key = |id: &CanonicalId| -> Option<OffsetDateTime> {
         let metadata = &vault.documents.get(id)?.metadata;
-        match order {
+        let raw = match order {
             Order::OccurredAt => metadata.occurred_at.as_deref(),
             Order::CreatedAt => metadata.created_at.as_deref(),
             Order::UpdatedAt => metadata.updated_at.as_deref(),
             Order::Id => None,
-        }
+        }?;
+        crate::time::Timestamp::parse(raw)
+            .ok()
+            .map(|timestamp| timestamp.span().0)
     };
 
     ids.sort_by(|left, right| {
@@ -507,7 +515,7 @@ fn sort_documents(vault: &LoadedVault, ids: &mut [&CanonicalId], order: Order, d
         // documents that simply never carried the field.
         let ordering = match (left_key, right_key) {
             (Some(left_key), Some(right_key)) => {
-                let compared = left_key.cmp(right_key);
+                let compared = left_key.cmp(&right_key);
                 if desc {
                     compared.reverse()
                 } else {

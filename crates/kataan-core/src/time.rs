@@ -32,10 +32,50 @@ pub fn unix_timestamp_string() -> String {
 /// The current instant as ISO-8601 UTC with a `Z` suffix, e.g.
 /// `2026-08-29T18:30:00Z`. This is the form every vault-facing timestamp takes.
 pub fn iso8601_utc_now() -> String {
-    OffsetDateTime::now_utc()
-        .replace_nanosecond(0)
-        .unwrap_or_else(|_| OffsetDateTime::now_utc())
-        .format(&Rfc3339)
+    format_utc(
+        OffsetDateTime::now_utc()
+            .replace_nanosecond(0)
+            .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+    )
+}
+
+/// The next transaction stamp for a record whose previous one was `previous`,
+/// guaranteed to be strictly later than it.
+///
+/// A write must always move the stamp, because `expected_updated_at` uses it as
+/// the token proving what the caller last read. Second resolution meant two
+/// saves inside one second produced the same stamp, so the second save's
+/// precondition still matched a document the first had already rewritten —
+/// both returned 200 and the first edit was lost. Confirmed against the HTTP
+/// API before this existed.
+///
+/// Millisecond resolution makes an identical stamp unlikely; advancing past
+/// `previous` makes it impossible, which is what the precondition needs. It
+/// also covers a clock that steps backwards, where "now" alone would hand out
+/// a token the document had already used.
+pub fn next_stamp_after(previous: Option<&str>) -> String {
+    let now = OffsetDateTime::now_utc()
+        .replace_nanosecond(now_millis_nanos())
+        .unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let Some(previous) = previous.and_then(|raw| Timestamp::parse(raw).ok()) else {
+        return format_utc(now);
+    };
+    let previous_at = previous.span().1;
+    if now > previous_at {
+        format_utc(now)
+    } else {
+        format_utc(previous_at + time::Duration::milliseconds(1))
+    }
+}
+
+/// Truncate the current nanosecond to a whole millisecond, so stamps stay short
+/// and comparable rather than carrying nine digits of false precision.
+fn now_millis_nanos() -> u32 {
+    (OffsetDateTime::now_utc().nanosecond() / 1_000_000) * 1_000_000
+}
+
+fn format_utc(at: OffsetDateTime) -> String {
+    at.format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
 }
 
@@ -110,6 +150,68 @@ impl Timestamp {
 
     pub fn precision(&self) -> Precision {
         self.precision
+    }
+
+    /// The span of real time this timestamp covers, in UTC, inclusive at both
+    /// ends.
+    ///
+    /// An instant is a point, so both ends are the same. A calendar day is not
+    /// a point — it is a range — and treating it as one is what made comparison
+    /// wrong in two ways at once: `2026-08-29` sorted before every instant
+    /// within it, and `10:00+02:00` compared as text sorted *after* `09:00Z`
+    /// despite being two hours earlier.
+    ///
+    /// Comparing spans instead gives the documented behaviour directly: a day
+    /// bound covers everything that happened that day, an offset is honoured
+    /// because both sides are converted to UTC first, and a range is inverted
+    /// only when the earliest of `after` is later than the latest of `before`.
+    ///
+    /// A day is taken as UTC. A calendar day is zone-relative and this picks
+    /// one, which matters only for a value within hours of midnight in a
+    /// distant zone; the alternative is asking every caller for a zone it does
+    /// not have.
+    pub fn span(&self) -> (OffsetDateTime, OffsetDateTime) {
+        match self.precision {
+            Precision::Instant => {
+                // Parsed once already in `parse`, so this cannot fail.
+                let at = OffsetDateTime::parse(&self.raw, &Rfc3339)
+                    .expect("a parsed instant re-parses")
+                    .to_offset(time::UtcOffset::UTC);
+                (at, at)
+            }
+            Precision::Day => {
+                let date = Date::parse(
+                    &self.raw,
+                    &time::format_description::well_known::Iso8601::DATE,
+                )
+                .expect("a parsed full-date re-parses");
+                (
+                    date.midnight().assume_utc(),
+                    date.with_hms_nano(23, 59, 59, 999_999_999)
+                        .expect("end of day is a valid time")
+                        .assume_utc(),
+                )
+            }
+        }
+    }
+
+    /// Whether this timestamp is at or after `bound` — the `after` filter.
+    ///
+    /// Both sides are taken at the *earliest* moment they admit, which is what
+    /// gives the documented asymmetry: a day bound admits everything from its
+    /// midnight onward, so every instant that day passes; but a value dated
+    /// only to the day cannot be shown to fall after a bound with a clock on
+    /// it, because it never claimed a time of day.
+    pub fn is_at_or_after(&self, bound: &Timestamp) -> bool {
+        self.span().0 >= bound.span().0
+    }
+
+    /// Whether this timestamp is at or before `bound` — the `before` filter.
+    ///
+    /// The bound is taken at the *latest* moment it admits, so a day bound
+    /// covers its whole day including instants within it.
+    pub fn is_at_or_before(&self, bound: &Timestamp) -> bool {
+        self.span().0 <= bound.span().1
     }
 }
 

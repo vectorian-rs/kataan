@@ -32,5 +32,8 @@ pub const TYPE_EXTENDS_UNKNOWN: &str = "type-extends-unknown";
 pub const TYPE_SCOPE_UNKNOWN_TYPE: &str = "type-scope-unknown-type";
 pub const TYPE_SCOPE_ESCAPES: &str = "type-scope-escapes";
 pub const UNSAFE_TYPE_FOLDER: &str = "unsafe-type-folder";
+/// A type claims a folder that discovery never walks, so documents written
+/// there would exist on disk and be missing from every read.
+pub const UNSCANNABLE_TYPE_FOLDER: &str = "unscannable-type-folder";
 pub const UNKNOWN_PREDICATE: &str = "unknown-predicate";
 pub const UNRESOLVED_EDGE_TARGET: &str = "unresolved-edge-target";

@@ -340,3 +340,60 @@ fn removing_a_field_is_not_a_no_op() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn two_saves_sharing_one_token_cannot_both_win() {
+    // The precondition's whole job. Both writes land inside the same second, so
+    // a second-resolution stamp left the token unchanged after the first —
+    // and the second write, still holding the original token, matched and
+    // overwrote it. Confirmed over HTTP before the stamp was made monotonic:
+    // two PATCHes, both 200, first edit gone.
+    let root = temp_vault("same-second-conflict");
+    let id = create_document(&root, note("Subject", "original")).unwrap();
+
+    // Give it a stamp to hold.
+    update_document(
+        &root,
+        &id,
+        Some("seed".to_owned()),
+        DocumentPatch::default(),
+    )
+    .unwrap();
+    let token = read_sidecar_table(&root.join(id.toml_path())).unwrap()["updated_at"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    update_document(
+        &root,
+        &id,
+        Some("first".to_owned()),
+        DocumentPatch {
+            expected_updated_at: Some(token.clone()),
+            ..Default::default()
+        },
+    )
+    .expect("the first write holds the current token");
+
+    let second = update_document(
+        &root,
+        &id,
+        Some("second".to_owned()),
+        DocumentPatch {
+            expected_updated_at: Some(token),
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        matches!(second, Err(crate::Error::Conflict(_))),
+        "the second write held a stale token and must be refused: {second:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(id.markdown_path())).unwrap(),
+        "first",
+        "the refused write must not have replaced the body"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}

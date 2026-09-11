@@ -13,6 +13,14 @@ import { type DocumentResponse, type FieldSchema, type TomlSchemaResponse } from
 
 import { metadataPanel } from './elements';
 import { formatLabel } from './format';
+import {
+  display,
+  displayList,
+  listRoundTrips,
+  parse,
+  parseList,
+  unchanged,
+} from './metadata-values';
 
 /// Keys kataan owns. They are edited through their own controls, or not at all.
 const RESERVED = new Set([
@@ -48,6 +56,9 @@ interface Field {
   input: HTMLInputElement | HTMLSelectElement;
   /// How to turn the input's string back into what the API expects.
   read: (raw: string) => unknown;
+  /// What the document held when the form was drawn. A control still holding
+  /// this is not sent at all.
+  original: unknown;
   /// Custom sidecar key rather than one of kataan's own.
   custom: boolean;
 }
@@ -94,15 +105,22 @@ export function renderMetadataForm(
   );
 }
 
-/// Everything the form wants changed. Only keys whose control exists are
-/// included, so a value the form declined to edit is never sent — and therefore
-/// never overwritten.
+/// Everything the form wants *changed*.
+///
+/// A field the user did not touch is not sent. That is the difference between
+/// a save that writes the edit you made and one that rewrites every value it
+/// happened to display — which is how editing only the Markdown used to delete
+/// a boolean, retype a number, and split an alias containing a comma.
+///
+/// A value the form declined to edit has no control at all, so it is never
+/// sent either.
 export function readMetadataForm(): MetadataEdit {
   const edit: MetadataEdit = {};
   const custom: Record<string, unknown> = {};
 
   for (const field of fields) {
     const value = field.read(field.input.value);
+    if (unchanged(value, field.original)) continue;
     if (field.custom) {
       custom[field.key] = value;
     } else if (field.key === 'aliases' || field.key === 'labels') {
@@ -136,39 +154,70 @@ function customRow(
     );
   }
 
+  // A boolean is two values, so it gets two options rather than a text box you
+  // can type `yes` into — and it is shown, not blanked, which is what turned an
+  // untouched `true` into a deletion.
+  if ((declaredType ?? (typeof value === 'boolean' ? 'boolean' : '')) === 'boolean') {
+    const row = selectRow(name, formatLabel(name), value, ['', 'true', 'false']);
+    const field = fields[fields.length - 1];
+    field.custom = true;
+    field.read = (raw) => parse(raw, value, 'boolean');
+    return labelledRequired(row, isRequired);
+  }
+
   const hint =
     declaredType === 'date'
       ? '2026-08-29'
       : declaredType === 'instant'
         ? '2026-08-29T12:00:00Z'
         : '';
-  const row = textRow(name, formatLabel(name), asString(value), hint, isRequired);
+  const row = textRow(name, formatLabel(name), value, hint, isRequired);
   const field = fields[fields.length - 1];
   field.custom = true;
   // An emptied custom field is a removal, which is what `null` means to the
-  // API — as opposed to a reserved key, where empty means "unset".
-  field.read = (raw) => {
-    const trimmed = raw.trim();
-    if (trimmed === '') return null;
-    if (declaredType === 'integer') return Number.parseInt(trimmed, 10);
-    if (declaredType === 'number') return Number.parseFloat(trimmed);
-    if (declaredType === 'boolean') return trimmed === 'true';
-    return trimmed;
-  };
+  // API — as opposed to a reserved key, where empty means "unset". The value's
+  // type is taken from the schema, or from what the field already held, so an
+  // undeclared number is not written back as a string.
+  field.read = (raw) => parse(raw, value, declaredType);
   return row;
 }
 
-function textRow(key: string, label: string, value: string, placeholder = '', isRequired = false) {
+/// Mark an already-built row as required. `selectRow` does not take the flag,
+/// and a boolean can be required like anything else.
+function labelledRequired(row: HTMLElement, isRequired: boolean) {
+  if (isRequired) {
+    const name = row.querySelector('.property-label');
+    const marker = document.createElement('span');
+    marker.className = 'ontology-required';
+    marker.textContent = 'required';
+    name?.append(marker);
+  }
+  return row;
+}
+
+function textRow(
+  key: string,
+  label: string,
+  original: unknown,
+  placeholder = '',
+  isRequired = false,
+) {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'metadata-input';
-  input.value = value;
+  input.value = display(original);
   input.placeholder = placeholder;
-  fields.push({ key, input, read: (raw) => raw.trim() || null, custom: false });
+  fields.push({
+    key,
+    input,
+    original,
+    read: (raw) => raw.trim() || null,
+    custom: false,
+  });
   return labelled(label, input, isRequired);
 }
 
-function selectRow(key: string, label: string, value: string, options: string[]) {
+function selectRow(key: string, label: string, original: unknown, options: string[]) {
   const input = document.createElement('select');
   input.className = 'metadata-input';
   for (const option of options) {
@@ -177,28 +226,28 @@ function selectRow(key: string, label: string, value: string, options: string[])
     element.textContent = option === '' ? '—' : option;
     input.append(element);
   }
-  input.value = value;
-  fields.push({ key, input, read: (raw) => raw || null, custom: false });
+  input.value = display(original);
+  fields.push({ key, input, original, read: (raw) => raw || null, custom: false });
   return labelled(label, input, false);
 }
 
-function listRow(key: string, label: string, value: unknown) {
-  const items = Array.isArray(value) ? value.map(String) : [];
+function listRow(key: string, label: string, original: unknown) {
+  // A comma inside an entry does not survive the comma-separated control:
+  // `["Smith, Jane"]` would come back as two people. Show it rather than
+  // rewrite it, the same choice this form makes for tables and references.
+  if (!listRoundTrips(original)) {
+    return readOnlyRow(
+      label,
+      `${displayList(original)} — contains a comma; edit in the Markdown source`,
+    );
+  }
+
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'metadata-input';
-  input.value = items.join(', ');
+  input.value = displayList(original);
   input.placeholder = 'comma separated';
-  fields.push({
-    key,
-    input,
-    read: (raw) =>
-      raw
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter(Boolean),
-    custom: false,
-  });
+  fields.push({ key, input, original, read: parseList, custom: false });
   return labelled(label, input, false);
 }
 

@@ -296,8 +296,12 @@ pub async fn search_reindex(
     State(state): State<AppState>,
 ) -> Result<Json<kataan_search::ReindexResponse>, ApiError> {
     reject_cross_site(&headers)?;
-    // Reads and rewrites the index for every document in the vault.
+    // Reads a snapshot and rewrites the whole index from it, so it is sequenced
+    // with writing like everything else: otherwise a write landing mid-reindex
+    // has its own index refresh overwritten by this older snapshot, and the
+    // document stays unsearchable until something writes again.
     blocking(move || {
+        let _writer = state.lock_writes();
         let loaded = read_loaded_vault(&state)?;
         state.search.reindex_loaded(&loaded).map_err(ApiError::from)
     })
@@ -501,8 +505,11 @@ pub async fn validate(
 ) -> Result<Json<ValidateResponse>, ApiError> {
     reject_cross_site(&headers)?;
     debug!(vault = %state.vault_path.display(), "validating vault");
-    // Walks every folder and parses every sidecar in the vault.
+    // Read-only, but it finishes by publishing a fresh snapshot, and publishing
+    // is sequenced with writing: an unlocked reload can swap in a vault older
+    // than the one a concurrent write already published.
     blocking(move || {
+        let _writer = state.lock_writes();
         let report =
             kataan_core::validate::validate(state.vault_path.as_ref()).map_err(core_error)?;
         let ok = report.is_ok();
@@ -533,8 +540,11 @@ pub async fn rebuild_indexes(
 ) -> Result<Json<OkResponse>, ApiError> {
     reject_cross_site(&headers)?;
     info!(vault = %state.vault_path.display(), "rebuilding indexes");
-    // Rewrites every folder index in the vault.
+    // Rewrites every folder index in the vault, so it is a writer and takes the
+    // writer lock: without it a concurrent `PATCH` could be acknowledged and
+    // then overwritten by this rebuild's older reconstruction of the sidecar.
     blocking(move || {
+        let _writer = state.lock_writes();
         kataan_core::rebuild::rebuild_indexes(state.vault_path.as_ref()).map_err(core_error)?;
         state.reload().map_err(core_error)?;
         info!(vault = %state.vault_path.display(), "reloaded vault after rebuild");

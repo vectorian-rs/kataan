@@ -416,3 +416,44 @@ approved_by = { type = "reference", to = ["topic"] }
     assert!(crate::validate::validate(&root).unwrap().is_ok());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_placement_no_read_can_reach_is_refused() {
+    // Legality and reachability are different questions. A type may *claim* a
+    // folder — that is what makes a placement legal — but loading, validation
+    // and rebuilding walk only the folders `kataan.toml` maps. Creating into an
+    // unmapped claim used to return 201 with an id that every query then
+    // reported as missing, with the files sitting on disk.
+    let root = temp_vault("unscannable-placement");
+    std::fs::write(root.join("type/deck.md"), "# Deck\n").unwrap();
+    std::fs::write(
+        root.join("type/deck.toml"),
+        "type = \"type-definition\"\nname = \"deck\"\nfolders = [\"decks\"]\nmarkdown = \"deck.md\"\n",
+    )
+    .unwrap();
+    crate::rebuild::rebuild_indexes(&root).unwrap();
+
+    let refused = create_document(
+        &root,
+        NewDocument {
+            r#type: "deck".to_owned(),
+            ..note("Invisible", "b")
+        },
+    )
+    .expect_err("a document nothing can load must not be acknowledged");
+    let message = refused.to_string();
+    assert!(message.contains("type_folders"), "{message}");
+    assert!(
+        !root.join("decks/invisible.toml").exists(),
+        "written anyway"
+    );
+
+    // And `validate` says so, rather than calling the vault clean.
+    let report = crate::validate::validate(&root).unwrap();
+    assert!(report
+        .diagnostics
+        .iter()
+        .any(|issue| issue.code == crate::diagnostic_codes::UNSCANNABLE_TYPE_FOLDER));
+
+    std::fs::remove_dir_all(root).unwrap();
+}

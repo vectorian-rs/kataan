@@ -74,7 +74,13 @@ import {
   renderFolderContents,
   type TreeActions,
 } from './dashboard/tree';
-import { beginEditing, cancelEditing, saveEditing, setOpenDocument } from './dashboard/editing';
+import {
+  beginEditing,
+  cancelEditing,
+  isEditing,
+  saveEditing,
+  setOpenDocument,
+} from './dashboard/editing';
 import { currentRoute, folderChain, isFolderRoute, setRoute } from './dashboard/routes';
 import { setSearchStatusMessage } from './dashboard/search-view';
 
@@ -341,6 +347,11 @@ window.addEventListener('popstate', () => {
 // Code blocks are highlighted server-side, so a theme switch has to re-fetch
 // whatever is on screen — a document as much as a file preview.
 window.addEventListener('kataan:theme-change', () => {
+  // Re-selecting rebuilds the reader from disk, which discards an open draft.
+  // The theme only changes server-rendered syntax highlighting, and that is in
+  // the preview — hidden while editing. Leaving it stale until the next load
+  // costs nothing; losing someone's unsaved text costs everything.
+  if (isEditing()) return;
   if (selectedFile) {
     void runAction(() => selectFile(selectedFile as FolderFile), { owns: 'document' });
     return;

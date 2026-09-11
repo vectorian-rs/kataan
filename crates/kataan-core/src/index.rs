@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +43,22 @@ pub fn is_safe_type_folder(folder: &str) -> bool {
         && std::path::Path::new(folder)
             .components()
             .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+/// Whether documents under `folder` are reachable by discovery.
+///
+/// Loading, validation and rebuilding all walk the folders `kataan.toml` maps,
+/// and nothing else. A type definition may *claim* a folder — that is what
+/// makes a placement legal — but a claim outside every mapped root describes
+/// somewhere no read ever looks, and documents written there exist on disk
+/// while every query reports them missing.
+///
+/// Adding the `[type_folders]` entry is already the documented step for
+/// declaring a type; this is what makes skipping it visible instead of silent.
+pub fn is_discoverable(type_folders: &BTreeMap<String, String>, folder: &str) -> bool {
+    type_folders.values().any(|root| {
+        is_safe_type_folder(root) && (folder == root || folder.starts_with(&format!("{root}/")))
+    })
 }
 
 /// A schema version as `(major, minor)`.

@@ -53,10 +53,7 @@ where
     T: Send + 'static,
 {
     blocking(move || {
-        let _writer = state
-            .writes
-            .lock()
-            .map_err(|_| ApiError::from(anyhow::anyhow!("write lock poisoned")))?;
+        let _writer = state.lock_writes();
 
         let (result, changed) = work(state.vault_path.as_ref())?;
 

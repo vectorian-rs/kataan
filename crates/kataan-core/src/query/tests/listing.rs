@@ -436,3 +436,159 @@ fn a_malformed_or_inverted_bound_is_a_request_error() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_malformed_stored_timestamp_does_not_panic() {
+    // `occurred_at` is an arbitrary string on disk: nothing validates it on
+    // load, only on write and in `validate`. Comparing it by byte-slicing to
+    // the bound's length can cut a multibyte character in half.
+    let root = vault_with_edges("malformed-occurred-at");
+    let id = CanonicalId::parse("notes/field-notes").unwrap();
+    let sidecar = root.join(id.toml_path());
+    let text = std::fs::read_to_string(&sidecar).unwrap();
+    // Prepended, not appended: these sidecars end with an `[edges]` table, and
+    // a key added after it belongs to that table rather than the document.
+    std::fs::write(
+        &sidecar,
+        format!("occurred_at = \"{}\"\n{text}", "é".repeat(20)),
+    )
+    .unwrap();
+
+    let vault = LoadedVault::load(&root).unwrap();
+    let page = documents(
+        &vault,
+        &q(DocumentQuery {
+            // 25 bytes, so the slice lands mid-character in a value of
+            // two-byte chars. A 20-byte bound would cut cleanly and pass.
+            after: Some("2026-08-29T12:00:00+02:00".to_owned()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+
+    // The document cannot satisfy a bound it has no valid time for, so it is
+    // excluded — but the query must answer, not abort the process.
+    assert!(!page
+        .documents
+        .iter()
+        .any(|document| document.summary.id == id.as_str()));
+}
+
+#[test]
+fn an_offset_is_compared_as_an_instant_not_as_text() {
+    // `2026-08-29T10:00:00+02:00` is 08:00 UTC — *before* 09:00Z — but sorts
+    // after it as a string, so a text comparison both kept it in an
+    // `after=09:00Z` filter and ordered it last.
+    let root = vault_with_times("offset-instants");
+    mutate::create_document(
+        &root,
+        NewDocument {
+            r#type: "note".to_owned(),
+            title: "Berlin Morning".to_owned(),
+            body: "b".to_owned(),
+            occurred_at: Some("2026-08-29T10:00:00+02:00".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (vault, base) = note_query(&root);
+
+    let after_nine = documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-29T09:00:00Z".to_owned()),
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    assert!(
+        !ids(&after_nine).contains(&"notes/berlin-morning"),
+        "08:00Z must not pass after=09:00Z: {:?}",
+        ids(&after_nine)
+    );
+
+    // And it does fall after 07:00Z.
+    let after_seven = documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-29T07:00:00Z".to_owned()),
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    assert!(ids(&after_seven).contains(&"notes/berlin-morning"));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn an_afternoon_up_to_a_day_is_a_range_not_an_inversion() {
+    // `after` with a clock and `before` as the day it falls in: ordinary "that
+    // afternoon". Comparing the spellings made `...T12:00:00Z` look later than
+    // `2026-08-29` and refused the query.
+    let root = vault_with_times("mixed-precision-range");
+    let (vault, base) = note_query(&root);
+
+    let afternoon = documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-29T12:00:00Z".to_owned()),
+            before: Some("2026-08-29".to_owned()),
+            order: Order::OccurredAt,
+            ..base.clone()
+        },
+    )
+    .expect("an afternoon-to-end-of-day range is not inverted");
+    assert_eq!(ids(&afternoon), vec!["notes/evening-of"]);
+
+    // A genuine inversion is still refused.
+    assert!(documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-30".to_owned()),
+            before: Some("2026-08-29".to_owned()),
+            ..base.clone()
+        },
+    )
+    .is_err());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn ordering_follows_the_instant_not_the_spelling() {
+    // 08:00 UTC written as `10:00+02:00` belongs before `09:00Z`, but sorts
+    // after it as text — so an `order = occurred_at` listing put it in the
+    // wrong place.
+    let root = vault_with_times("offset-ordering");
+    mutate::create_document(
+        &root,
+        NewDocument {
+            r#type: "note".to_owned(),
+            title: "Berlin Morning".to_owned(),
+            body: "b".to_owned(),
+            occurred_at: Some("2026-08-29T10:00:00+02:00".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (vault, base) = note_query(&root);
+
+    let ordered = documents(
+        &vault,
+        &DocumentQuery {
+            after: Some("2026-08-29".to_owned()),
+            before: Some("2026-08-29".to_owned()),
+            order: Order::OccurredAt,
+            ..base.clone()
+        },
+    )
+    .unwrap();
+
+    let listed = ids(&ordered);
+    let berlin = listed.iter().position(|id| *id == "notes/berlin-morning");
+    let morning = listed.iter().position(|id| *id == "notes/morning-of");
+    assert!(berlin < morning, "08:00Z must precede 09:00Z: {listed:?}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -197,6 +197,22 @@ pub fn create_document(root: impl AsRef<Path>, request: NewDocument) -> Result<C
             })?
         }
     };
+
+    // A legal placement is not necessarily a reachable one. Loading, validation
+    // and rebuilding walk only the folders `kataan.toml` maps, so a type that
+    // claims a folder with no mapping behind it gets documents written to disk
+    // that every read reports as missing — a create that returns 201 and an id
+    // the query layer denies exists. Refuse instead of acknowledging a
+    // document nothing can find.
+    if !crate::index::is_discoverable(&vault.index.type_folders, &base_folder) {
+        return Err(invalid_request(format!(
+            "type `{}` claims `{base_folder}`, but no `[type_folders]` entry in \
+             kataan.toml maps any folder containing it, so nothing would ever \
+             load it; add the mapping first",
+            request.r#type
+        )));
+    }
+
     validate_status(request.status.as_deref())?;
     validate_timestamp(request.occurred_at.as_deref())?;
     if let Some(reserved) = request
@@ -346,9 +362,14 @@ pub fn update_document(
     if !body_changed && sidecar == before {
         return Ok(());
     }
+    // Strictly later than the stamp this document already carried: that stamp
+    // is the token `expected_updated_at` checks against, so a write that left
+    // it unchanged let the *next* stale write pass its precondition too.
     sidecar.insert(
         "updated_at".to_owned(),
-        toml::Value::String(crate::time::iso8601_utc_now()),
+        toml::Value::String(crate::time::next_stamp_after(
+            record.metadata.updated_at.as_deref(),
+        )),
     );
 
     // Checked before either file is touched. The body used to be written first,
@@ -542,9 +563,14 @@ fn edit_edges(
         "last_updated_by".to_owned(),
         toml::Value::String(ACTOR_AGENT.to_owned()),
     );
+    // Advanced for the same reason an update advances it: an edge write changes
+    // the document, so a reader holding the old stamp must not still pass its
+    // precondition.
     sidecar.insert(
         "updated_at".to_owned(),
-        toml::Value::String(crate::time::iso8601_utc_now()),
+        toml::Value::String(crate::time::next_stamp_after(
+            source_record.metadata.updated_at.as_deref(),
+        )),
     );
 
     write_sidecar_table(&source_record.toml_path, &sidecar)?;

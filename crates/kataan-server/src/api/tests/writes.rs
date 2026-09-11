@@ -241,3 +241,44 @@ async fn write_routes_refuse_a_cross_site_request() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+// Holding a `MutexGuard` across an await is normally a deadlock waiting to
+// happen, which is why clippy refuses it — but holding it across one is the
+// entire experiment here: the assertion is that maintenance *cannot* proceed
+// while the lock is held. The handler runs on the blocking pool, so nothing
+// this task awaits depends on the guard being released.
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn maintenance_waits_for_the_writer_lock() {
+    // `rebuild-indexes` rewrites every folder index and sidecar checksum, so it
+    // is a writer: while only mutations took the lock, a rebuild could read a
+    // sidecar, a PATCH could be acknowledged, and the rebuild could then
+    // persist its older reconstruction over the top.
+    //
+    // Racing two real requests does not test this — the window between that
+    // read and its write is microseconds, and such a test passes whether or not
+    // the lock is taken, which makes it worse than no test. So the property
+    // itself is asserted: with the writer lock held, maintenance waits.
+    let root = test_vault();
+    let state = AppState::new(root.clone()).unwrap();
+
+    // Taken before the request is spawned, so the request cannot slip past.
+    let guard = state.lock_writes();
+    let app = router(state.clone());
+    let mut pending = tokio::spawn(async move {
+        json_request(app, "POST", "/api/rebuild-indexes", serde_json::json!({})).await
+    });
+
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(400), &mut pending)
+            .await
+            .is_err(),
+        "rebuild-indexes ran while the vault writer lock was held"
+    );
+
+    drop(guard);
+    let response = pending.await.expect("rebuild task");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    fs::remove_dir_all(&root).unwrap();
+}

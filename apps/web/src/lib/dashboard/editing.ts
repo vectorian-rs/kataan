@@ -82,7 +82,13 @@ export function cancelEditing() {
 /// would make the two mutually dependent — the exact shape that leaves one side
 /// holding an `undefined` binding at boot.
 export async function saveEditing(reopen: (id: string) => Promise<void>) {
-  if (!openDocument) return;
+  // Captured before the request, not read again after it. A save is a request
+  // about *this* document, and `openDocument` is whatever is on screen now —
+  // if the reader moved on while the PATCH was in flight, the completion used
+  // to reopen the new document and reset the draft someone had started in it.
+  const saving = openDocument;
+  if (!saving) return;
+
   // Body and metadata in one call: `update_document` applies them together, so
   // a save either lands whole or is refused whole.
   //
@@ -91,14 +97,28 @@ export async function saveEditing(reopen: (id: string) => Promise<void>) {
   // would mean no check at all, and the save could then overwrite an edit made
   // while this tab sat open.
   await updateDocument(
-    openDocument.id,
+    saving.id,
     { body: documentEditor.value, ...readMetadataForm() },
-    openDocument.updatedAt ?? '',
+    saving.updatedAt ?? '',
   );
+
+  // The write landed either way; the refresh is only for the reader. If this is
+  // no longer what the reader is showing, there is nothing here to refresh —
+  // and reopening would take over a document the user has since chosen.
+  if (openDocument !== saving) return;
 
   // Re-read rather than patching the DOM: the server re-renders the Markdown,
   // and `updated_at` has moved — keeping the stale one would make the *next*
   // save fail its own precondition.
   editing = false;
-  await reopen(openDocument.id);
+  await reopen(saving.id);
+}
+
+/// Whether a draft is open that a refresh would discard.
+///
+/// Re-selecting a document rebuilds the reader and the properties panel from
+/// disk, which is right for navigation and wrong for anything incidental — a
+/// theme change would otherwise throw away unsaved text.
+export function isEditing() {
+  return editing;
 }

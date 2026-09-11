@@ -27,7 +27,8 @@ pub struct AppState {
     // re-open it per request.
     pub search: Arc<SearchIndex>,
     pub watch: SharedWatchStatus,
-    /// Serializes vault mutations: one writer at a time.
+    /// Serializes everything that writes vault files or publishes a snapshot:
+    /// one at a time.
     ///
     /// `kataan_core::mutate` is read-modify-write on files, then a full index
     /// rebuild. Two HTTP writes racing could interleave a read of the old
@@ -35,8 +36,21 @@ pub struct AppState {
     /// MCP never needed this — it is one process over stdio, so its writes were
     /// already serial — but the HTTP surface is concurrent by construction.
     ///
-    /// Held only inside the blocking closure that performs the write, so
-    /// waiting writers park on the blocking pool rather than an async worker.
+    /// **A mutation is not the only writer.** `rebuild-indexes` rewrites every
+    /// folder index and sidecar checksum, and the filesystem watcher does the
+    /// same on its own thread. While only mutations took this lock, a rebuild
+    /// could read a sidecar, a `PATCH` could write and be acknowledged, and the
+    /// rebuild could then persist its older reconstruction over the top —
+    /// losing metadata the caller was told had been saved. `reload()` is
+    /// included for the same reason: it reads the vault and swaps in the
+    /// result, so an unlocked one can publish a snapshot older than the one
+    /// already published.
+    ///
+    /// Take it with [`AppState::lock_writes`] at an orchestration boundary
+    /// only. It is not reentrant.
+    ///
+    /// Held only inside the blocking closure that performs the work, so waiters
+    /// park on the blocking pool rather than an async worker.
     pub writes: Arc<std::sync::Mutex<()>>,
 }
 
@@ -53,6 +67,18 @@ impl AppState {
             watch: Arc::new(RwLock::new(WatchStatus::default())),
             writes: Arc::new(std::sync::Mutex::new(())),
         })
+    }
+
+    /// Take the vault writer lock for the duration of the returned guard.
+    ///
+    /// Poisoning is recovered rather than propagated: the mutex guards no data
+    /// — it is a `Mutex<()>` used purely for sequencing — so a panic in some
+    /// other writer leaves nothing corrupt behind, and failing every subsequent
+    /// write would turn one panic into a dead server.
+    pub fn lock_writes(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.writes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn reload(&self) -> kataan_core::Result<()> {

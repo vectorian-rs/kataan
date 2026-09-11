@@ -113,6 +113,38 @@ fn validate_type_registry(issues: &mut Vec<Diagnostic>, vault: &Vault, registry:
             );
         }
 
+        // A claim outside every mapped root points somewhere no read ever
+        // looks. Creation refuses such a placement now, but a vault can also
+        // reach this state by hand — and did: a `folders = ["decks"]` claim
+        // with no mapping validated clean while holding documents that every
+        // query reported as missing.
+        for claimed in &definition.folders {
+            // Only the literal head can be judged. A pattern like
+            // `*/presentations` may resolve under any root, so it is not
+            // knowable here — folder-level scopes place those.
+            let literal_head: Vec<&str> = claimed
+                .split('/')
+                .take_while(|segment| !segment.contains('*'))
+                .collect();
+            if literal_head.is_empty() {
+                continue;
+            }
+            let head = literal_head.join("/");
+            if !crate::index::is_discoverable(&vault.index.type_folders, &head) {
+                issues.push(
+                    Diagnostic::error(
+                        codes::UNSCANNABLE_TYPE_FOLDER,
+                        format!(
+                            "type definition `{ty}` claims `{claimed}`, but no kataan.toml \
+                             type_folders entry maps a folder containing \
+                             `{head}`, so documents there are never loaded"
+                        ),
+                    )
+                    .with_path(format!("type/{ty}.toml")),
+                );
+            }
+        }
+
         if let Some(parent) = &definition.extends {
             if !registry.contains(parent) {
                 issues.push(
