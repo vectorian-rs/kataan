@@ -72,6 +72,56 @@ pub(crate) fn ensure_walk_depth(path: &Path, depth: usize) -> Result<()> {
     Ok(())
 }
 
+/// Every regular file in the vault, vault-root-relative, honouring the vault's
+/// ignore rules and the folder-depth cap.
+///
+/// Unlike [`walk_type_folder`] this starts at the root and takes everything: a
+/// file is not typed and does not live under a type folder, so there is no
+/// mapping to walk. Documents are excluded by the caller, which is the only
+/// party that knows which Markdown and TOML files are a document pair.
+pub fn vault_files(root: &Path, ignore: &ScanIgnore) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    collect_files(root, Path::new(""), ignore, &mut files, 0)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_files(
+    root: &Path,
+    relative_folder: &Path,
+    ignore: &ScanIgnore,
+    files: &mut Vec<PathBuf>,
+    depth: usize,
+) -> Result<()> {
+    ensure_walk_depth(relative_folder, depth)?;
+    let folder_path = root.join(relative_folder);
+    for entry in std::fs::read_dir(&folder_path).map_err(|source| Error::Io {
+        path: folder_path.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| Error::Io {
+            path: folder_path.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            // Dotfiles are configuration for other tools, not vault content —
+            // and `.git` is the reason to say so explicitly.
+            continue;
+        }
+        if is_regular_dir(&path) {
+            if ignore.is_ignored(&path, true) {
+                continue;
+            }
+            collect_files(root, &relative_folder.join(name), ignore, files, depth + 1)?;
+        } else if is_regular_file(&path) && !ignore.is_ignored(&path, false) {
+            files.push(relative_folder.join(name));
+        }
+    }
+    Ok(())
+}
+
 fn walk_folder(
     root: &Path,
     relative_folder: &Path,

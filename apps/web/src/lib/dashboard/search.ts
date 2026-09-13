@@ -34,6 +34,8 @@ export interface SearchActions {
   restoreFolder: () => Promise<void>;
   openDocument: (id: string) => Promise<void>;
   openFolder: (id: string) => Promise<void>;
+  /// A file has no id — it is addressed by its path.
+  openFile: (path: string) => Promise<void>;
   run: (action: () => Promise<void>, options?: { owns?: 'document' }) => void;
 }
 
@@ -195,5 +197,10 @@ async function openSearchResult(result: SearchResult, actions: SearchActions) {
 
   if (result.kind === 'folder' && result.id) {
     await actions.openFolder(result.id);
+    return;
+  }
+
+  if (result.kind === 'file') {
+    await actions.openFile(result.path);
   }
 }

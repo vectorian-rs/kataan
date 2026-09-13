@@ -1,15 +1,15 @@
 # Kataan Search
 
 > **Status (1.0).** Keyword search is **shipped** in the `kataan-search` crate:
-> SQLite FTS5 / BM25 over Markdown documents and folder indexes (title, aliases,
-> labels, type/status, path ancestors, body) with the field weighting and
-> facets described below, exposed over the HTTP API and the MCP `search` tool.
-> The index is a rebuildable cache, not vault truth.
+> SQLite FTS5 / BM25 over Markdown documents, folder indexes, and plain text
+> files (title, aliases, labels, type/status, path ancestors, body) with the
+> field weighting and facets described below, exposed over the HTTP API, the
+> Web UI, and the MCP `search` tool. The index is a rebuildable cache, not
+> vault truth.
 >
-> **Not yet implemented (future):** artifact/PDF file indexing (only documents and
-> folder indexes are indexed today), the `[search]` config table, the dedicated
-> Web UI search surface, and semantic/vector search. Sections describing those
-> are design notes, not current behavior.
+> **Not yet implemented (future):** PDF and binary metadata indexing, the
+> `[search]` config table, and semantic/vector search. Sections describing
+> those are design notes, not current behavior.
 
 ## Summary
 
@@ -95,29 +95,40 @@ Index:
 - folder metadata
 - derived ancestors/facets
 
-### Artifacts/files
+### Files
 
-For non-document files, index metadata only unless the file is clearly text-like.
+A vault holds more than its documents. The files beside them — exported JSON
+records, CSV extracts, configuration, source — were unsearchable, so the answer
+to "where did that number come from?" was a `grep` outside the tool.
 
-Text-like artifacts that may be full-text indexed in v1:
+Text files are now indexed in full, as `kind = "file"` results, alongside
+documents and folders. A file is indexed when all of these hold:
 
-- standalone `.md`
-- standalone `.txt`
-- standalone `.toml`
-- `.json`
-- `.yaml` / `.yml`
-- source files if desired later, but code search is not required for the first pass
+- Its extension is on the allow-list in `crates/kataan-search/src/files.rs`:
+  data and markup (`txt`, `csv`, `tsv`, `json`, `yaml`, `yml`, `toml`, `xml`,
+  `rst`, `org`, `html`, `htm`, `astro`, `svg`) and source files. An allow-list,
+  not a deny-list — an unknown extension is far more likely to be a binary
+  nobody wants in the index than a text format worth adding, and adding one is
+  a line of code.
+- It is not a generated lockfile (`Cargo.lock`, `package-lock.json`,
+  `bun.lock`, …). These are large, they change constantly, and no one has ever
+  wanted one as a search result.
+- It is under 1 MiB and decodes as UTF-8. The cap keeps a single stray dump
+  from dominating the index; the decode check is what actually excludes
+  binaries whose extension slipped through.
+- It is not part of a document pair. A document's own `.md` and `.toml` are
+  already indexed as the document, and indexing them again would return the
+  same content twice under two kinds.
 
-For all artifacts, index:
+Ignore rules (`.gitignore`-style, plus the vault's own ignores) apply, so
+`node_modules`, `target`, and `.git` never reach the walk.
 
-- filename
-- vault-relative path
-- extension
-- kind/media category
-- containing folder ancestors
-- size
-- mtime
-- checksum
+Indexed for each file: filename as the title, vault-relative path, extension,
+containing folder ancestors, and the full text.
+
+Not yet indexed: binaries, and the metadata (size, mtime, checksum) that a
+metadata-only entry would carry. A file that cannot be read as text is skipped
+entirely rather than entered as a name.
 
 ### PDFs
 

@@ -217,6 +217,15 @@ const searchActions: SearchActions = {
     const stale = beginNavigation();
     await expandChain(id, stale);
   },
+  openFile: async (path) => {
+    // Straight to the file, without expanding the tree to it. A file can sit in
+    // a directory that is not a knowledgebase folder at all — the
+    // relationship-intelligence records live under a plain `data/` with no
+    // index pair — and asking for that folder is a 404, which used to replace
+    // the result with an error. The route is set so the file is linkable and
+    // survives a reload.
+    await selectFileByPath(path, beginNavigation(), true);
+  },
   run: (action, options) => void runAction(action, options),
 };
 
@@ -667,12 +676,12 @@ async function expandChain(folder: string, stale: Stale) {
 /// Only the path survives in a URL, so the rest of `FolderFile` is derived from
 /// it — `selectFile` needs the extension to decide whether the preview can be
 /// syntax-highlighted.
-async function selectFileByPath(path: string, stale: Stale) {
+async function selectFileByPath(path: string, stale: Stale, updateUrl = false) {
   const name = path.split('/').pop() ?? path;
   const dot = name.lastIndexOf('.');
   await selectFile(
     { name, path, extension: dot > 0 ? name.slice(dot + 1) : undefined },
-    { stale, updateUrl: false },
+    { stale, updateUrl },
   );
 }
 

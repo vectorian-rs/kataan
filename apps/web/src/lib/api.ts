@@ -182,10 +182,7 @@ export type TomlSchemaResponse = Infer<typeof tomlSchemaResponse>;
 
 export type SearchQuery = {
   q?: string;
-  /// Only the two the index can hold. `kataan_search::Kind` is `Folder |
-  /// Document`, so asking for `file` matched nothing and looked like an empty
-  /// vault rather than an impossible filter.
-  kind?: 'document' | 'folder';
+  kind?: 'document' | 'folder' | 'file';
   type?: string;
   status?: string;
   facet?: string;
@@ -195,7 +192,7 @@ export type SearchQuery = {
 };
 
 const searchResult = object({
-  kind: literals('document', 'folder'),
+  kind: literals('document', 'folder', 'file'),
   id: optional(string),
   path: string,
   title: optional(string),
@@ -225,6 +222,7 @@ const searchStatus = object({
   item_count: number,
   document_count: number,
   folder_count: number,
+  file_count: number,
   last_indexed_at: optional(string),
 });
 export type SearchStatus = Infer<typeof searchStatus>;
@@ -235,6 +233,7 @@ const searchReindexResponse = object({
   item_count: number,
   document_count: number,
   folder_count: number,
+  file_count: number,
   indexed_at: string,
 });
 export type SearchReindexResponse = Infer<typeof searchReindexResponse>;

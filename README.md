@@ -105,7 +105,7 @@ Tools exposed by `kataan-mcp`:
 
 | Tool | Kind | Arguments | Description |
 | --- | --- | --- | --- |
-| `search` | read | `q?`, `kind?`, `type?`, `status?`, `facet?`, `path_prefix?`, `limit?`, `offset?` | Full-text keyword search across the vault. All filters are optional. |
+| `search` | read | `q?`, `kind?`, `type?`, `status?`, `facet?`, `path_prefix?`, `limit?`, `offset?` | Full-text keyword search across the vault — documents, folders, and text files. All filters are optional; `kind` narrows to one of `document`, `folder`, `file`. |
 | `get_document` | read | `id` | Fetch one document's metadata, Markdown body, ancestors, and facets by canonical id, e.g. `notes/my-note`. |
 | `list_folders` | read | none | Return the vault's type-to-folder mapping. |
 | `get_folder` | read | `id` | List direct child folders and documents under a folder id, e.g. `notes`. |

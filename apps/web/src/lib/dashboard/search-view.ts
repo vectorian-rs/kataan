@@ -9,7 +9,12 @@ export function renderSearchStatus(status: SearchStatus) {
     return;
   }
 
-  searchStatusEl.textContent = `Search ready · ${status.item_count} items`;
+  // Files are roughly half a working vault's index, so the breakdown is worth
+  // the space: "1641 items" alone does not tell you whether files are in it.
+  searchStatusEl.textContent =
+    status.file_count > 0
+      ? `Search ready · ${status.item_count} items · ${status.file_count} files`
+      : `Search ready · ${status.item_count} items`;
 }
 
 export function setSearchStatusMessage(message: string) {

@@ -59,6 +59,7 @@ pub struct SearchStatus {
     pub item_count: usize,
     pub document_count: usize,
     pub folder_count: usize,
+    pub file_count: usize,
     pub last_indexed_at: Option<String>,
 }
 
@@ -69,6 +70,7 @@ pub struct ReindexResponse {
     pub item_count: usize,
     pub document_count: usize,
     pub folder_count: usize,
+    pub file_count: usize,
     pub indexed_at: String,
 }
 
@@ -139,6 +141,7 @@ impl SearchIndex {
                 item_count: 0,
                 document_count: 0,
                 folder_count: 0,
+                file_count: 0,
                 last_indexed_at: None,
             });
         }
@@ -169,6 +172,7 @@ impl SearchIndex {
         let mut item_count = 0usize;
         let mut document_count = 0usize;
         let mut folder_count = 0usize;
+        let mut file_count = 0usize;
 
         for record in loaded.documents.values() {
             let markdown = loaded
@@ -181,7 +185,14 @@ impl SearchIndex {
             match item.kind {
                 Kind::Folder => folder_count += 1,
                 Kind::Document => document_count += 1,
+                Kind::File => file_count += 1,
             }
+        }
+
+        for item in file_items(loaded)? {
+            insert_item(&transaction, &item)?;
+            item_count += 1;
+            file_count += 1;
         }
 
         transaction.execute(
@@ -196,6 +207,7 @@ impl SearchIndex {
             item_count,
             document_count,
             folder_count,
+            file_count,
             indexed_at,
         })
     }
@@ -353,6 +365,7 @@ impl SearchIndex {
             item_count: counts.values().sum(),
             document_count: count_of(Kind::Document.as_str()),
             folder_count: count_of(Kind::Folder.as_str()),
+            file_count: count_of(Kind::File.as_str()),
             last_indexed_at: metadata_value(&connection, "last_indexed_at")?,
         })
     }
@@ -381,6 +394,7 @@ impl SearchIndex {
     }
 }
 
+mod files;
 mod sql;
 
 use sql::*;
@@ -389,6 +403,13 @@ use sql::*;
 enum Kind {
     Folder,
     Document,
+    /// A file in the vault that is not part of a document pair.
+    ///
+    /// A file has no canonical id — it is addressed by its path, which is why
+    /// `SearchResult::id` is optional and `path` is not. The index schema was
+    /// built this way from the start, `extension` included; nothing ever
+    /// produced one.
+    File,
 }
 
 impl Kind {
@@ -403,6 +424,7 @@ impl Kind {
         match self {
             Kind::Folder => "folder",
             Kind::Document => "document",
+            Kind::File => "file",
         }
     }
 }
@@ -424,6 +446,36 @@ struct SearchItem {
 }
 
 impl SearchItem {
+    /// An index entry for a plain file.
+    ///
+    /// No id, because a file has none: it is addressed by its path. The title
+    /// is the filename, which is what a person searching for `responsibility
+    /// split.pdf` actually types.
+    fn from_file(relative: &std::path::Path, body: String) -> Self {
+        let path = relative.to_string_lossy().replace('\\', "/");
+        let title = relative
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string());
+        let extension = relative
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_owned);
+        Self {
+            item_key: Kind::File.item_key(&path),
+            kind: Kind::File,
+            id: None,
+            path,
+            title,
+            type_name: None,
+            status: None,
+            extension,
+            aliases: String::new(),
+            facets: Vec::new(),
+            metadata: String::new(),
+            body,
+        }
+    }
+
     fn from_document_record(
         loaded: &LoadedVault,
         record: &DocumentRecord,
@@ -564,6 +616,44 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+/// Index entries for every file in the vault that is not part of a document.
+///
+/// A document's Markdown and TOML are already indexed as the document, so they
+/// are excluded here rather than counted twice. Everything else is a file: the
+/// PDFs, the source, the JSON records — roughly half the text in a working
+/// vault, and none of it was searchable.
+fn file_items(loaded: &LoadedVault) -> Result<Vec<SearchItem>> {
+    let ignore = kataan_core::scan::ScanIgnore::load(&loaded.root, &loaded.index.scan)?;
+    let owned: std::collections::BTreeSet<PathBuf> = loaded
+        .documents
+        .values()
+        .flat_map(|record| [record.markdown_path.clone(), record.toml_path.clone()])
+        .collect();
+
+    let mut items = Vec::new();
+    for relative in kataan_core::walk::vault_files(&loaded.root, &ignore)? {
+        let full = loaded.root.join(&relative);
+        if owned.contains(&full) || !files::is_indexable(&relative) {
+            continue;
+        }
+        // Read the head of the file, not all of it: one generated blob should
+        // not be able to dominate the index.
+        let Ok(metadata) = std::fs::metadata(&full) else {
+            continue;
+        };
+        if metadata.len() > files::MAX_INDEXED_FILE_BYTES {
+            continue;
+        }
+        // Binary content that slipped past the extension check reads as invalid
+        // UTF-8; skipping is better than indexing mojibake.
+        let Ok(body) = std::fs::read_to_string(&full) else {
+            continue;
+        };
+        items.push(SearchItem::from_file(&relative, body));
+    }
+    Ok(items)
+}
 
 /// Every folder id above `id`, nearest first.
 ///

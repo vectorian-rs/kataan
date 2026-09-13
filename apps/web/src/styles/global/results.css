@@ -77,6 +77,10 @@
   color: var(--info);
 }
 
+.search-kind-file {
+  color: var(--muted-strong, var(--muted));
+}
+
 .search-result-path {
   overflow: hidden;
   text-overflow: ellipsis;
