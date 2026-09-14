@@ -6,6 +6,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
@@ -16,23 +17,23 @@ use crate::{state::AppState, watch::WatchStatus};
 pub use error::{core_error, ApiError};
 pub use write::{add_edge, create_document, remove_edge, replace_edges, update_document};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct HealthResponse {
     pub ok: bool,
     pub loaded: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct OkResponse {
     pub ok: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct FoldersResponse {
     pub folders: Vec<FolderSummaryResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct FolderSummaryResponse {
     pub r#type: String,
     pub folder: String,
@@ -41,7 +42,7 @@ pub struct FolderSummaryResponse {
     pub document_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct CanonicalFolderResponse {
     pub id: String,
     pub metadata: Option<kataan_core::document::DocumentMetadata>,
@@ -51,14 +52,14 @@ pub struct CanonicalFolderResponse {
     pub files: Vec<FolderFileResponse>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct FolderChildResponse {
     pub id: String,
     pub name: String,
     pub has_index: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct FolderDocumentResponse {
     pub id: String,
     pub slug: String,
@@ -66,14 +67,14 @@ pub struct FolderDocumentResponse {
     pub toml: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct FolderFileResponse {
     pub name: String,
     pub path: String,
     pub extension: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct DocumentResponse {
     pub id: String,
     pub type_folder: String,
@@ -82,16 +83,35 @@ pub struct DocumentResponse {
     pub html: String,
 }
 
-#[derive(Debug, Serialize)]
+/// What the file route can do with a file, which decides how the client shows
+/// it.
+///
+/// Typed rather than a `&'static str` because the web client switches on it:
+/// a value it does not know renders as nothing, and the previous arrangement
+/// let the server add one without the client's list of kinds being any the
+/// wiser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FileKind {
+    Html,
+    Json,
+    Text,
+    Image,
+    Pdf,
+    /// Readable as bytes, but there is nothing useful to render.
+    Unsupported,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct FileResponse {
     pub path: String,
     pub name: String,
     pub extension: Option<String>,
-    pub kind: String,
+    pub kind: FileKind,
     pub content: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct HighlightResponse {
     pub path: String,
     pub name: String,
@@ -105,7 +125,7 @@ pub struct PathQuery {
     pub path: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct ValidateResponse {
     pub ok: bool,
     pub diagnostics: Vec<DiagnosticResponse>,
@@ -143,9 +163,9 @@ pub struct FileQuery {
     pub theme: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DiagnosticResponse {
-    pub severity: String,
+    pub severity: kataan_core::diagnostic::Severity,
     pub code: String,
     pub message: String,
     pub path: Option<String>,
@@ -154,7 +174,10 @@ pub struct DiagnosticResponse {
 impl From<&kataan_core::diagnostic::Diagnostic> for DiagnosticResponse {
     fn from(diagnostic: &kataan_core::diagnostic::Diagnostic) -> Self {
         Self {
-            severity: format!("{:?}", diagnostic.severity).to_lowercase(),
+            // Serialized by serde, not by `Debug`: the wire spelling of a
+            // severity is now a property of the enum rather than of how it
+            // happens to print.
+            severity: diagnostic.severity,
             code: diagnostic.code.clone(),
             message: diagnostic.message.clone(),
             path: diagnostic.path.clone(),

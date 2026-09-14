@@ -9,6 +9,7 @@ use kataan_core::{
     vault::{DocumentRecord, LoadedVault},
 };
 use rusqlite::{params, Connection};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -24,17 +25,28 @@ pub struct SearchQuery {
     pub offset: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchResponse {
     pub query: String,
-    pub mode: String,
+    pub mode: SearchMode,
     pub results: Vec<SearchResult>,
     pub facets: Vec<SearchFacetCount>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// How the results were found.
+///
+/// One variant today. It is an enum rather than a `&str` because the field is
+/// published, and the point at which a second mode arrives is the point at
+/// which every reader needs to know there are two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchMode {
+    Keyword,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchResult {
-    pub kind: String,
+    pub kind: Kind,
     pub id: Option<String>,
     pub path: String,
     pub title: Option<String>,
@@ -46,13 +58,13 @@ pub struct SearchResult {
     pub score: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct SearchFacetCount {
     pub facet: String,
     pub count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchStatus {
     pub index_path: String,
     pub exists: bool,
@@ -63,7 +75,7 @@ pub struct SearchStatus {
     pub last_indexed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReindexResponse {
     pub ok: bool,
     pub index_path: String,
@@ -331,7 +343,7 @@ impl SearchIndex {
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
             let facets = facets_for_item(&connection, &row.item_key)?;
-            results.push(row.into_result(facets));
+            results.push(row.into_result(facets)?);
         }
 
         // Counted over the whole filtered match set, not the page just
@@ -348,7 +360,7 @@ impl SearchIndex {
 
         Ok(SearchResponse {
             query: raw_query,
-            mode: "keyword".to_owned(),
+            mode: SearchMode::Keyword,
             facets,
             results,
         })
@@ -399,8 +411,16 @@ mod sql;
 
 use sql::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+/// What an index item represents.
+///
+/// Public and typed, because it is published: it is `SearchResult::kind` on the
+/// wire, a filter value in `SearchQuery`, and a rendered badge in the web UI.
+/// It was a bare `String` on the response until the web client had to be
+/// hand-edited to learn about `File` — the client's list of kinds could be
+/// stricter than the server's type without anything noticing (#45).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
     Folder,
     Document,
     /// A file in the vault that is not part of a document pair.
@@ -420,11 +440,26 @@ impl Kind {
         format!("{}:{id}", self.as_str())
     }
 
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Kind::Folder => "folder",
             Kind::Document => "document",
             Kind::File => "file",
+        }
+    }
+
+    /// Read a kind back from the index.
+    ///
+    /// The index is a cache this crate writes itself, so an unrecognised value
+    /// means a row from an older schema or a corrupted database. Returning
+    /// `None` lets the caller say which, rather than guessing a kind and
+    /// returning a result that renders as something it is not.
+    fn from_str(raw: &str) -> Option<Self> {
+        match raw {
+            "folder" => Some(Kind::Folder),
+            "document" => Some(Kind::Document),
+            "file" => Some(Kind::File),
+            _ => None,
         }
     }
 }

@@ -13,7 +13,7 @@ use crate::{
     vault::LoadedVault,
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct TomlSchemaResponse {
     pub kind: String,
     pub schema: Value,
@@ -30,7 +30,7 @@ pub struct TomlSchemaResponse {
     pub node_schema: Option<NodeSchema>,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
 pub struct SchemaConstraints {
     pub allowed_status: Vec<String>,
     pub allowed_actors: Vec<String>,
@@ -165,14 +165,14 @@ fn inline_table(schema: &FieldSchema) -> String {
 /// of it before writing anything, instead of discovering the rules by being
 /// rejected. `links` mirrors the shape of `query::subgraph`, so the same code
 /// that reads the data graph reads the type graph.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct OntologyResponse {
     pub types: Vec<OntologyType>,
     pub edges: Vec<OntologyEdge>,
     pub links: Vec<OntologyLink>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct OntologyType {
     pub name: String,
     /// The supertype, if any. A subtype satisfies any rule written for its
@@ -197,7 +197,7 @@ pub struct OntologyType {
     pub folder_index_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct OntologyEdge {
     pub predicate: String,
     pub from: Vec<String>,
@@ -213,7 +213,7 @@ pub struct OntologyEdge {
 
 /// One legal `source --predicate--> target` at the *type* level: what may be
 /// connected to what, as opposed to what currently is.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct OntologyLink {
     pub source: String,
     pub predicate: String,

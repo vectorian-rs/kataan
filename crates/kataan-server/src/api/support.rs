@@ -32,17 +32,17 @@ pub(super) fn format_megabytes(bytes: u64) -> String {
 
 pub(super) fn file_response(state: &AppState, path: &str) -> Result<FileResponse, ApiError> {
     let file = resolve_vault_file(state, path)?;
-    let kind = file_kind(file.extension.as_deref()).to_owned();
-    let content = match kind.as_str() {
-        "html" | "json" | "text" => {
+    let kind = file_kind(file.extension.as_deref());
+    let content = match kind {
+        FileKind::Html | FileKind::Json | FileKind::Text => {
             ensure_preview_size(path, &file.full_path, MAX_TEXT_PREVIEW_BYTES)?;
             read_text_file(&file.full_path)?
         }
-        "image" | "pdf" => {
+        FileKind::Image | FileKind::Pdf => {
             ensure_preview_size(path, &file.full_path, MAX_RAW_PREVIEW_BYTES)?;
             String::new()
         }
-        _ => String::new(),
+        FileKind::Unsupported => String::new(),
     };
 
     Ok(FileResponse {
@@ -247,21 +247,21 @@ pub(super) fn read_text_file(path: &std::path::Path) -> Result<String, ApiError>
     })
 }
 
-pub(super) fn file_kind(extension: Option<&str>) -> &'static str {
+pub(super) fn file_kind(extension: Option<&str>) -> FileKind {
     match extension {
-        Some("html") | Some("htm") => "html",
-        Some("json") => "json",
-        Some("svg") => "image",
-        Some("pdf") => "pdf",
+        Some("html") | Some("htm") => FileKind::Html,
+        Some("json") => FileKind::Json,
+        Some("svg") => FileKind::Image,
+        Some("pdf") => FileKind::Pdf,
         // Anything the highlighter understands is text, so the two routes
         // cannot disagree about whether a file is previewable.
-        Some("md" | "txt") => "text",
+        Some("md" | "txt") => FileKind::Text,
         Some(extension)
             if crate::api::render::highlight_language_name(Some(extension)).is_some() =>
         {
-            "text"
+            FileKind::Text
         }
-        _ => "unsupported",
+        _ => FileKind::Unsupported,
     }
 }
 

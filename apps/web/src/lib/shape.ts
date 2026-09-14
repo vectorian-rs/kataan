@@ -41,6 +41,12 @@ export const boolean: Shape<boolean> = (value, path) =>
 export const record: Shape<Record<string, unknown>> = (value, path) =>
   isObject(value) ? value : fail(path, 'object', value);
 
+/// Any JSON at all.
+///
+/// What a `serde_json::Value` field becomes: the server promises nothing about
+/// its shape, so there is nothing to check and the caller has to narrow it.
+export const json: Shape<unknown> = (value) => value;
+
 /// Absent, `null`, or the inner shape. Rust's `Option<T>` serializes as an
 /// absent key or a `null`, so both mean the same thing here.
 export function optional<T>(inner: Shape<T>): Shape<T | undefined> {
@@ -88,6 +94,18 @@ export function object<F extends Fields>(fields: F): Shape<FromFields<F>> {
     // would be a worse failure than the one this guards against.
     return { ...value, ...checked } as FromFields<F>;
   };
+}
+
+/// An object with the declared fields *and* arbitrary others.
+///
+/// What `#[serde(flatten)]` produces on the Rust side: a document's metadata
+/// carries the keys kataan defines plus whatever the author wrote beside them.
+/// Identical to `object` at run time — both carry unknown keys through — but
+/// the type says the extras are there, so reading one is not a type error.
+export function openObject<F extends Fields>(
+  fields: F,
+): Shape<FromFields<F> & Record<string, unknown>> {
+  return object(fields) as Shape<FromFields<F> & Record<string, unknown>>;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

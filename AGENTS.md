@@ -89,6 +89,23 @@ in two places, where one was updated and the other was not.
 Extract the rule, or accept that the copies will diverge. There is no third
 outcome.
 
+The web client's response validators were the largest instance: two dozen
+TypeScript mirrors of Rust structs, correct only by convention. They are now
+emitted from the structs by `crates/kataan-server/src/shapes.rs`, into
+`apps/web/src/lib/api-shapes.generated.ts`. **Change a type a handler returns
+and that test fails** — regenerate with:
+
+```sh
+KATAAN_UPDATE_SHAPES=1 cargo test -p kataan-server shapes
+```
+
+Then read the diff before committing it: a field that changed type or vanished
+is a breaking change for the app, and `astro check` will say where. Adding an
+endpoint means adding its response type to `roots()`; nested types come along on
+their own. The generated file is excluded from prettier, because a formatter
+rewriting it would put the checked-in copy permanently at odds with the
+emitter.
+
 ## The vault is live
 
 `~/code/home/knowledgebase/snuffbox` is real, in use, and edited while you work.
@@ -105,12 +122,18 @@ outcome.
 - Expect it to change under you. Files move mid-session; a 404 is as likely to
   be the vault as the code.
 
-## The frontend has no test harness
+## The frontend is only partly testable
 
-`astro check` type-checks and nothing else. Behaviour is verified by driving a
-real browser against a real vault. Assert on observable state — the URL, the
-breadcrumb, computed styles, `history.length` — and re-check after a reload,
-because "it works until you refresh" is the common frontend failure here.
+Three things run in the gate: `astro check` for types, `bun test` for the
+DOM-free logic (value round-trips, and a contract test that boots a real server
+and runs every response shape against its real response), and the generated
+shapes above for agreement with Rust.
+
+None of that covers behaviour. Anything involving the DOM, routing, or what a
+click does is verified by driving a real browser against a real vault. Assert on
+observable state — the URL, the breadcrumb, computed styles, `history.length` —
+and re-check after a reload, because "it works until you refresh" is the common
+frontend failure here.
 
 When a refactor must not change behaviour, prove it rather than eyeballing it.
 The stylesheet split asserted that the built bundle was byte-identical: same

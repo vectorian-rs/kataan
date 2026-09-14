@@ -7,11 +7,10 @@
 
 use std::collections::BTreeMap;
 
+use anyhow::Context;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use crate::Result;
-
-use crate::{blank_as_none, SearchFacetCount, SearchItem, SearchQuery, SearchResult};
+use crate::{blank_as_none, Kind, Result, SearchFacetCount, SearchItem, SearchQuery, SearchResult};
 
 /// Pragmas for every freshly-opened connection: WAL so readers never block on
 /// the reindex writer, and a busy timeout so concurrent writers wait-and-retry
@@ -22,9 +21,7 @@ pub(crate) fn configure_connection(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// The kind of thing an index item represents. Serializes to the exact wire
-/// strings the API and web UI depend on (`"folder"`/`"document"`).
-
+/// One row as SQLite hands it back, before its `kind` has been recognised.
 #[derive(Debug, Clone)]
 pub(crate) struct SearchRow {
     pub(crate) item_key: String,
@@ -40,9 +37,21 @@ pub(crate) struct SearchRow {
 }
 
 impl SearchRow {
-    pub(crate) fn into_result(self, facets: Vec<String>) -> SearchResult {
-        SearchResult {
-            kind: self.kind,
+    /// Fails on a `kind` this build does not know, rather than passing the
+    /// string through. The index is this crate's own cache, so an unknown value
+    /// is a stale schema or a corrupt database — and the alternative is a
+    /// result the web client then refuses at its own boundary, much further
+    /// from the cause.
+    pub(crate) fn into_result(self, facets: Vec<String>) -> Result<SearchResult> {
+        let kind = Kind::from_str(&self.kind).with_context(|| {
+            format!(
+                "search index holds an unknown item kind `{}` for `{}`; \
+                 rebuild the index with `kataan-cli search reindex`",
+                self.kind, self.path
+            )
+        })?;
+        Ok(SearchResult {
+            kind,
             id: self.id,
             path: self.path,
             title: self.title,
@@ -52,7 +61,7 @@ impl SearchRow {
             facets,
             snippet: self.snippet,
             score: self.score,
-        }
+        })
     }
 }
 

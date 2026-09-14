@@ -1,2 +1,7 @@
 dist
 .astro
+
+# Emitted from the Rust response types by crates/kataan-server/src/shapes.rs.
+# The emitter decides how it looks; a formatter rewriting it would put the
+# checked-in file permanently at odds with what the generator produces.
+src/lib/api-shapes.generated.ts

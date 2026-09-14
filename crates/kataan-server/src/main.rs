@@ -6,6 +6,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 mod api;
 mod ignore;
+#[cfg(test)]
+mod shapes;
 mod state;
 #[cfg(feature = "embed-ui")]
 mod ui;
