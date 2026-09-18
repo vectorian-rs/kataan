@@ -81,6 +81,24 @@ run = [
   "cargo install --locked --path crates/kataan-server --force",
 ]
 
+[tasks.install-bins]
+description = "Build the UI and install all three binaries into ~/.cargo/bin"
+# What `~/bin/kataan-{server,cli,mcp}` symlink to, so this one command updates
+# whatever the shell resolves. They used to be copies, and `~/bin` precedes
+# `~/.cargo/bin` on PATH — so `cargo install` appeared to work while the
+# binaries actually being run stayed 37 commits behind for two weeks.
+#
+# Install rather than copy: `cargo install` renames into place, while writing
+# over a Mach-O binary that already exists invalidates its code signature and
+# macOS kills the result with SIGKILL and no output.
+run = [
+  "bun install",
+  "bun --filter @kataan/web build",
+  "cargo install --locked --path crates/kataan-server --force",
+  "cargo install --locked --path crates/kataan-cli --force",
+  "cargo install --locked --path crates/kataan-mcp --force",
+]
+
 [tasks.check-release]
 description = "Prove the release binary actually carries the web UI"
 # `rust-embed` reads `apps/web/dist` from disk in debug and bakes it in with

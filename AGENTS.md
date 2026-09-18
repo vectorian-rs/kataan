@@ -160,6 +160,15 @@ size, same md5, same content hash.
   edges. The same fact is why rewriting one from a projecting struct is data
   loss: `FolderIndexToml` models nine keys, so a rebuild deleted the `status`,
   `labels` and `[edges]` an author had every right to put there.
+- **An install is not an install until `which -a` agrees.** `cargo install`
+  writes to `~/.cargo/bin`, which loses to any earlier `PATH` entry. A copy in
+  `~/bin` shadowed it for two weeks: reinstalling reported success, the running
+  server stayed 37 commits behind, and the symptom was a UI bug that could not
+  be reproduced from source. Verify the binary being run, not the one written.
+- **Copying over a Mach-O binary invalidates its code signature.** macOS then
+  kills it with SIGKILL — exit 137, no output, not even from `--help`, which
+  reads as a hung or broken build. `rm` first, or let `cargo install` rename it
+  into place.
 - **Rendering a parsed value tree is not a round trip.** `toml::Value` does not
   carry comments, blank lines, or whether an array was inline, and a projecting
   struct does not carry keys it has never heard of. Both losses are silent and

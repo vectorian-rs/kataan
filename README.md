@@ -68,9 +68,17 @@ nothing run from the repo at runtime.
 # Build the UI, then install the server with the UI embedded into ~/.cargo/bin
 mise run install-server
 
+# Or install all three binaries (server, cli, mcp) at once
+mise run install-bins
+
 # Run it — open http://127.0.0.1:3001
 kataan-server --vault /path/to/vault
 ```
+
+Check what your shell actually resolves before concluding an install took
+effect: `which -a kataan-server`. If an earlier `PATH` entry holds its own copy,
+`cargo install` writes a binary nothing runs. Symlinking that entry to
+`~/.cargo/bin/kataan-server` makes one install command update every name.
 
 `mise run build-app` produces the same binary at `target/release/kataan-server`
 without installing. In debug builds the assets are read from `apps/web/dist` at
