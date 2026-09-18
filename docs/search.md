@@ -332,22 +332,38 @@ For the first implementation, manual rebuild is acceptable.
 2. Index every document from `LoadedVault`.
 3. Write the `last_indexed_at` metadata and commit.
 
-It returns `ok`, `index_path`, item/document/folder counts, and `indexed_at`.
-(Artifact files are not indexed yet.)
+It returns `ok`, `index_path`, item/document/folder/file counts, and
+`indexed_at`.
 
 ### Incremental updates
 
-Not yet implemented — reindex is a full rebuild triggered manually via
-`POST /api/search/reindex`. The per-row checksum column that this design needs was
-removed as unused scaffolding and will be reintroduced when incremental indexing
-is built. The intended checksum-based flow:
+**Implemented for writes.** A write through the API or MCP calls
+`refresh_document_tree`, which re-indexes the document it changed and each of
+its ancestors, rather than rebuilding the whole index. Editing one document
+used to cost a full reindex of the vault.
 
-- unchanged checksum: skip
-- changed file: delete old item/chunks and reindex
-- deleted file: delete search rows
-- moved file/document: delete old key and insert new key
+Per document it deletes and reinserts, which needs no checksum:
 
-Until then, full reindex is simpler and acceptable.
+- gone from the vault: the deletes are the whole update
+- changed: delete then insert from the current record
+- changed folder status: deleted under *both* `document:` and `folder:` keys,
+  because a document that became a folder index is indexed under the other
+  spelling and the key derived from the current record can never be that one
+- ancestors too: a new nested document makes its parent folder exist for the
+  first time, and every ancestor's folder checksum changes
+
+It refuses to amend an index that was never built — opening a connection
+creates an empty schema, so "the file exists" is not the same question as "this
+index has contents", and amending an empty one would leave the vault with
+exactly one searchable document and nothing to trigger a rebuild. When it
+refuses, the caller falls back to a full reindex — both write surfaces do this,
+so neither can be the one that forgets.
+
+**Not incremental:** changes made outside the API (an editor, `git pull`) and
+files. Those need `POST /api/search/reindex`, a full rebuild. A checksum column
+that would let a rebuild skip unchanged rows was removed as unused scaffolding;
+full reindex takes about half a second on a 1700-item vault, so there has been
+no reason to reintroduce it.
 
 ## Configuration
 
