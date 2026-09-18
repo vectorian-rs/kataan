@@ -43,9 +43,24 @@ async fn main() {
     watch::spawn_watcher(state.clone());
 
     let app = api::router(state);
-    let listener = tokio::net::TcpListener::bind(&cli.bind)
-        .await
-        .expect("bind server");
+    let listener = match tokio::net::TcpListener::bind(&cli.bind).await {
+        Ok(listener) => listener,
+        // The common one, and the one worth naming: a server is already up.
+        // Panicking here printed a Rust backtrace hint for what is an ordinary
+        // operational condition, and said nothing about what to do next.
+        Err(source) if source.kind() == std::io::ErrorKind::AddrInUse => {
+            error!(
+                bind = %cli.bind,
+                "address already in use — something is already listening there. \
+                 Stop it (`pgrep -fl kataan-server`), or pass a free port with --bind."
+            );
+            std::process::exit(1);
+        }
+        Err(source) => {
+            error!(bind = %cli.bind, error = %source, "failed to bind");
+            std::process::exit(1);
+        }
+    };
     info!(bind = %cli.bind, api = %format!("http://{}", cli.bind), "kataan-server API listening");
     #[cfg(feature = "embed-ui")]
     info!(url = %format!("http://{}", cli.bind), "embedded web UI available");
@@ -55,7 +70,10 @@ async fn main() {
         command = "bun run dev:web",
         "web UI is not embedded in this binary; run the web dev server separately"
     );
-    axum::serve(listener, app).await.expect("serve");
+    if let Err(source) = axum::serve(listener, app).await {
+        error!(error = %source, "server stopped");
+        std::process::exit(1);
+    }
 }
 
 fn init_tracing() {

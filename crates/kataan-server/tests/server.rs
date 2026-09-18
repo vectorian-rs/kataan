@@ -93,6 +93,54 @@ fn server_binary_boots_and_serves_the_api() {
     drop(server);
 }
 
+/// A port already in use is an error, not a panic.
+///
+/// Starting a second server on the default port is the most ordinary mistake
+/// there is — the first one is usually still running. It used to `expect("bind
+/// server")`, so the answer was a Rust panic and a note about
+/// `RUST_BACKTRACE`, which says nothing about what to do and reads as a crash
+/// in the tool rather than a condition on the machine.
+#[test]
+fn a_port_already_in_use_exits_with_a_message_not_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    kataan_core::init::init_vault(&vault, "Test Vault").unwrap();
+
+    // Hold the port from the test process itself, so what the server collides
+    // with is not another server it might race with.
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").expect("occupy a port");
+    let addr = occupied.local_addr().expect("local addr").to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kataan-server"))
+        .args(["--vault"])
+        .arg(&vault)
+        .args(["--bind", &addr])
+        .output()
+        .expect("run kataan-server");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "expected a clean exit 1, got {:?}. stderr: {stderr}",
+        output.status
+    );
+    assert!(
+        !stderr.contains("panicked"),
+        "a port in use must not panic. stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("address already in use"),
+        "the message must name the problem. stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("--bind"),
+        "the message must say what to do about it. stderr: {stderr}"
+    );
+
+    drop(occupied);
+}
+
 /// Heavy requests must not stall unrelated ones.
 ///
 /// Every handler used to do its filesystem and CPU work directly on the tokio
