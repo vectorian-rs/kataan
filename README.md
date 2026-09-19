@@ -65,10 +65,8 @@ serves both the API and the UI on a single port — no separate web process, and
 nothing run from the repo at runtime.
 
 ```sh
-# Build the UI, then install the server with the UI embedded into ~/.cargo/bin
-mise run install-server
-
-# Or install all three binaries (server, cli, mcp) at once
+# Build the UI, then install all three binaries — server (with the UI
+# embedded), cli and mcp — into ~/.cargo/bin
 mise run install-bins
 
 # Run it — open http://127.0.0.1:3001
