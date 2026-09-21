@@ -232,7 +232,15 @@ fn parse_full_date(raw: &str) -> Result<Precision, TimestampError> {
     let [year, month, day] = parts[..] else {
         return Err(unparseable());
     };
-    if year.len() != 4 || month.len() != 2 || day.len() != 2 {
+    if year.len() != 4
+        || month.len() != 2
+        || day.len() != 2
+        // Integer parsing accepts a leading '+', but RFC 3339 does not.
+        // Enforce its grammar before accepting a value that span() reparses.
+        || ![year, month, day]
+            .iter()
+            .all(|part| part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
         return Err(unparseable());
     }
     let year: i32 = year.parse().map_err(|_| unparseable())?;
@@ -270,6 +278,39 @@ mod tests {
                 matches!(Timestamp::parse(value), Err(TimestampError::Unparseable(_))),
                 "`{value}` should be rejected"
             );
+        }
+    }
+
+    #[test]
+    fn rejects_signed_calendar_components() {
+        for value in [
+            "+026-01-01",
+            "-026-01-01",
+            "2026-+1-01",
+            "2026--1-01",
+            "2026-01-+1",
+            "2026-01--1",
+            "２０２６-01-01",
+            "2026-é-01",
+        ] {
+            assert!(
+                matches!(Timestamp::parse(value), Err(TimestampError::Unparseable(_))),
+                "signed/non-ASCII date accepted: {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepted_calendar_dates_always_have_a_span() {
+        for value in ["0000-01-01", "0026-01-01", "2024-02-29", "9999-12-31"] {
+            let parsed = Timestamp::parse(value).unwrap();
+            let (start, end) = parsed.span();
+            assert_eq!(start.date(), end.date());
+            assert_eq!(
+                end - start,
+                time::Duration::days(1) - time::Duration::nanoseconds(1)
+            );
+            assert_eq!(parsed.as_str(), value);
         }
     }
 

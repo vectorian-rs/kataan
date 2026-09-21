@@ -5,6 +5,7 @@
 mod artifact_search;
 mod query;
 mod reads;
+mod timestamps;
 mod writes;
 
 use std::{
