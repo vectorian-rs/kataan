@@ -2,6 +2,7 @@
 //!
 //! The fixtures live here because every group builds the same test vault.
 
+mod artifact_search;
 mod query;
 mod reads;
 mod writes;

@@ -21,6 +21,45 @@ pub(crate) fn configure_connection(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+const ARTIFACT_POLICY_KEY: &str = "artifact_ignore_policy";
+const ARTIFACT_POLICY: &str = "gitignore-v1";
+
+/// Old file rows may contain text now hidden by the serving policy. Retire them
+/// before any read or incremental write, even when a startup rebuild fails.
+/// Documents/folders are a separate policy and remain searchable. Allowed files
+/// return on the next ordinary reindex, not an implicit vault scan on every read.
+pub(crate) fn ensure_artifact_policy(connection: &Connection) -> Result<()> {
+    let current = |connection: &Connection| -> Result<bool> {
+        Ok(metadata_value(connection, ARTIFACT_POLICY_KEY)?.as_deref() == Some(ARTIFACT_POLICY))
+    };
+    if current(connection)? {
+        return Ok(());
+    }
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+    // Another connection may have upgraded/reindexed while we waited for it.
+    if !current(&transaction)? {
+        transaction.execute_batch(
+            "DELETE FROM search_fts WHERE item_key IN
+               (SELECT item_key FROM search_items WHERE kind = 'file');
+             DELETE FROM search_facets WHERE item_key IN
+               (SELECT item_key FROM search_items WHERE kind = 'file');
+             DELETE FROM search_items WHERE kind = 'file';",
+        )?;
+        set_artifact_policy(&transaction)?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+pub(crate) fn set_artifact_policy(connection: &Connection) -> Result<()> {
+    connection.execute(
+        "INSERT OR REPLACE INTO search_metadata(key, value) VALUES (?1, ?2)",
+        params![ARTIFACT_POLICY_KEY, ARTIFACT_POLICY],
+    )?;
+    Ok(())
+}
+
 /// One row as SQLite hands it back, before its `kind` has been recognised.
 #[derive(Debug, Clone)]
 pub(crate) struct SearchRow {
