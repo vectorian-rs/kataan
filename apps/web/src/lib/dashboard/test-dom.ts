@@ -4,6 +4,7 @@
 export class TestElement {
   children: TestElement[] = [];
   textContent = '';
+  innerHTML = '';
   className = '';
   hidden = false;
   disabled = false;
@@ -11,6 +12,11 @@ export class TestElement {
   placeholder = '';
   scrollTop = 0;
   dataset: Record<string, string> = {};
+  classList = {
+    add: (...names: string[]) => {
+      this.className += ` ${names.join(' ')}`;
+    },
+  };
   private rawValue = '';
 
   constructor(readonly tagName = 'div') {}
@@ -72,6 +78,7 @@ Object.defineProperty(globalThis, 'document', {
   value: {
     createElement: (tag: string) => new TestElement(tag),
     getElementById: element,
+    documentElement: new TestElement('html'),
   },
 });
 

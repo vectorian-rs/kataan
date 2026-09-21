@@ -67,6 +67,11 @@ interface Field {
 
 let fields: Field[] = [];
 
+/// Freeze every editable metadata control while its document is being saved.
+export function setMetadataFormDisabled(disabled: boolean) {
+  for (const field of fields) field.input.disabled = disabled;
+}
+
 export function renderMetadataForm(
   vaultDocument: DocumentResponse,
   schema: TomlSchemaResponse | undefined,
