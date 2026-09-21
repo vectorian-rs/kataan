@@ -59,6 +59,8 @@ interface Field {
   /// What the document held when the form was drawn. A control still holding
   /// this is not sent at all.
   original: unknown;
+  /// The displayed value, before trimming or list parsing can lose information.
+  initialValue: string;
   /// Custom sidecar key rather than one of kataan's own.
   custom: boolean;
 }
@@ -119,6 +121,7 @@ export function readMetadataForm(): MetadataEdit {
   const custom: Record<string, unknown> = {};
 
   for (const field of fields) {
+    if (field.input.value === field.initialValue) continue;
     const value = field.read(field.input.value);
     if (unchanged(value, field.original)) continue;
     if (field.custom) {
@@ -211,6 +214,7 @@ function textRow(
     key,
     input,
     original,
+    initialValue: input.value,
     read: (raw) => raw.trim() || null,
     custom: false,
   });
@@ -227,7 +231,14 @@ function selectRow(key: string, label: string, original: unknown, options: strin
     input.append(element);
   }
   input.value = display(original);
-  fields.push({ key, input, original, read: (raw) => raw || null, custom: false });
+  fields.push({
+    key,
+    input,
+    original,
+    initialValue: input.value,
+    read: (raw) => raw || null,
+    custom: false,
+  });
   return labelled(label, input, false);
 }
 
@@ -247,7 +258,7 @@ function listRow(key: string, label: string, original: unknown) {
   input.className = 'metadata-input';
   input.value = displayList(original);
   input.placeholder = 'comma separated';
-  fields.push({ key, input, original, read: parseList, custom: false });
+  fields.push({ key, input, original, initialValue: input.value, read: parseList, custom: false });
   return labelled(label, input, false);
 }
 
