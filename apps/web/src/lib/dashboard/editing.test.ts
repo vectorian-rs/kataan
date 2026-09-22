@@ -288,3 +288,49 @@ test('clearing the reader while saving cannot reopen A or leave editing controls
   await saveEditing(refresh);
   expect(transport.count('PATCH', 'notes/a')).toBe(1);
 });
+
+// Exercise search clearing through its production list-restoration transition,
+// sharing the real navigation token with the production Save/reader pipeline.
+for (const navigate of [false, true]) {
+  test(`search clear during Save ${navigate ? 'yields to later navigation' : 'refreshes the same editor revision'}`, async () => {
+    const { runSearch } = await import('./search');
+    const { restoreFolderList } = await import('./folder-list');
+    const patch = transport.defer('PATCH', 'notes/a');
+    const pending = saveEditing(refresh);
+    const folder = transport.deferPath('GET', '/api/folders/notes');
+    const rendered: string[] = [];
+    const clearing = runSearch('', {
+      restoreFolder: () => restoreFolderList('notes', (response) => rendered.push(response.id)),
+      openDocument: async () => {},
+      openFolder: async () => {},
+      openFile: async () => {},
+      run: () => {},
+    });
+    await folder.started.promise;
+    expectLocked(true);
+    if (navigate) await editB();
+    folder.response.resolve(Response.json({ id: 'notes', documents: [], files: [], folders: [] }));
+    await clearing;
+    expect(rendered).toEqual(navigate ? [] : ['notes']);
+    transport.documents.set('notes/a', fixtureDocument('notes/a', 'A draft', 'saved'));
+    patch.response.resolve(ok());
+    await pending;
+    if (navigate) {
+      expectBDraft();
+      expect(transport.count('GET', 'notes/a')).toBe(1);
+    } else {
+      expect(transport.count('GET', 'notes/a')).toBe(2);
+      expect(isEditing()).toBe(false);
+      expect(history.entries).toEqual(['/', '/notes/a']);
+      beginEditing();
+      const next = transport.defer('PATCH', 'notes/a');
+      const nextSave = saveEditing(refresh);
+      expect(
+        transport.requests.filter((r) => r.method === 'PATCH')[1].body.expected_updated_at,
+      ).toBe('saved');
+      next.response.resolve(ok());
+      await nextSave;
+    }
+    expectLocked(false);
+  });
+}

@@ -56,6 +56,7 @@ import { folderTitleFromResponse, isHighlightableFile } from './dashboard/format
 import { clearPanels } from './dashboard/panels';
 import { forgetDocumentSchema, showDocument } from './dashboard/document-reader';
 import { beginNavigation, type Stale } from './dashboard/navigation';
+import { restoreFolderList } from './dashboard/folder-list';
 import { renderOntology } from './dashboard/ontology-view';
 import {
   cancelPendingSearch,
@@ -139,12 +140,13 @@ interface SelectOptions {
 /// a second click supersedes the whole of it rather than half.
 const searchActions: SearchActions = {
   restoreFolder: async () => {
-    // `updateUrl: false`: this puts the *list* back, it does not navigate. With
-    // URL updates on, clearing the search box moved the address to the folder
-    // while the reader still showed the document — and a reload then resolved
-    // something else.
-    if (selectedFolder) {
-      await selectFolder(selectedFolder, { selectFirst: false, updateUrl: false });
+    // Restore only the list: neither the reader's route nor its pending Save
+    // is superseded. A later navigation still owns both panes.
+    const folder = selectedFolder;
+    if (folder) {
+      await restoreFolderList(folder, (response) =>
+        applyFolder(folder, response, { selectFirst: false }),
+      );
     }
   },
   openDocument: async (id) => {
@@ -408,7 +410,7 @@ function applyFolder(
     treeActions,
   );
 
-  if (response.documents.length === 0) {
+  if (response.documents.length === 0 && (options.selectFirst ?? true)) {
     selectedDocument = null;
     updateActiveRows();
     return undefined;

@@ -84,8 +84,12 @@ export class ReaderTransport {
   );
 
   defer(method: string, id: string): PendingResponse {
+    return this.deferPath(method, `/api/documents/${id}`);
+  }
+
+  deferPath(method: string, path: string): PendingResponse {
     const pending = { started: deferred<void>(), response: deferred<Response>() };
-    const key = `${method} /api/documents/${id}`;
+    const key = `${method} ${path}`;
     const queue = this.queued.get(key) ?? [];
     queue.push(pending);
     this.queued.set(key, queue);
