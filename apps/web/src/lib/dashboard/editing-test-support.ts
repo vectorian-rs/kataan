@@ -42,7 +42,7 @@ type PendingResponse = {
   response: ReturnType<typeof deferred<Response>>;
 };
 
-const schema = {
+export const fixtureSchema = {
   kind: 'document',
   schema: {},
   toml_template: 'type = "note"',
@@ -56,7 +56,12 @@ const schema = {
 };
 
 export class ReaderTransport {
-  requests: { method: string; path: string; body: Record<string, unknown> }[] = [];
+  requests: {
+    method: string;
+    path: string;
+    theme: string | null;
+    body: Record<string, unknown>;
+  }[] = [];
   documents = new Map([
     ['notes/a', fixtureDocument('notes/a')],
     ['notes/b', fixtureDocument('notes/b')],
@@ -66,15 +71,21 @@ export class ReaderTransport {
     Object.assign(
       async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
         const url = input instanceof Request ? input.url : String(input);
-        const path = new URL(url, 'http://fixture.invalid').pathname;
+        const parsed = new URL(url, 'http://fixture.invalid');
+        const path = parsed.pathname;
         const method = init?.method ?? 'GET';
-        this.requests.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : {} });
+        this.requests.push({
+          method,
+          path,
+          theme: parsed.searchParams.get('theme'),
+          body: init?.body ? JSON.parse(String(init.body)) : {},
+        });
         const pending = this.queued.get(`${method} ${path}`)?.shift();
         if (pending) {
           pending.started.resolve(undefined);
           return pending.response.promise;
         }
-        if (path.startsWith('/api/schema/')) return Response.json(schema);
+        if (path.startsWith('/api/schema/')) return Response.json(fixtureSchema);
         const doc = this.documents.get(path.replace('/api/documents/', ''));
         if (method === 'GET' && doc) return Response.json(doc);
         throw new Error(`Unexpected request: ${method} ${path}`);
