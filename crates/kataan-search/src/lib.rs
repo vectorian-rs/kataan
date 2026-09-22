@@ -114,8 +114,7 @@ impl SearchIndex {
                     .with_context(|| format!("failed to open search index `{}`", path.display()))?
             }
         };
-        create_schema(&connection)?;
-        ensure_artifact_policy(&connection)?;
+        prepare_cache(&connection)?;
         Ok(Self { path })
     }
 
@@ -168,19 +167,16 @@ impl SearchIndex {
     }
 
     pub fn reindex_loaded(&self, loaded: &LoadedVault) -> Result<ReindexResponse> {
-        let mut connection = self.open_connection()?;
+        // Opening/configuring the database is operational, not evidence that
+        // its derived schema needs replacing. Only preparation may recover.
+        let mut connection = self.open_database()?;
+        prepare_reindex(&mut connection)?;
         let indexed_at = kataan_core::time::unix_timestamp_string();
         let transaction = connection.transaction()?;
 
         // Drop and recreate rather than DELETE, so an index built on an older
         // schema is rebuilt with the current columns instead of failing inserts.
-        transaction.execute_batch(
-            "DROP TABLE IF EXISTS search_fts;
-             DROP TABLE IF EXISTS search_facets;
-             DROP TABLE IF EXISTS search_items;
-             DROP TABLE IF EXISTS search_metadata;",
-        )?;
-        create_schema(&transaction)?;
+        reset_schema(&transaction)?;
 
         let mut item_count = 0usize;
         let mut document_count = 0usize;
@@ -384,9 +380,15 @@ impl SearchIndex {
         })
     }
 
-    /// Every read/write path checks cache compatibility, including lazy handles
-    /// and a reindex that might fail before replacing the old rows.
+    /// Normal reads/writes fail closed if schema or policy preparation fails.
     fn open_connection(&self) -> Result<Connection> {
+        let connection = self.open_database()?;
+        prepare_cache(&connection)?;
+        Ok(connection)
+    }
+
+    /// No schema assumptions: explicit full rebuild can discard broken tables.
+    fn open_database(&self) -> Result<Connection> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!(
@@ -398,8 +400,6 @@ impl SearchIndex {
         let connection = Connection::open(&self.path)
             .with_context(|| format!("failed to open search index `{}`", self.path.display()))?;
         configure_connection(&connection)?;
-        create_schema(&connection)?;
-        ensure_artifact_policy(&connection)?;
         Ok(connection)
     }
 

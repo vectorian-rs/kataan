@@ -163,3 +163,82 @@ async fn standalone_search_respects_serving_and_scan_exclusions() {
     drop(outside);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn lazy_http_reindex_recovers_incompatible_cache_even_after_population_failure() {
+    let root = test_vault();
+    fs::write(root.join("private.txt"), "privatetoken").unwrap();
+    fs::write(root.join("notes/public.md"), "documenttoken").unwrap();
+    fs::write(
+        root.join("notes/public.toml"),
+        "type = \"note\"\nmarkdown = \"public.md\"\n",
+    )
+    .unwrap();
+    let index = kataan_search::SearchIndex::open_default(&root).unwrap();
+    index
+        .reindex_loaded(&kataan_core::vault::LoadedVault::load(&root).unwrap())
+        .unwrap();
+    let raw = rusqlite::Connection::open(index.path()).unwrap();
+    raw.execute_batch(
+        "DELETE FROM search_metadata WHERE key = 'artifact_ignore_policy';
+         DROP INDEX search_items_status_idx;
+         ALTER TABLE search_items DROP COLUMN status;",
+    )
+    .unwrap();
+    fs::write(root.join(".gitignore"), "private.txt\n").unwrap();
+    let app = test_app(&root); // startup retains a lazy index handle
+    assert_eq!(
+        request(app.clone(), "GET", "/api/documents/notes/public")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(app.clone(), "GET", "/api/search?q=privatetoken")
+            .await
+            .status(),
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+
+    // The loaded snapshot still names the document, so fail during population,
+    // not before recovery opens SQLite. No old private snippets may return.
+    fs::remove_file(root.join("notes/public.md")).unwrap();
+    let failed = request(app.clone(), "POST", "/api/search/reindex").await;
+    assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = axum::body::to_bytes(failed.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("failed to read markdown"));
+    let response = request(app.clone(), "GET", "/api/search?q=privatetoken").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let search: kataan_search::SearchResponse = json_response(response).await;
+    assert!(search.results.is_empty());
+    let status: kataan_search::SearchStatus =
+        json_response(request(app.clone(), "GET", "/api/search/status").await).await;
+    assert_eq!(status.item_count, 0);
+    assert!(status.last_indexed_at.is_none());
+
+    fs::write(root.join("notes/public.md"), "documenttoken").unwrap();
+    // Damage it again to prove the successful HTTP path repairs the schema too.
+    raw.execute_batch(
+        "DROP INDEX search_items_status_idx; ALTER TABLE search_items DROP COLUMN status;",
+    )
+    .unwrap();
+    assert_eq!(
+        request(app.clone(), "POST", "/api/search/reindex")
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    for (token, count) in [("documenttoken", 1), ("privatetoken", 0)] {
+        let response = request(app.clone(), "GET", &format!("/api/search?q={token}")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let search: kataan_search::SearchResponse = json_response(response).await;
+        assert_eq!(search.results.len(), count, "{token}");
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("private.txt")).unwrap(),
+        "privatetoken"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
