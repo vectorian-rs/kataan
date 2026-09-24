@@ -8,21 +8,17 @@ import {
 
 import {
   type CanonicalFolderResponse,
-  getDocument,
   getOntology,
   getFile,
   getFolder,
   getHighlightedFile,
   getFolders,
-  getSchema,
   getVault,
   rebuildIndexes,
   reindexSearch,
   resolvePath,
   validateVault,
   type Diagnostic,
-  type DocumentResponse,
-  type TomlSchemaResponse,
   type FolderFile,
   type ValidateResponse,
 } from './api';
@@ -56,8 +52,11 @@ import {
   vaultSummary,
 } from './dashboard/elements';
 import { currentTheme, renderFileBody, renderHighlightedFile } from './dashboard/file-preview';
-import { basenameFromId, folderTitleFromResponse, isHighlightableFile } from './dashboard/format';
-import { clearPanels, renderMetadata, renderSchema } from './dashboard/panels';
+import { folderTitleFromResponse, isHighlightableFile } from './dashboard/format';
+import { clearPanels } from './dashboard/panels';
+import { forgetDocumentSchema, showDocument } from './dashboard/document-reader';
+import { beginNavigation, type Stale } from './dashboard/navigation';
+import { restoreFolderList } from './dashboard/folder-list';
 import { renderOntology } from './dashboard/ontology-view';
 import {
   cancelPendingSearch,
@@ -126,68 +125,10 @@ const PROPERTIES_TOGGLE: PanelToggle = {
   aria: ['Hide properties sidebar', 'Open properties sidebar'],
 };
 
-/// One fetch per type, kept because a type's schema changes only when the
-/// ontology does — and `forgetDocumentSchema` clears these alongside it.
-///
-/// Declared above the boot block, like every other module-level `const` here:
-/// boot reaches this through `selectDocument`, and a `const` initialised later
-/// in the module is still `undefined` at that point. The bundler lowers it to
-/// `var`, so the failure is a `TypeError` at run time rather than anything the
-/// type checker or a temporal-dead-zone error would catch.
-const typeSchemas = new Map<string, Promise<TomlSchemaResponse>>();
-
-function typeSchemaFor(vaultDocument: DocumentResponse) {
-  const type = String(vaultDocument.metadata.type ?? '');
-  let request = typeSchemas.get(type);
-  if (!request) {
-    request = getSchema(type);
-    typeSchemas.set(type, request);
-  }
-  return request;
-}
-
-/// `/api/schema/document` describes kataan's own metadata struct plus the
-/// vault's constraints — the same ~1.7 KB for every document, and constant
-/// until the vault reloads. Fetched once instead of on every selection.
-let documentSchemaRequest: ReturnType<typeof getSchema> | undefined;
-
-function documentSchema() {
-  documentSchemaRequest ??= getSchema('document');
-  return documentSchemaRequest;
-}
-
-/// Called after anything that can change the vault's constraints, so the next
-/// selection re-fetches rather than rendering a schema from before the change.
-function forgetDocumentSchema() {
-  documentSchemaRequest = undefined;
-  typeSchemas.clear();
-}
-
-/// Which navigation is current.
-///
-/// Selecting a folder, a document or a file awaits several fetches, so two
-/// clicks in quick succession — or a click landing while a back-button restore
-/// is still in flight — would otherwise interleave, and the pane would settle
-/// on whichever request *finished* last rather than whichever was asked for
-/// last. The row highlight is set synchronously, so the symptom is a reader
-/// showing one document while a different row is marked active.
-///
-/// Every entry point takes a token and re-checks it after each await. A nested
-/// call inherits its caller's token, so a folder selecting its first document
-/// does not invalidate the folder load that started it.
-let navigationGeneration = 0;
-
-type Stale = () => boolean;
-
 interface SelectOptions {
   selectFirst?: boolean;
   updateUrl?: boolean;
   stale?: Stale;
-}
-
-function beginNavigation(): Stale {
-  const generation = ++navigationGeneration;
-  return () => generation !== navigationGeneration;
 }
 
 /// What clicking a row in the tree does. Declared above the boot block, like
@@ -199,12 +140,13 @@ function beginNavigation(): Stale {
 /// a second click supersedes the whole of it rather than half.
 const searchActions: SearchActions = {
   restoreFolder: async () => {
-    // `updateUrl: false`: this puts the *list* back, it does not navigate. With
-    // URL updates on, clearing the search box moved the address to the folder
-    // while the reader still showed the document — and a reload then resolved
-    // something else.
-    if (selectedFolder) {
-      await selectFolder(selectedFolder, { selectFirst: false, updateUrl: false });
+    // Restore only the list: neither the reader's route nor its pending Save
+    // is superseded. A later navigation still owns both panes.
+    const folder = selectedFolder;
+    if (folder) {
+      await restoreFolderList(folder, (response) =>
+        applyFolder(folder, response, { selectFirst: false }),
+      );
     }
   },
   openDocument: async (id) => {
@@ -255,7 +197,9 @@ cancelButton.addEventListener('click', cancelEditing);
 /// Save, then re-read. Shared by the button and Cmd/Ctrl+S so the two cannot
 /// drift into doing different things.
 function save() {
-  void runAction(() => saveEditing((id) => selectDocument(id, { updateUrl: false })), {
+  // A refresh renders the saved document, but must not change selection: another
+  // document may already be selected while its GET is still in flight.
+  void runAction(() => saveEditing((id, stale) => showDocument(id, { updateUrl: false, stale })), {
     owns: 'document',
   });
 }
@@ -466,7 +410,7 @@ function applyFolder(
     treeActions,
   );
 
-  if (response.documents.length === 0) {
+  if (response.documents.length === 0 && (options.selectFirst ?? true)) {
     selectedDocument = null;
     updateActiveRows();
     return undefined;
@@ -531,42 +475,11 @@ function setPanelVisible(
 }
 
 async function selectDocument(id: string, options: SelectOptions = {}) {
-  const updateUrl = options.updateUrl ?? true;
   const stale = options.stale ?? beginNavigation();
   selectedDocument = id;
   selectedFile = null;
   updateActiveRows();
-
-  // The theme travels with the request: code blocks are highlighted
-  // server-side. The schema is memoized, so this is one round trip in practice.
-  const [vaultDocument, schema] = await Promise.all([
-    getDocument(id, currentTheme()),
-    documentSchema(),
-  ]);
-  if (stale()) return;
-  // The *type's* schema carries `node_schema`; the generic `document` one above
-  // describes kataan's own keys and is what the schema panel shows. Absent when
-  // the type declares nothing, which the form handles.
-  const typeSchema = await typeSchemaFor(vaultDocument).catch(() => undefined);
-  if (stale()) return;
-  breadcrumb.textContent = vaultDocument.id.replaceAll('/', ' › ');
-  documentTitle.textContent = basenameFromId(vaultDocument.id);
-  if (updateUrl) {
-    updateRouteUrl(vaultDocument);
-  }
-  setOpenDocument({
-    id: vaultDocument.id,
-    markdown: vaultDocument.markdown,
-    updatedAt:
-      typeof vaultDocument.metadata.updated_at === 'string'
-        ? vaultDocument.metadata.updated_at
-        : undefined,
-    document: vaultDocument,
-    schema: typeSchema,
-  });
-  renderDocumentBody(vaultDocument);
-  renderMetadata(vaultDocument);
-  renderSchema(schema);
+  await showDocument(id, { ...options, stale });
 }
 
 async function restoreRouteSelection() {
@@ -704,15 +617,6 @@ function clearRouteSelection() {
 
   clearPanels();
   updateActiveRows();
-}
-
-function updateRouteUrl(vaultDocument: DocumentResponse) {
-  setRoute({ kind: 'id', id: vaultDocument.id });
-}
-
-function renderDocumentBody(vaultDocument: DocumentResponse) {
-  documentBody.className = 'reader-body';
-  documentBody.innerHTML = vaultDocument.html;
 }
 
 /// Run an action, reporting a failure where the user was looking.

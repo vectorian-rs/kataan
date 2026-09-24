@@ -7,6 +7,7 @@ pub mod edit;
 pub mod error;
 pub mod graph;
 pub mod id;
+pub mod ignore;
 pub mod index;
 pub mod init;
 pub mod mutate;
