@@ -28,12 +28,11 @@ export type Route =
 
 /// Whether `path` could be a canonical id.
 ///
-/// `CanonicalId::parse` refuses any segment containing a dot and accepts only
-/// lowercase letters, digits and hyphens, so anything else — an extension,
-/// uppercase, a space, an underscore — is necessarily a file path rather than a
-/// document. That is what lets both share the URL space without a prefix.
+/// `CanonicalId::parse` permits ASCII letters in either case, digits and
+/// hyphens, but no dots. Extensions, spaces and underscores therefore indicate
+/// file paths. This is only a routing prefilter; the backend resolves the id.
 export function looksLikeId(path: string) {
-  return /^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/.test(path);
+  return /^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/i.test(path);
 }
 
 /// Whether `id` names a folder the tree is showing, used to decide if the
