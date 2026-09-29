@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 ignore.workspace = true
+tracing.workspace = true
 blake3.workspace = true
 schemars.workspace = true
 serde.workspace = true

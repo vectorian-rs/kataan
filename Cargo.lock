@@ -927,6 +927,7 @@ dependencies = [
  "time",
  "toml 0.8.23",
  "toml_edit",
+ "tracing",
 ]
 
 [[package]]
@@ -975,6 +976,7 @@ dependencies = [
  "notify",
  "percent-encoding",
  "pulldown-cmark",
+ "rusqlite",
  "rust-embed",
  "schemars",
  "serde",

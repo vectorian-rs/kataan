@@ -114,7 +114,7 @@ impl SearchIndex {
                     .with_context(|| format!("failed to open search index `{}`", path.display()))?
             }
         };
-        create_schema(&connection)?;
+        prepare_cache(&connection)?;
         Ok(Self { path })
     }
 
@@ -167,19 +167,16 @@ impl SearchIndex {
     }
 
     pub fn reindex_loaded(&self, loaded: &LoadedVault) -> Result<ReindexResponse> {
-        let mut connection = self.open_connection()?;
+        // Opening/configuring the database is operational, not evidence that
+        // its derived schema needs replacing. Only preparation may recover.
+        let mut connection = self.open_database()?;
+        prepare_reindex(&mut connection)?;
         let indexed_at = kataan_core::time::unix_timestamp_string();
         let transaction = connection.transaction()?;
 
         // Drop and recreate rather than DELETE, so an index built on an older
         // schema is rebuilt with the current columns instead of failing inserts.
-        transaction.execute_batch(
-            "DROP TABLE IF EXISTS search_fts;
-             DROP TABLE IF EXISTS search_facets;
-             DROP TABLE IF EXISTS search_items;
-             DROP TABLE IF EXISTS search_metadata;",
-        )?;
-        create_schema(&transaction)?;
+        reset_schema(&transaction)?;
 
         let mut item_count = 0usize;
         let mut document_count = 0usize;
@@ -211,6 +208,7 @@ impl SearchIndex {
             "INSERT OR REPLACE INTO search_metadata(key, value) VALUES (?1, ?2)",
             params!["last_indexed_at", indexed_at],
         )?;
+        set_artifact_policy(&transaction)?;
         transaction.commit()?;
 
         Ok(ReindexResponse {
@@ -382,9 +380,15 @@ impl SearchIndex {
         })
     }
 
-    /// Open the SQLite file (creating its directory) without touching the
-    /// schema. `reindex_loaded` uses this because it rebuilds the schema itself.
+    /// Normal reads/writes fail closed if schema or policy preparation fails.
     fn open_connection(&self) -> Result<Connection> {
+        let connection = self.open_database()?;
+        prepare_cache(&connection)?;
+        Ok(connection)
+    }
+
+    /// No schema assumptions: explicit full rebuild can discard broken tables.
+    fn open_database(&self) -> Result<Connection> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).with_context(|| {
                 format!(
@@ -400,9 +404,7 @@ impl SearchIndex {
     }
 
     fn connect(&self) -> Result<Connection> {
-        let connection = self.open_connection()?;
-        create_schema(&connection)?;
-        Ok(connection)
+        self.open_connection()
     }
 }
 
@@ -650,6 +652,8 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod cache_tests;
+#[cfg(test)]
 mod tests;
 
 /// Index entries for every file in the vault that is not part of a document.
@@ -660,6 +664,7 @@ mod tests;
 /// vault, and none of it was searchable.
 fn file_items(loaded: &LoadedVault) -> Result<Vec<SearchItem>> {
     let ignore = kataan_core::scan::ScanIgnore::load(&loaded.root, &loaded.index.scan)?;
+    let artifacts = kataan_core::ignore::VaultIgnore::load(&loaded.root)?;
     let owned: std::collections::BTreeSet<PathBuf> = loaded
         .documents
         .values()
@@ -669,7 +674,12 @@ fn file_items(loaded: &LoadedVault) -> Result<Vec<SearchItem>> {
     let mut items = Vec::new();
     for relative in kataan_core::walk::vault_files(&loaded.root, &ignore)? {
         let full = loaded.root.join(&relative);
-        if owned.contains(&full) || !files::is_indexable(&relative) {
+        // Apply serving visibility in addition to scan exclusions. Combining
+        // the pattern lists would let one policy's negations undo the other.
+        if artifacts.should_ignore_path(&full)
+            || owned.contains(&full)
+            || !files::is_indexable(&relative)
+        {
             continue;
         }
         // Read the head of the file, not all of it: one generated blob should

@@ -21,6 +21,85 @@ pub(crate) fn configure_connection(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Shared preparation for reads and writes; normal access never resets tables.
+pub(crate) fn prepare_cache(connection: &Connection) -> Result<()> {
+    create_schema(connection)?;
+    ensure_artifact_policy(connection)
+}
+
+/// Full rebuild may recover a malformed derived schema or refused migration,
+/// but contention/I/O/open failures say nothing about cache compatibility.
+pub(crate) fn prepare_reindex(connection: &mut Connection) -> Result<()> {
+    if let Err(error) = prepare_cache(connection) {
+        if !is_recoverable_preparation_error(&error) {
+            return Err(error);
+        }
+        // Commit safe empty state before fallible population. Otherwise a
+        // rollback could resurrect private snippets from the incompatible cache.
+        let transaction = connection.transaction()?;
+        reset_schema(&transaction)?;
+        set_artifact_policy(&transaction)?;
+        transaction.commit()?;
+    }
+    Ok(())
+}
+
+/// These codes apply only to our fixed schema/migration SQL: missing columns or
+/// schema objects, a stale schema, or a trigger refusing policy retirement.
+/// Use extended codes so SQLITE_ERROR_RETRY (among others) does not inherit
+/// permission from its primary SQLITE_ERROR code. Unrecognised errors propagate.
+pub(crate) fn is_recoverable_preparation_error(error: &anyhow::Error) -> bool {
+    use rusqlite::{ffi, Error};
+    match error.downcast_ref::<Error>() {
+        Some(Error::SqliteFailure(code, _)) | Some(Error::SqlInputError { error: code, .. }) => {
+            matches!(
+                code.extended_code,
+                ffi::SQLITE_ERROR | ffi::SQLITE_SCHEMA | ffi::SQLITE_CONSTRAINT_TRIGGER
+            )
+        }
+        _ => false,
+    }
+}
+
+const ARTIFACT_POLICY_KEY: &str = "artifact_ignore_policy";
+const ARTIFACT_POLICY: &str = "gitignore-v1";
+
+/// Old file rows may contain text now hidden by the serving policy. Retire them
+/// before any read or incremental write, even when a startup rebuild fails.
+/// Documents/folders are a separate policy and remain searchable. Allowed files
+/// return on the next ordinary reindex, not an implicit vault scan on every read.
+pub(crate) fn ensure_artifact_policy(connection: &Connection) -> Result<()> {
+    let current = |connection: &Connection| -> Result<bool> {
+        Ok(metadata_value(connection, ARTIFACT_POLICY_KEY)?.as_deref() == Some(ARTIFACT_POLICY))
+    };
+    if current(connection)? {
+        return Ok(());
+    }
+    let transaction =
+        rusqlite::Transaction::new_unchecked(connection, rusqlite::TransactionBehavior::Immediate)?;
+    // Another connection may have upgraded/reindexed while we waited for it.
+    if !current(&transaction)? {
+        transaction.execute_batch(
+            "DELETE FROM search_fts WHERE item_key IN
+               (SELECT item_key FROM search_items WHERE kind = 'file');
+             DELETE FROM search_facets WHERE item_key IN
+               (SELECT item_key FROM search_items WHERE kind = 'file');
+             DELETE FROM search_items WHERE kind = 'file';",
+        )?;
+        set_artifact_policy(&transaction)?;
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+pub(crate) fn set_artifact_policy(connection: &Connection) -> Result<()> {
+    connection.execute(
+        "INSERT OR REPLACE INTO search_metadata(key, value) VALUES (?1, ?2)",
+        params![ARTIFACT_POLICY_KEY, ARTIFACT_POLICY],
+    )?;
+    Ok(())
+}
+
 /// One row as SQLite hands it back, before its `kind` has been recognised.
 #[derive(Debug, Clone)]
 pub(crate) struct SearchRow {
@@ -115,6 +194,18 @@ pub(crate) const SEARCH_FILTER_SQL: &str = "\
              OR i.path = :path_prefix
              OR i.path LIKE (:path_prefix || '/%')
            )";
+
+/// Replace derived tables without querying their old columns. Call inside a
+/// transaction so a failure cannot publish a partially replaced schema.
+pub(crate) fn reset_schema(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "DROP TABLE IF EXISTS search_fts;
+         DROP TABLE IF EXISTS search_facets;
+         DROP TABLE IF EXISTS search_items;
+         DROP TABLE IF EXISTS search_metadata;",
+    )?;
+    create_schema(connection)
+}
 
 pub(crate) fn create_schema(connection: &Connection) -> Result<()> {
     connection.execute_batch(

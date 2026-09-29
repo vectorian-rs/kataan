@@ -10,7 +10,8 @@
 import { type DocumentResponse, type TomlSchemaResponse, updateDocument } from '../api';
 
 import { cancelButton, documentBody, documentEditor, editButton, saveButton } from './elements';
-import { readMetadataForm, renderMetadataForm } from './metadata-form';
+import { readMetadataForm, renderMetadataForm, setMetadataFormDisabled } from './metadata-form';
+import { currentNavigation, type Stale } from './navigation';
 import { renderMetadata } from './panels';
 
 /// The document currently open in the reader, when it is one.
@@ -32,6 +33,13 @@ export interface OpenDocument {
 
 let openDocument: OpenDocument | null = null;
 let editing = false;
+// Keyed by id rather than object identity: leaving and returning to A must not
+// allow a second save while A's first is pending. B can still be edited/saved.
+const pendingSaves = new Set<string>();
+
+function isSaving() {
+  return openDocument !== null && pendingSaves.has(openDocument.id);
+}
 
 /// What the reader is showing, or `null` for a file or an empty pane. Always
 /// leaves edit mode: whatever was being edited is no longer what is on screen.
@@ -50,10 +58,16 @@ export function renderEditControls() {
   cancelButton.hidden = !editing;
   documentEditor.hidden = !editing;
   documentBody.hidden = editing;
+  const disabled = isSaving();
+  documentEditor.disabled = disabled;
+  editButton.disabled = disabled;
+  saveButton.disabled = disabled;
+  cancelButton.disabled = disabled;
+  setMetadataFormDisabled(disabled);
 }
 
 export function beginEditing() {
-  if (!openDocument) return;
+  if (!openDocument || isSaving()) return;
   editing = true;
   renderMetadataForm(openDocument.document, openDocument.schema);
   documentEditor.value = openDocument.markdown;
@@ -68,6 +82,7 @@ export function beginEditing() {
 /// Leave the editor without saving. The rendered body is still in the DOM
 /// underneath, so there is nothing to re-fetch.
 export function cancelEditing() {
+  if (isSaving()) return;
   if (openDocument) {
     renderMetadata(openDocument.document);
   }
@@ -81,13 +96,17 @@ export function cancelEditing() {
 /// already imports this module to drive the controls, and importing it back
 /// would make the two mutually dependent — the exact shape that leaves one side
 /// holding an `undefined` binding at boot.
-export async function saveEditing(reopen: (id: string) => Promise<void>) {
+export async function saveEditing(reopen: (id: string, stale: Stale) => Promise<void>) {
   // Captured before the request, not read again after it. A save is a request
   // about *this* document, and `openDocument` is whatever is on screen now —
   // if the reader moved on while the PATCH was in flight, the completion used
   // to reopen the new document and reset the draft someone had started in it.
   const saving = openDocument;
-  if (!saving) return;
+  if (!saving || !editing || isSaving()) return;
+  const navigationStale = currentNavigation();
+  const stale = () => navigationStale() || openDocument !== saving;
+  pendingSaves.add(saving.id);
+  renderEditControls();
 
   // Body and metadata in one call: `update_document` applies them together, so
   // a save either lands whole or is refused whole.
@@ -96,22 +115,26 @@ export async function saveEditing(reopen: (id: string) => Promise<void>) {
   // `updated_at` — which is most of them in a hand-authored vault. Omitting it
   // would mean no check at all, and the save could then overwrite an edit made
   // while this tab sat open.
-  await updateDocument(
-    saving.id,
-    { body: documentEditor.value, ...readMetadataForm() },
-    saving.updatedAt ?? '',
-  );
+  try {
+    await updateDocument(
+      saving.id,
+      { body: documentEditor.value, ...readMetadataForm() },
+      saving.updatedAt ?? '',
+    );
 
-  // The write landed either way; the refresh is only for the reader. If this is
-  // no longer what the reader is showing, there is nothing here to refresh —
-  // and reopening would take over a document the user has since chosen.
-  if (openDocument !== saving) return;
-
-  // Re-read rather than patching the DOM: the server re-renders the Markdown,
-  // and `updated_at` has moved — keeping the stale one would make the *next*
-  // save fail its own precondition.
-  editing = false;
-  await reopen(saving.id);
+    // Identity alone misses a newer navigation whose GET has not finished.
+    // Borrow the navigation token for refresh, never supersede a user's click.
+    if (stale()) return;
+    // Stay in edit mode, locked, until the reader successfully replaces it.
+    // Either PATCH or refresh failure must leave the draft available.
+    await reopen(saving.id, stale);
+  } catch (error) {
+    // A late failure belongs to A, not to the reader/draft now open in B.
+    if (!stale()) throw error;
+  } finally {
+    pendingSaves.delete(saving.id);
+    renderEditControls();
+  }
 }
 
 /// Whether a draft is open that a refresh would discard.
